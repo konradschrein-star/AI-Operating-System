@@ -1,60 +1,31 @@
 /**
- * The geometry behind the draggable divider in ChatTeamPanel.
+ * The bounds for the draggable divider between the team tree and the PLAN
+ * board in ChatTeamPanel.
  *
- * Split out of the component so the clamp is testable without a DOM: every
- * interesting case here is arithmetic (a drag past the edge, a panel too short
- * to hold both zones, a corrupt localStorage value) and none of it needs React
- * to be wrong.
+ * The drag mechanics live in `_ui/ResizableSplit` — the same primitive the
+ * shell's other splitters use. Only the numbers are here, in their own module
+ * so a test can assert them without importing a React component.
  *
- * `fraction` throughout is the PLAN zone's share of the shell, 0..1. The team
- * tree gets the remainder.
+ * Values are the PLAN zone's share of the panel, 0..1. The team tree takes the
+ * remainder.
  */
 
 /** localStorage key. Per browser, deliberately not per chat — the rail should
  *  keep the shape you dragged it into as you move between chats. */
-export const PLAN_FRACTION_KEY = "forge.teamPanel.planFraction";
+export const PLAN_FRACTION_KEY = "forge.layout.teamPlanFraction";
 
-/** The pre-splitter constant: PlanKanban's old hard `maxHeight: 40%`. Keeping
- *  it as the default means an untouched rail looks exactly as it did. */
+/** PlanKanban's old hard `maxHeight: 40%`, kept as the default so an untouched
+ *  rail looks exactly as it did before the divider became draggable. This is
+ *  also what double-clicking the handle restores. */
 export const PLAN_FRACTION_DEFAULT = 0.4;
 
-/** Neither zone may be dragged below this. A zone at zero height has no
- *  content AND no way to grab it back, so the floor is what makes the gesture
- *  reversible. */
-export const MIN_ZONE_PX = 96;
-
-/** One arrow-key press. */
-export const KEY_STEP = 0.02;
-
-/**
- * Clamp a proposed fraction so both zones keep at least MIN_ZONE_PX.
+/* Neither zone may be dragged away entirely: a zone at zero height has no
+ * content AND no handle-adjacent content to aim at, so the floors are what keep
+ * the gesture reversible. Fractions rather than pixels because that is the unit
+ * `useResizablePanel` clamps in — a px floor would need the container height,
+ * which the hook only measures at grab time.
  *
- * `shellPx <= 0` means we were asked before layout (first paint, or a
- * collapsed panel). There is no pixel floor to honour yet, so fall back to a
- * generous fractional range rather than inventing a measurement.
- */
-export function clampPlanFraction(f: number, shellPx: number): number {
-  if (!Number.isFinite(f)) return PLAN_FRACTION_DEFAULT;
-  if (!Number.isFinite(shellPx) || shellPx <= 0) {
-    return Math.min(0.85, Math.max(0.15, f));
-  }
-  const min = MIN_ZONE_PX / shellPx;
-  const max = 1 - MIN_ZONE_PX / shellPx;
-  /* Shorter than two floors: `min > max`, and feeding an inverted range to
-   * Math.min/Math.max silently returns the WRONG bound rather than erroring.
-   * An even split is the only honest answer at that size. */
-  if (min >= max) return 0.5;
-  return Math.min(max, Math.max(min, f));
-}
-
-/**
- * Read a persisted fraction. Anything that is not a real number strictly
- * inside (0, 1) — absent, "", "null", "1.5", NaN, a string someone hand-edited
- * — yields the default instead of propagating a bad layout.
- */
-export function parseStoredFraction(raw: string | null): number {
-  if (raw === null || raw.trim() === "") return PLAN_FRACTION_DEFAULT;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0 || n >= 1) return PLAN_FRACTION_DEFAULT;
-  return n;
-}
+ * 0.15/0.85 on a ~900px rail is roughly a 135px floor for either zone, which
+ * comfortably holds the PLAN header plus a card, or several team rows. */
+export const PLAN_FRACTION_MIN = 0.15;
+export const PLAN_FRACTION_MAX = 0.85;

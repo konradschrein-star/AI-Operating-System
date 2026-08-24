@@ -225,6 +225,12 @@ export function useResizablePanel(opts: PanelOptions): {
   };
 }
 
+/** Invisible padding on each side of the visible rule, in px. Total grab
+ *  target is 2*HIT_PAD + the rule. Chosen to clear the ~5px that pointer
+ *  studies treat as the floor for a reliable target without letting the strip
+ *  swallow clicks aimed at the rows either side of it. */
+const HIT_PAD = 5;
+
 /** The grab strip. Sits between two flex children and replaces their border. */
 export function ResizeHandle({
   axis,
@@ -236,17 +242,39 @@ export function ResizeHandle({
 }: ResizeHandleProps & { title?: string }) {
   const [hover, setHover] = useState(false);
   const lit = active || hover;
+  /* The visible rule is 1px. The GRAB TARGET is not: a 1px strip is a
+   * pixel-hunt with a pointer, and a divider you cannot reliably catch reads
+   * as a divider that does not move — which is exactly how these were being
+   * experienced. So the element is HIT_PAD px thick, paints only its content
+   * box (hence `backgroundClip`), and cancels its own padding with a negative
+   * margin so the layout footprint stays the 1px it always was. Nothing moves;
+   * the handle simply becomes catchable. */
   const base: CSSProperties = {
     flex: "none",
     background: lit ? tokens.accent : tokens.borderSoft,
+    backgroundClip: "content-box",
     transition: active ? "none" : "background 120ms ease",
     touchAction: "none",
     zIndex: 2,
   };
   const style: CSSProperties =
     axis === "x"
-      ? { ...base, width: lit ? 3 : 1, cursor: "col-resize", alignSelf: "stretch" }
-      : { ...base, height: lit ? 3 : 1, cursor: "row-resize", alignSelf: "stretch" };
+      ? {
+          ...base,
+          width: lit ? 3 : 1,
+          padding: `0 ${HIT_PAD}px`,
+          margin: `0 -${HIT_PAD}px`,
+          cursor: "col-resize",
+          alignSelf: "stretch",
+        }
+      : {
+          ...base,
+          height: lit ? 3 : 1,
+          padding: `${HIT_PAD}px 0`,
+          margin: `-${HIT_PAD}px 0`,
+          cursor: "row-resize",
+          alignSelf: "stretch",
+        };
   return (
     <div
       ref={handleRef}

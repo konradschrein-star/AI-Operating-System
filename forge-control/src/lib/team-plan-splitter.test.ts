@@ -4,22 +4,28 @@
  * ## Why this test exists
  *
  * Konrad asked for a resizable divider twice and got a `borderBottom` twice.
- * The board hard-capped itself at `maxHeight: 40%` and the tree took the rest,
- * so the split was a CONSTANT — there was no state to change, no handler to
- * fire, and nothing a mouse could do about it. A screenshot of the rail looks
- * identical whether the divider is draggable or not, which is exactly how it
- * shipped inert twice.
+ * PlanKanban hard-capped itself at `maxHeight: 40%` and the tree took the rest,
+ * so the split was a CONSTANT — no state, no handler, nothing a pointer could
+ * change. A screenshot of the rail looks identical whether the divider is
+ * draggable or not, which is precisely how it shipped inert twice. Only a
+ * source-level assertion catches that class of regression.
  *
- * So this pins both halves:
+ * ## What is pinned, and why these things
  *
- *   1. the arithmetic, as real unit tests against ./plan-split — the clamp is
- *      where a resize goes wrong (drag past the edge, a panel too short for two
- *      zones, a corrupt stored value), and none of it needs a DOM;
- *   2. the affordances, as SOURCE assertions — that the handle actually carries
- *      pointer handlers, `cursor: row-resize`, pointer capture and a
- *      `role="separator"`. A component that computes a perfect fraction and
- *      renders a plain div is the bug we are preventing, and no arithmetic test
- *      would catch it.
+ *   1. The panel uses the app's ONE resize primitive (`_ui/ResizableSplit`)
+ *      rather than a second implementation of dragging. The first version of
+ *      this fix hand-rolled pointer capture, persistence and a clamp — all of
+ *      which already existed, reviewed, ten lines away. A parallel splitter
+ *      drifts from the shell's.
+ *   2. `invert: true` — the sized zone is BELOW the handle, so dragging up must
+ *      GROW it. Get this wrong and the divider works perfectly backwards.
+ *   3. PlanKanban actually drops its own 40% cap when the parent owns the
+ *      height. Leave it in and dragging past 40% moves the handle and nothing
+ *      else: the exact "it still isn't adjustable" bug, with a working
+ *      splitter attached.
+ *   4. The handle has a real hit target. A 1px grab strip is a pixel-hunt, and
+ *      a divider you cannot catch is indistinguishable from one that does not
+ *      move.
  *
  * Source assertions follow the precedent in ./chat-popover-hover.test.ts.
  */
@@ -29,139 +35,113 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  KEY_STEP,
-  MIN_ZONE_PX,
   PLAN_FRACTION_DEFAULT,
   PLAN_FRACTION_KEY,
-  clampPlanFraction,
-  parseStoredFraction,
+  PLAN_FRACTION_MAX,
+  PLAN_FRACTION_MIN,
 } from "../../../forge-control-web/app/desktop/team/plan-split";
 
-const PANEL_SRC = readFileSync(
-  fileURLToPath(
-    new URL("../../../forge-control-web/app/desktop/team/ChatTeamPanel.tsx", import.meta.url),
-  ),
-  "utf8",
-);
+const read = (rel: string): string =>
+  readFileSync(fileURLToPath(new URL(`../../../forge-control-web/${rel}`, import.meta.url)), "utf8");
 
-const KANBAN_SRC = readFileSync(
-  fileURLToPath(
-    new URL("../../../forge-control-web/app/desktop/team/PlanKanban.tsx", import.meta.url),
-  ),
-  "utf8",
-);
+const PANEL_SRC = read("app/desktop/team/ChatTeamPanel.tsx");
+const KANBAN_SRC = read("app/desktop/team/PlanKanban.tsx");
+const SPLIT_SRC = read("app/desktop/_ui/ResizableSplit.tsx");
 
-describe("plan splitter — the clamp", () => {
-  test("an ordinary drag is returned untouched", () => {
-    assert.equal(clampPlanFraction(0.5, 800), 0.5);
-    assert.equal(clampPlanFraction(0.25, 800), 0.25);
+describe("plan splitter — bounds", () => {
+  test("the default is PlanKanban's old 40%, so an untouched rail is unchanged", () => {
+    assert.equal(PLAN_FRACTION_DEFAULT, 0.4);
   });
 
-  test("neither zone can be dragged below the floor", () => {
-    const shell = 800;
-    const floor = MIN_ZONE_PX / shell; // 0.12
-    // Dragged to the very bottom: the PLAN zone keeps its floor.
-    assert.equal(clampPlanFraction(0, shell), floor);
-    // Dragged to the very top: the TEAM zone keeps its floor.
-    assert.equal(clampPlanFraction(1, shell), 1 - floor);
-    // And well past either edge.
-    assert.equal(clampPlanFraction(-5, shell), floor);
-    assert.equal(clampPlanFraction(99, shell), 1 - floor);
+  test("the bounds are a real range that keeps both zones on screen", () => {
+    assert.ok(PLAN_FRACTION_MIN > 0, "a zero floor lets a zone vanish with no way back");
+    assert.ok(PLAN_FRACTION_MAX < 1, "a ceiling of 1 does the same to the team tree");
+    assert.ok(
+      PLAN_FRACTION_MIN < PLAN_FRACTION_DEFAULT && PLAN_FRACTION_DEFAULT < PLAN_FRACTION_MAX,
+      "the default must sit strictly inside the range, or the first drag jumps",
+    );
   });
 
-  test("a panel too short for two floors splits evenly instead of inverting", () => {
-    // 150px cannot hold two 96px zones. min (0.64) > max (0.36): feeding that
-    // inverted range to Math.min/Math.max returns the WRONG bound silently,
-    // which is the whole reason for the explicit branch.
-    assert.equal(clampPlanFraction(0.4, 150), 0.5);
-    assert.equal(clampPlanFraction(0.01, 150), 0.5);
-    assert.equal(clampPlanFraction(0.99, 150), 0.5);
-  });
-
-  test("exactly two floors is still degenerate, and says so", () => {
-    // shell == 2 * MIN_ZONE_PX -> min === max === 0.5. `min >= max` catches the
-    // equality case too; a range of one point is not a range.
-    assert.equal(clampPlanFraction(0.3, MIN_ZONE_PX * 2), 0.5);
-  });
-
-  test("asked before layout, it does not invent a measurement", () => {
-    // shellPx 0 == first paint or a collapsed panel. No pixel floor exists yet.
-    assert.equal(clampPlanFraction(0.4, 0), 0.4);
-    assert.equal(clampPlanFraction(0.95, 0), 0.85);
-    assert.equal(clampPlanFraction(0.02, 0), 0.15);
-    assert.equal(clampPlanFraction(0.4, Number.NaN), 0.4);
-  });
-
-  test("a non-finite fraction falls back to the default rather than propagating", () => {
-    assert.equal(clampPlanFraction(Number.NaN, 800), PLAN_FRACTION_DEFAULT);
-    assert.equal(clampPlanFraction(Number.POSITIVE_INFINITY, 800), PLAN_FRACTION_DEFAULT);
+  test("the key is namespaced with the shell's other layout keys", () => {
+    assert.equal(PLAN_FRACTION_KEY, "forge.layout.teamPlanFraction");
   });
 });
 
-describe("plan splitter — persistence", () => {
-  test("a good stored value round-trips", () => {
-    assert.equal(parseStoredFraction("0.62"), 0.62);
+describe("plan splitter — it is wired to the shared primitive", () => {
+  test("the panel uses useResizablePanel rather than a second splitter", () => {
+    assert.match(PANEL_SRC, /import \{ ResizeHandle, useResizablePanel \} from "\.\.\/_ui\/ResizableSplit"/);
+    assert.match(PANEL_SRC, /useResizablePanel\(\{/);
+    assert.match(PANEL_SRC, /<ResizeHandle \{\.\.\.planHandleProps\}/);
   });
 
-  test("every bad stored value yields the default", () => {
-    for (const bad of [null, "", "   ", "null", "undefined", "NaN", "abc", "0", "1", "1.5", "-0.3"]) {
-      assert.equal(
-        parseStoredFraction(bad),
-        PLAN_FRACTION_DEFAULT,
-        `${JSON.stringify(bad)} should fall back to the default`,
+  test("no hand-rolled drag survives in the panel", () => {
+    // The first cut of this fix duplicated all of these. If any comes back,
+    // the panel has grown a private splitter again.
+    for (const dup of ["setPointerCapture", "onPointerMove=", "clampPlanFraction"]) {
+      assert.doesNotMatch(
+        PANEL_SRC,
+        new RegExp(dup.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        `${dup} belongs to _ui/ResizableSplit, not to ChatTeamPanel`,
       );
     }
   });
 
-  test("the default is still PlanKanban's old 40%, so an untouched rail is unchanged", () => {
-    assert.equal(PLAN_FRACTION_DEFAULT, 0.4);
+  test("it is a vertical drag, inverted, measured as a fraction", () => {
+    assert.match(PANEL_SRC, /axis: "y"/);
+    assert.match(PANEL_SRC, /unit: "fraction"/);
+    // The sized zone is BELOW the handle: without invert, dragging up shrinks
+    // the thing you are dragging toward.
+    assert.match(PANEL_SRC, /invert: true/);
+  });
+
+  test("the PLAN zone's height comes from the dragged fraction", () => {
+    assert.match(PANEL_SRC, /flex: `0 0 \$\{\(planFraction \* 100\)/);
   });
 });
 
-describe("plan splitter — the handle is real", () => {
-  test("the divider is a separator with the drag handlers actually bound", () => {
-    assert.match(PANEL_SRC, /data-team-plan-splitter/, "the handle must be findable in the DOM");
-    assert.match(PANEL_SRC, /role="separator"/);
-    assert.match(PANEL_SRC, /aria-orientation="horizontal"/);
-    for (const handler of ["onPointerDown", "onPointerMove", "onPointerUp", "onPointerCancel"]) {
-      assert.match(PANEL_SRC, new RegExp(`${handler}=\\{`), `${handler} must be bound`);
-    }
-  });
-
-  test("it looks draggable and behaves like a drag", () => {
-    assert.match(PANEL_SRC, /cursor: "row-resize"/, "a divider that does not say grab me is not a control");
-    assert.match(PANEL_SRC, /setPointerCapture/, "a 7px strip loses the pointer without capture");
-    assert.match(PANEL_SRC, /touchAction: "none"/, "otherwise a touch drag scrolls the rail instead");
-  });
-
-  test("it is reachable and resettable without a mouse", () => {
-    assert.match(PANEL_SRC, /tabIndex=\{0\}/);
-    assert.match(PANEL_SRC, /onKeyDown=\{onSplitterKeyDown\}/);
-    assert.match(PANEL_SRC, /onDoubleClick=/, "double-click is the way back from a bad drag");
-    assert.ok(KEY_STEP > 0 && KEY_STEP < 0.2, "an arrow nudge should be a nudge");
-  });
-
-  test("the fraction is persisted under the shared key", () => {
-    assert.match(PANEL_SRC, /PLAN_FRACTION_KEY/);
-    assert.equal(PLAN_FRACTION_KEY, "forge.teamPanel.planFraction");
-  });
-
-  test("exactly one component decides the height", () => {
-    // The bug this prevents: the splitter sets a flex-basis while PlanKanban
-    // still caps itself at 40%, so dragging past 40% moves the handle and
-    // nothing else. `fill` is how the parent takes ownership.
-    assert.match(PANEL_SRC, /fill\s*$/m, "ChatTeamPanel must pass `fill` to PlanKanban");
+describe("plan splitter — exactly one component owns the height", () => {
+  test("ChatTeamPanel passes fill, PlanKanban drops its cap", () => {
+    assert.match(PANEL_SRC, /^\s*fill$/m, "ChatTeamPanel must pass `fill` to PlanKanban");
     assert.match(
       KANBAN_SRC,
       /maxHeight: fill \? "none" : "40%"/,
-      "PlanKanban must drop its own cap when the parent owns the height",
+      "with the 40% cap left in, dragging past 40% moves the handle and nothing else",
     );
     assert.match(KANBAN_SRC, /flex: fill \? "1 1 0" : "0 1 auto"/);
   });
 
-  test("the team zone can shrink, or the handle gets pushed off the bottom", () => {
-    // `flex: 1` alone keeps min-height:auto on a long org chart and the tree
-    // refuses to shrink below its content.
+  test("the team zone can shrink below its content", () => {
+    // `flex: 1` alone leaves min-height:auto, so a long org chart refuses to
+    // shrink and pushes the handle off the bottom of the rail.
     assert.match(PANEL_SRC, /flex: "1 1 0"/);
+  });
+});
+
+describe("resize handle — the grab target is bigger than the line", () => {
+  test("the handle pads its hit area without changing its footprint", () => {
+    assert.match(SPLIT_SRC, /const HIT_PAD = \d+/);
+    // Padding widens the target; backgroundClip keeps the paint on the 1px
+    // rule; the negative margin gives the padding back to the layout so
+    // nothing shifts.
+    assert.match(SPLIT_SRC, /backgroundClip: "content-box"/);
+    assert.match(SPLIT_SRC, /padding: `\$\{HIT_PAD\}px 0`/);
+    assert.match(SPLIT_SRC, /margin: `-\$\{HIT_PAD\}px 0`/);
+    assert.match(SPLIT_SRC, /padding: `0 \$\{HIT_PAD\}px`/);
+    assert.match(SPLIT_SRC, /margin: `0 -\$\{HIT_PAD\}px`/);
+  });
+
+  test("the pad is big enough to catch and small enough not to swallow clicks", () => {
+    const m = SPLIT_SRC.match(/const HIT_PAD = (\d+)/);
+    assert.ok(m, "HIT_PAD must be a literal so this bound is checkable");
+    const pad = Number(m[1]);
+    assert.ok(pad >= 4, `a ${pad}px pad is still a pixel-hunt`);
+    assert.ok(pad <= 8, `a ${pad}px pad starts eating the rows either side`);
+  });
+
+  test("both axes still declare their cursor and separator role", () => {
+    assert.match(SPLIT_SRC, /cursor: "row-resize"/);
+    assert.match(SPLIT_SRC, /cursor: "col-resize"/);
+    assert.match(SPLIT_SRC, /role="separator"/);
+    assert.match(SPLIT_SRC, /aria-orientation=\{axis === "x" \? "vertical" : "horizontal"\}/);
   });
 });
