@@ -20,6 +20,7 @@
  * agent.spawn_cap ceiling, so there's exactly one place that cap lives.
  */
 
+import { inheritTier } from "./tier-inherit";
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2088,7 +2089,7 @@ async function consolidateVerdictGroup(
        * and a flagship project's stay flagship, without this file knowing which
        * fleet it is serving. `rows` are the REVIEWED tasks — the work being
        * fixed — so their tier is the right one to carry forward. */
-      const inheritedTier = rows.find((r) => r.tier != null)?.tier ?? undefined;
+      const inheritedTier = inheritTier(rows);
       const chain = await createFixChain({
         tier: inheritedTier,
         project_id: projectId,
