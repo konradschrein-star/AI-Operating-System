@@ -225,6 +225,17 @@ export const SSH_TARGET = process.env.RESEARCH_BROWSER_SSH_TARGET ?? 'root@65.10
 export const sshTunnelCommand = (novncPort, target = SSH_TARGET) =>
   `ssh -N -L ${novncPort}:127.0.0.1:${novncPort} ${target}`;
 
+/**
+ * The public host for the takeover landing page. forge-control-web serves /takeover/<runId>
+ * there and carries the socket the rest of the way over a signed, short-lived ticket — see
+ * forge-control/src/lib/browser-takeover.ts. Configurable because this script also runs against
+ * non-production hosts; production never needs to set the env var.
+ */
+export const OS_BASE_URL = process.env.RESEARCH_BROWSER_OS_BASE_URL ?? 'https://os.schreinercontentsystems.com';
+
+/** The clickable, one-hop takeover URL — replaces the ssh tunnel as Konrad's entry point. */
+export const takeoverUrl = (runId, base = OS_BASE_URL) => `${base}/takeover/${runId}`;
+
 // ---------------------------------------------------------------------------
 // Screenshot convention — a CONTRACT, not an implementation detail.
 //
@@ -290,6 +301,13 @@ export function compactStamp(date) {
 export const screenshotName = (date, label) => `${compactStamp(date)}-${sanitiseLabel(label)}.png`;
 export const screenshotPath = (runId, name) => join(UPLOADS_ROOT, runId, name);
 export const uploadsUrl = (runId, name) => `/api/uploads/${runId}/${name}`;
+
+/**
+ * The run→profile marker forge-control's resolveProfileForRun reads (browser-takeover.ts,
+ * route 4). Field names below are the BrowserState interface, verbatim — a mismatch there would
+ * make the viewer silently ignore the marker rather than error.
+ */
+export const browserStatePath = (runId) => join(UPLOADS_ROOT, runId, 'browser_state.json');
 
 /**
  * --run-id, else FORGE_RUN_ID, else the sentinel. Returns the source too, so the JSON says
@@ -474,12 +492,11 @@ export const reminderMarker = (profile, service) =>
  * rejects an over-length reminder with a 400 rather than truncating it (R604/R605), so a
  * too-long reminder is a silent no-notification, i.e. a stuck research lane.
  */
-export function buildLoginReminderText({ profile, service, serviceTitle, novncPort, sshTarget }) {
+export function buildLoginReminderText({ profile, service, serviceTitle, runId, osBaseUrl }) {
   const text =
     `Research browser needs a ONE-TIME login: ${serviceTitle}, profile "${profile}". ` +
-    `1) tunnel: ${sshTunnelCommand(novncPort, sshTarget)} ` +
-    `2) open ${novncUrl(novncPort)} ` +
-    `3) log in by hand in that Chrome window, then leave it. ` +
+    `1) open ${takeoverUrl(runId, osBaseUrl)} ` +
+    `2) take control and log in by hand in that Chrome window, then leave it. ` +
     `The profile keeps the cookies; nothing stores your password. ` +
     `${reminderMarker(profile, service)}`;
   if (text.length > REMINDER_TEXT_MAX) {
@@ -1474,10 +1491,31 @@ async function dismissReminders(ids) {
 }
 
 /**
+ * The marker forge-control's resolveProfileForRun needs to map this run to a profile
+ * (browser-takeover.ts route 4: it reads <uploadDir>/<runId>/browser_state.json and trusts the
+ * .profile field). Written only for a real run id — ADHOC_RUN_ID has no run row anywhere, so a
+ * marker under its dir would be an orphan nothing ever resolves.
+ */
+export function writeBrowserStateMarker({ runId, profile, service, novncPort }) {
+  if (runId === ADHOC_RUN_ID) return { written: false, reason: 'adhoc run id, no run to mark' };
+  const path = browserStatePath(runId);
+  ensureDir(dirname(path), 0o755); // forge-control must be able to read it
+  writeJsonAtomic(path, {
+    profile,
+    service,
+    needs_login: true,
+    is_live: true,
+    novnc_port: novncPort,
+    checked_at: new Date().toISOString(),
+  });
+  return { written: true, path };
+}
+
+/**
  * Queue the one-time-login reminder, unless an identical one for this profile+service was
  * queued in the last hour. The GET runs first — the dedup window is why.
  */
-async function queueLoginReminder({ profile, service, serviceTitle, novncPort }) {
+async function queueLoginReminder({ profile, service, serviceTitle, runId }) {
   const marker = reminderMarker(profile, service);
   const nowMs = Date.now();
   const listed = await fetchMarkedReminders(marker);
@@ -1508,8 +1546,7 @@ async function queueLoginReminder({ profile, service, serviceTitle, novncPort })
     profile,
     service,
     serviceTitle,
-    novncPort,
-    sshTarget: SSH_TARGET,
+    runId,
   });
   const created = await fetchJson('POST /api/reminders', REMINDERS_URL, {
     method: 'POST',
@@ -1773,13 +1810,23 @@ async function handleRequest({ profile, page, ports, request }) {
 
   const takeover = await ensureTakeover(profile, ports, { supervisorPid: process.pid });
   let reminder = null;
-  if (verdict.needsLogin && request.queue_reminder !== false) {
-    reminder = await queueLoginReminder({
+  if (verdict.needsLogin) {
+    // The marker is what lets the viewer resolve run → profile at all; write it whether or not
+    // a reminder goes out, so a manual "Take Control" click still finds the right profile.
+    writeBrowserStateMarker({
+      runId: request.run_id,
       profile,
       service: service.key,
-      serviceTitle: service.title,
       novncPort: ports.novncPort,
     });
+    if (request.queue_reminder !== false) {
+      reminder = await queueLoginReminder({
+        profile,
+        service: service.key,
+        serviceTitle: service.title,
+        runId: request.run_id,
+      });
+    }
   }
 
   writeJsonAtomic(authPath(profile), {
@@ -1878,8 +1925,11 @@ screenshots:
 
 takeover / security:
   x11vnc binds -localhost and websockify binds 127.0.0.1. The VNC surface is NEVER exposed on
-  a public interface. Reach it with:
-    ${sshTunnelCommand(NOVNC_PORT_BASE, SSH_TARGET)}     (port varies per profile)
+  a public interface. On a login wall, the login reminder carries a clickable takeover URL:
+    ${takeoverUrl('<run_id>')}
+  which forge-control-web resolves to a signed, short-lived ticket and proxies to the loopback
+  socket above — no SSH tunnel needed. ${sshTunnelCommand(NOVNC_PORT_BASE, SSH_TARGET)} still
+  reaches the same port directly, for a shell already on this box.
 
 exit codes:
   0  success — JSON status on stdout
