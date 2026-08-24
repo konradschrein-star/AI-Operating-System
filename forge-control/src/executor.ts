@@ -60,6 +60,34 @@ const POOL_KEY = process.env.CLAUDE_POOL_API_KEY ?? "";
 // streamed events); 'claude-pool' is the legacy text-only HTTP path.
 // Per-run override via runs.metadata.engine.
 const DEFAULT_ENGINE = process.env.EXECUTOR_ENGINE ?? "claude-code";
+/* The ONE value that routes a run to the legacy text-only HTTP pool.
+ *
+ * This used to be expressed the other way round — `engine === "claude-code"`
+ * took the CLI branch and *everything else* fell through to the pool. That
+ * inverted default is what broke Gemini (2026-08-24). `saveCcSession` stamps
+ * the producing engine into `metadata.engine` and for a Gemini run that value
+ * is "agy" — so from turn two onward a Gemini chat matched "everything else"
+ * and was posted to the Claude pool over HTTP. Under 10k chars it answered as
+ * Claude while the row still read `agy`; over 10k it died with the error
+ * Konrad kept seeing:
+ *
+ *     [executor] run a5b13a04-… failed: pool 400: Invalid request
+ *
+ * An engine name we do not recognise must never silently become "post the
+ * whole thread to Claude". Only the explicit legacy value goes there; the
+ * unknown case takes the CLI path, where the model id decides Claude vs
+ * Gemini and an unroutable model fails loudly. */
+const LEGACY_POOL_ENGINE = "claude-pool";
+// The deployed pool rejects an oversize `prompt` with 400 rather than
+// truncating. See the clamp at callClaudePool for why we do it ourselves.
+const POOL_MAX_PROMPT_CHARS = Number(
+  process.env.POOL_MAX_PROMPT_CHARS ?? "180000",
+);
+// `timeout_ms` is bounded at 600s by the pool's schema while MAX_RUN_TIMEOUT_MS
+// here is 1800s — the overlap is a 400, so clamp on the way out.
+const POOL_MAX_TIMEOUT_MS = Number(
+  process.env.POOL_MAX_TIMEOUT_MS ?? "600000",
+);
 // USD→EUR for spend_log rows written from CC's total_cost_usd.
 const USD_EUR = Number(process.env.CC_USD_EUR ?? "0.86");
 const POLL_INTERVAL_MS = 1500;
@@ -298,6 +326,37 @@ function getTimeoutFor(
   return Math.max(MIN_RUN_TIMEOUT_MS, Math.min(MAX_RUN_TIMEOUT_MS, raw));
 }
 
+/* The pool validates before it runs, and a violation is a 400 — not a clamp.
+ *
+ * Both of its bounds are reachable from here. `timeout_ms` is capped at 600s
+ * upstream while MAX_RUN_TIMEOUT_MS is 1800s, so a long-timeout run is
+ * rejected outright. `prompt` is capped by length, and the compressor cannot
+ * promise a ceiling: it protects the last N turns verbatim, so a thread whose
+ * tail alone is huge comes back over the line.
+ *
+ * A 400 here is the worst possible shape of failure. It surfaces to Konrad as
+ * `pool 400: Invalid request` — no clue that the cause is size — and it takes
+ * the compressor's own summarize call down with it, so the one mechanism that
+ * would have shrunk the prompt fails first and silently falls back to
+ * deterministic truncation. Clamp to the contract, log what was dropped. */
+function clampForPool(prompt: string): string {
+  if (prompt.length <= POOL_MAX_PROMPT_CHARS) return prompt;
+  // Keep both ends: the head carries the system framing, the tail the actual
+  // question. The middle is what compression would have collapsed anyway.
+  const keep = POOL_MAX_PROMPT_CHARS - 200;
+  const head = Math.floor(keep * 0.3);
+  const tail = keep - head;
+  const dropped = prompt.length - keep;
+  console.warn(
+    `[executor] pool prompt clamped: ${prompt.length}ch > ${POOL_MAX_PROMPT_CHARS}ch, dropped ${dropped}ch from the middle`,
+  );
+  return (
+    prompt.slice(0, head) +
+    `\n\n[… ${dropped} characters elided to fit the pool's ${POOL_MAX_PROMPT_CHARS}-character limit …]\n\n` +
+    prompt.slice(prompt.length - tail)
+  );
+}
+
 async function callClaudePool(
   prompt: string,
   timeoutMs: number,
@@ -311,7 +370,11 @@ async function callClaudePool(
         "content-type": "application/json",
         "x-api-key": POOL_KEY,
       },
-      body: JSON.stringify({ prompt, timeout_ms: timeoutMs }),
+      body: JSON.stringify({
+        prompt: clampForPool(prompt),
+        // The pool's own ceiling. Sending more is a 400, not a longer run.
+        timeout_ms: Math.min(timeoutMs, POOL_MAX_TIMEOUT_MS),
+      }),
       signal: ac.signal,
     });
     const j = (await res.json().catch(() => ({}))) as {
@@ -511,7 +574,19 @@ async function appendThreadEntry(id: string, entry: ThreadEntry): Promise<void> 
  * So the producing engine is recorded beside the id, and `resumableSession()`
  * only hands back an id the engine about to run actually minted. Switching
  * engines mid-chat now starts a fresh conversation instead of failing, which is
- * the honest behaviour: the two engines cannot share context anyway. */
+ * the honest behaviour: the two engines cannot share context anyway.
+ *
+ * ── AND WHY IT WRITES `session_engine`, NOT `engine` (2026-08-24) ────────────
+ * That fix wrote the provenance into `metadata.engine`, which was already
+ * taken: `processRun` reads the same key to choose the DISPATCH branch. One
+ * key, two vocabularies — dispatch says {claude-code | claude-pool},
+ * provenance says {claude-code | agy}. So the first Gemini turn of a chat
+ * succeeded and, on its way out, rewrote its own dispatch to "agy". Turn two
+ * read "agy", failed `=== "claude-code"`, and went to the legacy HTTP pool.
+ * Konrad's `pool 400: Invalid request` is that write landing.
+ *
+ * Provenance now has its own slot and the dispatch key is left exactly as the
+ * operator set it. */
 async function saveCcSession(
   id: string,
   sessionId: string,
@@ -520,7 +595,7 @@ async function saveCcSession(
   await pool.query(
     `UPDATE runs
         SET metadata = COALESCE(metadata, '{}'::jsonb) ||
-                       jsonb_build_object('cc_session_id', $2::text, 'engine', $3::text),
+                       jsonb_build_object('cc_session_id', $2::text, 'session_engine', $3::text),
             updated_at = now()
       WHERE id = $1`,
     [id, sessionId, engine],
@@ -588,9 +663,19 @@ async function processRun(run: ClaimedRun): Promise<void> {
   // pre-flight below is itself a completion path — so it needs to know which
   // engine this run is on BEFORE it writes anything.
   const engine = String(run.metadata?.engine ?? DEFAULT_ENGINE);
-  const guardRunning = engine === "claude-code";
+  // Opt IN to the legacy pool, never fall into it (see LEGACY_POOL_ENGINE).
+  // `guardRunning` follows the branch rather than the literal "claude-code":
+  // 07 §6 exempts the pool path from the completion guard, and every other
+  // engine — agy included — runs through processWithClaudeCode, which is the
+  // control plane the guard belongs to.
+  const usesPool = engine === LEGACY_POOL_ENGINE;
+  const guardRunning = !usesPool;
   const model = typeof run.metadata?.model === "string" ? run.metadata.model : undefined;
-  const isGemini = isGeminiModel(model) || engine === "gemini" || engine === "gemini-cli";
+  const isGemini =
+    isGeminiModel(model) ||
+    engine === "gemini" ||
+    engine === "gemini-cli" ||
+    engine === "agy";
 
   // Guardrail pre-flight: spend cap + runtime kill switch on the chat path.
   // Rough thread-char → EUR estimate so spend.per_run_cap can bite before a
@@ -691,7 +776,7 @@ async function processRun(run: ClaimedRun): Promise<void> {
   const timeoutMs = getTimeoutFor(run.metadata);
   const hb = setInterval(() => heartbeat(run.id), 5_000);
   try {
-    if (engine === "claude-code") {
+    if (!usesPool) {
       await processWithClaudeCode(run, memory.block, timeoutMs);
     } else {
       const baseCompressed = await buildCompressedPrompt(

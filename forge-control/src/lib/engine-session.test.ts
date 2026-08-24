@@ -60,6 +60,43 @@ test("legacy rows with no engine field are treated as claude-code, which they we
   assert.equal(resumableSession(legacy, "agy"), null);
 });
 
+/* ── The key split, 2026-08-24 ────────────────────────────────────────────────
+ * Provenance shipped in `metadata.engine`, which the executor already used to
+ * choose its dispatch branch. A Gemini run's first turn wrote "agy" there and
+ * every later turn of that chat went to the legacy HTTP pool instead of agy —
+ * surfacing as `pool 400: Invalid request`. Provenance moved to
+ * `session_engine`; both generations of rows must still read back correctly. */
+
+test("session_engine is authoritative when both keys are present", () => {
+  // A live chat pinned to the pool that nonetheless minted a Claude session id:
+  // dispatch says claude-pool, provenance says claude-code. Provenance wins.
+  const md = {
+    cc_session_id: CLAUDE_SID,
+    engine: "claude-pool",
+    session_engine: "claude-code",
+  };
+  assert.equal(resumableSession(md, "claude-code"), CLAUDE_SID);
+  assert.equal(resumableSession(md, "agy"), null);
+});
+
+test("collided rows still read correctly — engine IS the producer for those", () => {
+  // The 33 rows written between the two fixes carry the producing engine in
+  // `engine` because saveCcSession is what put it there. Reading it back as
+  // provenance is a fact about that data, not a guess.
+  const collided = { cc_session_id: AGY_SID, engine: "agy" };
+  assert.equal(resumableSession(collided, "agy"), AGY_SID);
+  assert.equal(resumableSession(collided, "claude-code"), null);
+});
+
+test("a dispatch-only 'claude-pool' in the legacy slot is not read as a producer", () => {
+  // The pool never mints a session id, so a row carrying that value in the old
+  // shared key is a pre-split row whose id came from the Claude CLI. Reading
+  // "claude-pool" literally would strand a resumable Claude conversation.
+  const md = { cc_session_id: CLAUDE_SID, engine: "claude-pool" };
+  assert.equal(resumableSession(md, "claude-code"), CLAUDE_SID);
+  assert.equal(resumableSession(md, "agy"), null);
+});
+
 test("absent or malformed session ids yield null rather than throwing", () => {
   assert.equal(resumableSession(null, "claude-code"), null);
   assert.equal(resumableSession(undefined, "agy"), null);

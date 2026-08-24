@@ -217,8 +217,12 @@ describe("call sites", () => {
     );
   });
 
-  test("the catch-path completions are guarded only for the claude-code engine", () => {
-    assert.match(EXEC, /const guardRunning = engine === "claude-code";/);
+  test("the catch-path completions are guarded for every engine but the pool", () => {
+    // Was `engine === "claude-code"`. 2026-08-24: the executor stopped
+    // enumerating the guarded engine and started naming the ONE unguarded one.
+    // 07 §6 exempts the legacy pool path; agy is not the pool, it runs through
+    // processWithClaudeCode, and it must carry the guard like any other run.
+    assert.match(EXEC, /const guardRunning = !usesPool;/);
     assert.match(EXEC, /"stuck",\s*\n\s*"timeout",\s*\n\s*\{ guardRunning \},/);
     assert.match(EXEC, /"failed",\s*\n\s*null,\s*\n\s*\{ guardRunning \},/);
     const guardedNotifies = EXEC.match(/if \(written\.applied && !written\.requeued\) \{/g) ?? [];
@@ -247,11 +251,46 @@ describe("call sites", () => {
     // processRun, is what makes that impossible to get wrong again.
     const proc = sliceFrom(EXEC, "async function processRun(", "if (!guard.allow) {");
     assert.match(proc, /const engine = String\(run\.metadata\?\.engine \?\? DEFAULT_ENGINE\);/);
-    assert.match(proc, /const guardRunning = engine === "claude-code";/);
+    assert.match(proc, /const usesPool = engine === LEGACY_POOL_ENGINE;/);
+    assert.match(proc, /const guardRunning = !usesPool;/);
     assert.equal(
-      (EXEC.match(/const guardRunning = engine === "claude-code";/g) ?? []).length,
+      (EXEC.match(/const guardRunning = !usesPool;/g) ?? []).length,
       1,
       "guardRunning must be declared exactly once in processRun",
+    );
+  });
+
+  test("the pool is opt-in: an unknown engine takes the CLI branch", () => {
+    // THE REGRESSION THIS EXISTS FOR (2026-08-24).
+    //
+    // The branch used to read `if (engine === "claude-code")`, so every engine
+    // name the executor did not recognise fell through to the legacy HTTP
+    // pool. `saveCcSession` stamps the PRODUCING engine into metadata, and for
+    // a Gemini run that is "agy" — so from turn two a Gemini chat matched
+    // "everything else" and was posted to Claude. Konrad saw it as
+    // `pool 400: Invalid request` once the thread outgrew the pool's cap.
+    //
+    // Only the explicit legacy value may route to the pool. Anything else,
+    // known or not, goes to the CLI where the model id decides the engine.
+    assert.match(EXEC, /const LEGACY_POOL_ENGINE = "claude-pool";/);
+    assert.match(EXEC, /if \(!usesPool\) \{\n\s*await processWithClaudeCode\(/);
+    assert.doesNotMatch(
+      EXEC,
+      /if \(engine === "claude-code"\) \{/,
+      "the pool must be opt-in, never the fall-through",
+    );
+  });
+
+  test("provenance and dispatch do not share one metadata key", () => {
+    // saveCcSession writes which engine minted `cc_session_id`. It used to
+    // write that into `metadata.engine` — the same key processRun reads to
+    // pick its branch — which is what rerouted Gemini chats to the pool.
+    const save = sliceFrom(EXEC, "async function saveCcSession(", "async function addRunSpend(");
+    assert.match(save, /'session_engine', \$3::text/);
+    assert.doesNotMatch(
+      save,
+      /'engine', \$3::text/,
+      "session provenance must not overwrite the dispatch key",
     );
   });
 

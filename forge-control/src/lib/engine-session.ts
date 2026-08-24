@@ -36,19 +36,38 @@ export function engineForModel(model: string | null | undefined): string {
  *  minted it. Null otherwise, which starts a fresh conversation on the new
  *  engine — the honest outcome, since the two engines cannot share context.
  *
- *  Rows written before `engine` was recorded truthfully carry the hardcoded
- *  "claude-code", which is what they in fact were: every writer of this slot
- *  before the fix was the Claude path. So the default is a fact about the
- *  data, not an optimistic guess. */
+ *  ── THE KEY IS `session_engine`, NOT `engine` (2026-08-24) ─────────────────
+ *  Provenance first shipped in `metadata.engine`, which the executor already
+ *  used to pick its DISPATCH branch. Writing "agy" there rerouted every
+ *  Gemini chat to the legacy HTTP pool from turn two onward — see the header
+ *  on `saveCcSession`. Provenance now owns `session_engine` and dispatch keeps
+ *  `engine`.
+ *
+ *  Two generations of rows are read back, and the fallback order is a fact
+ *  about the data rather than a guess:
+ *    1. `session_engine` — written since the split. Authoritative.
+ *    2. `engine` — the collided generation. For those rows the value really
+ *       IS the producing engine, because saveCcSession is what wrote it.
+ *    3. neither — predates provenance entirely, and every writer of this slot
+ *       back then was the Claude path.
+ *
+ *  Reading (2) still costs nothing once (1) exists: a row cannot carry a
+ *  `session_engine` unless the current code minted its id. */
 export function resumableSession(
   metadata: Record<string, unknown> | null | undefined,
   engineNow: string,
 ): string | null {
   const sid = metadata?.cc_session_id;
   if (typeof sid !== "string" || sid === "") return null;
-  const owner =
-    typeof metadata?.engine === "string" && metadata.engine !== ""
-      ? metadata.engine
-      : "claude-code";
+  const stamped =
+    typeof metadata?.session_engine === "string" && metadata.session_engine !== ""
+      ? metadata.session_engine
+      : typeof metadata?.engine === "string" && metadata.engine !== ""
+        ? metadata.engine
+        : "claude-code";
+  // Dispatch names the pool path "claude-pool"; that engine never mints a
+  // session id, so a row carrying it in the legacy slot is a pre-split row
+  // whose id came from the Claude CLI.
+  const owner = stamped === "claude-pool" ? "claude-code" : stamped;
   return owner === engineNow ? sid : null;
 }
