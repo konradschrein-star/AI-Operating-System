@@ -36,6 +36,7 @@ import {
   deleteRun,
   planRunDeletion,
   RunStillRunningError,
+  type RunDetail,
   type RunStatus,
   type ThreadEntry,
 } from "../db/runs.ts";
@@ -1559,13 +1560,59 @@ r.get("/:id/events", (c) => {
   });
 });
 
-/* Full thread detail. */
+/**
+ * Parse the `since` query param for GET /:id delta support.
+ *
+ * A non-negative integer, or `undefined` for "no delta requested" — NEVER a
+ * thrown error. This is a client's own poll cursor coming back at us; a
+ * malformed value (non-numeric, negative, fractional) is recovered by falling
+ * back to the full-fetch behaviour rather than answering 400, because a stale
+ * or corrupted cursor should self-heal on the very next poll, not break the
+ * open chat.
+ */
+export function parseSinceParam(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) return undefined;
+  return n;
+}
+
+/**
+ * Shape the GET /:id response body given an already-validated (or absent)
+ * `since`.
+ *
+ * `since` omitted, or `since > total`: the full run, `from: 0`. The second
+ * case is the client-recovery path — a bigger cursor than the thread holds
+ * means the client's own count cannot be trusted (a compacted/replaced
+ * thread, or a stale cache from a different chat entirely), and the honest
+ * recovery is the WHOLE thread, not an empty slice that would silently drop
+ * everything the client thinks it never saw.
+ *
+ * `since <= total` otherwise: `run.thread` replaced with the slice from
+ * `since` onward — `since === total` yields `[]` (nothing new, not "no
+ * thread"), `since === 0` yields the full array. Every other field of `run`
+ * is untouched; only `thread` is delta'd.
+ */
+export function chatDeltaResponse(
+  run: RunDetail,
+  since: number | undefined,
+): { run: RunDetail; from: number; total: number } {
+  const total = run.thread.length;
+  if (since === undefined || since > total) {
+    return { run, from: 0, total };
+  }
+  return { run: { ...run, thread: run.thread.slice(since) }, from: since, total };
+}
+
+/* Full thread detail, or a delta since `?since=<n>` thread entries already
+ * held by the caller (round: chat delta API). */
 r.get("/:id", async (c) => {
   const id = c.req.param("id");
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
   const run = await getRun(id);
   if (!run) return c.json({ error: "run not found" }, 404);
-  return c.json({ run });
+  const since = parseSinceParam(c.req.query("since"));
+  return c.json(chatDeltaResponse(run, since));
 });
 
 /* New chat. */
