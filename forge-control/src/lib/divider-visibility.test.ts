@@ -2,8 +2,12 @@
  * Divider Visibility & Box Model Unit Tests
  *
  * Pinned requirements:
- * 1. Rest Visibility: Paints a visible 1px hairline using tokens.borderSoft.
- * 2. Restrained Hover/Drag: Uses tokens.borderEmphasis (no saturated blue tokens.accent slab).
+ * 1. Rest Visibility: Paints a 1px hairline using tokens.borderHandle. (Was
+ *    tokens.borderSoft, which is 1.16:1 against the dark theme's #000 body —
+ *    painted, and invisible. Colour floors live in divider-contrast.test.ts;
+ *    this file pins geometry and which token is referenced.)
+ * 2. Restrained Hover/Drag: tokens.borderHandleHover — brighter, still not the
+ *    saturated blue tokens.accent slab that got these called "ugly".
  * 3. Box Model: Explicit `boxSizing: "content-box"` so padding (HIT_PAD=5) does not
  *    collapse the 1px content box under global border-box.
  * 4. Grab Target: Outer span is 11px (1px + 2*5px) with `position: relative; zIndex: 2`.
@@ -43,11 +47,22 @@ describe("ResizeHandle — source assertions & design token rules", () => {
     );
   });
 
-  test("ResizeHandle uses tokens.borderSoft at rest and tokens.borderEmphasis when lit", () => {
+  /* PIN MOVED, deliberately. This asserted `borderSoft` at rest and
+   * `borderEmphasis` when lit — and it was green while the dividers were
+   * invisible. Measured on the real render: `borderSoft` is 1.16:1 against
+   * this theme's #000 body, `borderEmphasis` 1.32:1. Both painted, neither
+   * perceivable, which is the whole complaint this project exists to answer.
+   *
+   * The handle now has its own tokens, chosen for contrast rather than
+   * borrowed from the border scale. `divider-contrast.test.ts` asserts the
+   * luminance floors that this assertion could never see — a geometry pin and
+   * a colour pin are different guarantees, and only the pair of them means
+   * "visible". */
+  test("ResizeHandle uses the dedicated handle tokens, not the quieter border scale", () => {
     assert.match(
       RESIZABLE_SPLIT_SRC,
-      /backgroundColor:\s*lit\s*\?\s*tokens\.borderEmphasis\s*:\s*tokens\.borderSoft/,
-      "ResizeHandle must use tokens.borderEmphasis on hover/active and tokens.borderSoft at rest",
+      /backgroundColor:\s*lit\s*\?\s*tokens\.borderHandleHover\s*:\s*tokens\.borderHandle/,
+      "ResizeHandle must use tokens.borderHandleHover when lit and tokens.borderHandle at rest",
     );
   });
 

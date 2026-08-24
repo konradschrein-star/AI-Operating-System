@@ -274,7 +274,13 @@ export function ResizeHandle({
      * source-regex/arithmetic test cannot see, since it only exists after
      * React re-renders a real DOM node. `backgroundColor` is a longhand: it
      * never touches backgroundClip. */
-    backgroundColor: lit ? tokens.borderEmphasis : tokens.borderSoft,
+    /* `borderHandle`, NOT `borderSoft`. Making the line paint again was only
+     * half the fix. Measured on the real render (2026-08-24), `borderSoft` is
+     * 1.16:1 against this theme's #000 body and `borderEmphasis` is 1.32:1 —
+     * pixel-correct, and invisible to an eye. A card's edge may whisper
+     * because the shape it encloses gives it away; a divider encloses nothing
+     * and IS the affordance, so it gets its own tone. See theme.css. */
+    backgroundColor: lit ? tokens.borderHandleHover : tokens.borderHandle,
     backgroundClip: "content-box",
     transition: active ? "none" : "background 120ms ease",
     touchAction: "none",
