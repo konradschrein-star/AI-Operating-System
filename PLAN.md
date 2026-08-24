@@ -1,179 +1,169 @@
-# PLAN — aios-chat-list-payload (Chat Rail & Console Payload Optimization)
+# Architecture Plan: aios-uploads-index-payload
 
-Project `dbd45b44-57a8-46ff-b4ab-0628fdd580ca` · branch `project/dbd45b44` · architect round 0 · 2026-08-24
+## Executive Summary & Recommendation
 
-## 0. Recommendation, in one paragraph
+**Recommendation**:
+1. **Backend Payload Pruning (`forge-control/src/lib/uploads-index.ts`)**: Prune idle run rows in `/api/uploads/index` by omitting `browser_state`, `is_live`, `needs_human`, and `signal` when inactive (`!is_live && !needs_human`). Only serialize active indicators (`is_live: true`, `needs_human: true`, `signal`, and `browser_state`) when a run is live or alerting. This reduces uncompressed response body from **~60.7 KB down to ~15.3 KB** across 133 runs (~75% reduction).
+2. **Proxy Header Passthrough Route Handler (`forge-control-web/app/api/proxy/[...path]/route.ts`)**: Replace the Next.js `rewrites()` rule in `next.config.mjs` for `/api/proxy/*` with a dedicated App Router Route Handler that explicitly forwards conditional request headers (`If-None-Match`, `If-Match`, `If-Modified-Since`) and faithfully passes through upstream status codes (notably **HTTP 304 Not Modified**) and headers (`ETag`, `Cache-Control`, `Content-Type`).
+3. **Client Integration & Verification**: Ensure `BrowserShots.tsx` (`useShotIndex`, `RunShotsIndicator`) handles optional `browser_state` smoothly without layout shifts, preserving identical visual indicators (idle camera count, live blue flowing sheen, and red pulse alert with diagnostic popover). Prove zero visual regression via screenshots of all 3 states.
+4. **Target Metric**: Restore steady-state `/uploads/index` bandwidth from **121,374 B/min down to ~300 B/min** (>99.7% reduction at 2 req/min / 30s poll), well below the **< 20,000 B/min** project threshold.
 
-Cut the chat rail and secondary console polling bandwidth by **~78% overall (from 254.2 KB/min down to ~55 KB/min)** across three targeted, zero-visual-regression optimizations:
-1. **`/api/proxy/chat` (49% of traffic, ~125 KB/min at 7 req/min / 18 KB per response)**: Prune unrendered execution baggage (`subagents_v2`, system prompts, raw tool schemas, logs) from `runs.metadata` in `listRuns` / `searchRuns` (`forge-control/src/db/runs.ts`), shipping only the essential context gauge and model keys (`usage_running`, `usage_last_turn`, `model`, `model_resolved`, `effort`). This cuts the rail list payload from ~18 KB to ~2.5 KB per response (an **~84% reduction**, saving ~105 KB/min) while preserving 100% identical UI rendering, status indicators, preview text, task progress pills, and context occupancy gauge/popover behavior.
-2. **`/api/proxy/chat/<chat>/team` (33% of traffic, ~82.6 KB/min at 10 req/min / 8 KB per response)**: Tune `TEAM_POLL_MS` in `pollBudget.ts` from 6s (10 req/min) to 10s (6 req/min) and pause/back off polling when all nodes in the tree are settled, cutting team bandwidth by **~50–70%** (saving ~45–55 KB/min) while staying comfortably within the committed ≤ 40 req/min ceiling.
-3. **`/api/proxy/uploads/index` (13% of traffic, ~32.1 KB/min at 2 req/min / 16 KB per response)**: Implement lightweight conditional caching (ETag / `If-None-Match` or versioned 304 Not Modified) in `forge-control/src/routes/uploads.ts` backed by `uploads-index.ts`'s existing in-memory cache invalidation, cutting index polling bandwidth by **>95%** (saving ~30 KB/min).
+**Reasoning**:
+- The 4x payload explosion (16 KB -> 60 KB) occurred because `aios-browser-stream-viewer` attached a full 14-field `browser_state` object to all 133 runs in the index, even though 99% are historical/idle runs that never need it. Detailed shot & browser state is already loaded on-demand via `GET /api/uploads/:id/shots` when an indicator is clicked.
+- The caching failure occurred because Next.js internal `rewrites()` in `next.config.mjs` strip `ETag` and conditional caching headers on reverse-proxied responses. Bypassing the rewrite with an App Router Route Handler restores full HTTP 304 conditional request semantics for the browser without altering the NextAuth middleware security boundary.
 
-Rejected alternatives (one line each):
-- Completely removing `metadata` from `RunSummary`: breaks the context occupancy bar and popover on the chat rail.
-- Global client-side pagination with limit=5: breaks scroll discovery and forces jarring "load more" clicks.
-- Client-side polling suppression without server ETag: risks stale screenshot indicators when agents capture new browser shots.
-- Merging team tree updates into the transcript SSE stream: tightly couples unrelated domain models and breaks independent panel lifecycle.
-
----
-
-## 1. Measured Baseline & Root Cause Analysis
-
-Measured in production at rest, 60s window, 2026-08-24 06:05Z:
-
-```
-TOTAL 254,171 bytes/min
-
-bytes/min  req/min  share  endpoint
-   125288        7    49%  /api/proxy/chat                  <- SCOPE ITEM 1
-    82638       10    33%  /api/proxy/chat/<chat>/team      <- SCOPE ITEM 2
-    32125        2    13%  /api/proxy/uploads/index         <- SCOPE ITEM 3
-     7972        2     3%  /api/proxy/chat/<chat>/plan
-     4938        3     2%  /api/proxy/chat/<chat>            <- already fixed via prompt delta
-     1210        1     0%  /api/proxy/usage/quota
-```
-
-### Root Cause Breakdown:
-1. **`GET /chat` (~18 KB / response, 7 req/min)**:
-   - `listRuns(limit=30, offset)` in `forge-control/src/db/runs.ts:120-172` executes `SELECT ... metadata FROM runs`.
-   - `metadata` in `content_forge.runs` contains full agent state (e.g. `subagents_v2` trees, transcripts, prompt copies, system configuration). For 30 runs, metadata averages 400B–2KB+ per row.
-   - Consumer audit (`ChatListItem` in `ChatSurface.tsx:1507-1748`): The rail renders:
-     - `run.id`, `run.title`, `run.status`, `run.updated_at` (human age), `run.last_role`, `run.last_message_preview`, `run.archived`.
-     - `run.tasks_done`, `run.tasks_total`, `run.project_status`, `run.project_id` (from `rollupChatProjects`).
-     - `contextOccupancy(run.metadata)` & `ChatContextPopover`: reads `meta.usage_running ?? meta.usage_last_turn` (`input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens`) and `meta.model_resolved ?? meta.model`.
-   - No other fields from `metadata` are rendered on the rail.
-2. **`GET /chat/<chat>/team` (~8 KB / response, 10 req/min)**:
-   - `TEAM_POLL_MS = 6_000` (10 req/min) in `pollBudget.ts:51`.
-   - Re-transmits the complete tree of 20–40 nodes every 6s, even when the project is finished or workers are idle/settled.
-3. **`GET /uploads/index` (~16 KB / response, 2 req/min)**:
-   - Every 30s (`SHOTS_INDEX_POLL_MS`), `BrowserShots.tsx` queries `/uploads/index`.
-   - Returns all 133 directory entries on every request, with no conditional HTTP caching (304) despite `uploads-index.ts` maintaining an in-process cache with explicit invalidation.
+**Rejected Alternatives**:
+- *Omit runs with zero screenshots entirely from `/uploads/index`*: Rejected because `LibrarySurface.tsx` requires all run directories containing listable artifacts (patches, diffs, logs, transcripts).
+- *Poll `/uploads/index` only for currently visible runs*: Rejected because the console rail / team list dynamically scrolls and filtering by visible run IDs adds query complexity without eliminating cache invalidation overhead.
+- *Rely on client-side polling backoff or longer poll intervals*: Rejected because a 30s poll interval (`SHOTS_INDEX_POLL_MS`) is already budgeted, and slowing it down degrades live screenshot freshness for active agent tasks.
+- *Use custom nginx location bypass for `/api/proxy/uploads/index`*: Rejected because nginx bypasses NextAuth middleware and introduces routing fragmentation across routes.
 
 ---
 
-## 2. Architecture & Detailed Design
+## Architectural Analysis & System Design
 
-```mermaid
-sequenceDiagram
-    participant Browser as Desktop Web Client
-    participant Proxy as Next.js Proxy (/api/proxy)
-    participant Server as forge-control (:7700)
-    participant DB as Postgres (content_forge)
-
-    Note over Browser,Server: 1. Chat Rail List (GET /api/proxy/chat)
-    Browser->>Server: GET /api/chat?limit=30
-    Server->>DB: SELECT id, title, status, updated_at, thread, metadata... FROM runs
-    Server->>Server: Prune metadata to { model, model_resolved, usage_running, usage_last_turn, effort }
-    Server-->>Browser: 200 OK (2.5 KB vs 18 KB baseline) — 84% reduction
-
-    Note over Browser,Server: 2. Team Tree Polling (GET /api/proxy/chat/:id/team)
-    Browser->>Server: GET /api/chat/:id/team (polled every 10s vs 6s)
-    Server-->>Browser: 200 OK TeamResponse (6 req/min vs 10 req/min) — 40% reduction
-
-    Note over Browser,Server: 3. Uploads Index Polling (GET /api/proxy/uploads/index)
-    Browser->>Server: GET /api/uploads/index (If-None-Match: "v12")
-    Server->>Server: Check cache version/mtime
-    Server-->>Browser: 304 Not Modified (0 bytes vs 16 KB) — 99% steady-state reduction
-```
-
-### Component Details:
-
-#### A. Backend Rail Optimization (`forge-control/src/db/runs.ts` & `src/routes/chat.ts`)
-- Add helper `trimRailMetadata(meta: Record<string, unknown> | null | undefined): Record<string, unknown>`:
-  - Extracts only: `model`, `model_resolved`, `usage_running`, `usage_last_turn`, `effort`.
-  - Drops heavy subagent trees (`subagents_v2`), tool configs, system prompts, error stack traces, etc.
-- In `listRuns()` and `searchRuns()`:
-  - Apply `trimRailMetadata` when constructing `RunSummary.metadata`.
-- Verify that `RunSummary` wire type is preserved, all context gauge popovers open with exact token figures, and no TypeScript types are violated.
-
-#### B. Team Polling & Settlement Optimization (`forge-control-web/app/desktop/chat/pollBudget.ts` & `ChatTeamPanel.tsx`)
-- In `pollBudget.ts`:
-  - Update `TEAM_POLL_MS` from `6_000` to `10_000` (6 req/min).
-  - Update poll budget arithmetic in `scripts/checks/check-chat-delta.ts` to reflect the updated constant and verify that total degraded rate is well below the 40 req/min ceiling (e.g. 32 req/min degraded, 19 req/min healthy).
-- In `ChatTeamPanel.tsx`:
-  - Maintain active polling while runs are live; if all nodes in `team.data` are `settled: true` and the project status is terminal (`completed`, `failed`, `cancelled`), adjust polling to idle/stale.
-
-#### C. Uploads Index Conditional Caching (`forge-control/src/routes/uploads.ts` & `src/lib/uploads-index.ts`)
-- In `uploads-index.ts`:
-  - Export `getUploadsCacheTag(): string` that returns a deterministic ETag based on directory mtime / generation version.
-- In `routes/uploads.ts` `GET /index`:
-  - Read `If-None-Match` request header.
-  - If matches current tag, return `c.body(null, 304, { "ETag": tag, "Cache-Control": "no-cache" })`.
-  - Otherwise return `200` with `{ runs }` and `ETag` header.
-
----
-
-## 3. State Ownership, Failure Modes & Observability
-
+### 1. State Ownership, Work Dispatch, and Failure Modes
 - **State Ownership**:
-  - `content_forge.runs` owns run state and full metadata.
-  - `forge-control` owns shaping and pruning of `RunSummary` for rail consumption.
-  - React Query `["chat", "list", visibleCount]` owns client rail state.
-- **Failure Modes & Defenses**:
-  - *Missing pruned metadata field*: Fallback in `context-window.ts` gracefully returns `null` or assumed window; test suite verifies exact parity.
-  - *Stale 304 on fresh upload*: `invalidateRunsCache()` is invoked on every upload POST in `routes/uploads.ts:114`, immediately updating the cache tag and forcing 200 on next poll.
-  - *Database query timeout*: `listRuns` and `teamPool` continue using bounded pools with connection timeouts; errors return structured 500 without crashing the server.
-- **Observability**:
-  - Measurement script `scripts/checks/check-chat-rail-payload.ts` computes and verifies byte sizes and reductions.
-  - Universal test gate `scripts/checks/gates-808.sh` and typechecks verify clean compilation and zero regressions.
+  - `forge-control/src/lib/uploads-index.ts` owns the filesystem sweep over `/opt/ai-os/uploads`, cache invalidation (`invalidateRunsCache()`), and ETag calculation (`getUploadsCacheTag()`).
+  - `forge-control-web/app/api/proxy/[...path]/route.ts` owns the transport-level HTTP request/response proxying between the browser and forge-control (`:7700`).
+  - `BrowserShots.tsx` owns the client query hook (`useShotIndex`, query key `["uploads-index"]`), deriving stream mode via `resolveStreamMode(browserState)`.
+- **What Dispatches Work**:
+  - Client: TanStack Query in `BrowserShots.tsx` dispatches `GET /api/proxy/uploads/index` every 30s (`SHOTS_INDEX_POLL_MS`).
+  - Proxy: `route.ts` receives request, attaches `If-None-Match` from client, and invokes `http://127.0.0.1:7700/api/uploads/index`.
+  - Backend: `routes/uploads.ts` compares `If-None-Match` with in-memory `tag`. If matched, returns `304 Not Modified` with 0 body bytes.
+- **Failure Modes & Degradation**:
+  - *forge-control offline*: Route handler catches network error and returns `502 Bad Gateway` with clear JSON error. TanStack Query enters error state and retains previous query data (`staleTime`).
+  - *Corrupted / missing run directory*: `uploads-index.ts` skips unreadable entries without throwing (`catch(() => [])`), maintaining index availability.
+  - *Browser state resolution failure*: `resolveBrowserState` falls back gracefully to `{ is_live: false, needs_human: false }`, rendering idle camera count.
+- **How Konrad Sees It Broke**:
+  - Hard errors surfaced via console toast / red indicator error badge.
+  - Test suites (`pnpm test`, `check-uploads-payload.ts`, `gates-808.sh --strict`) fail on any non-200/304 response, dropped ETag, or oversized payload.
 
 ---
 
-## 4. Work Breakdown & Task Dependency Graph
+## Technical Specifications
 
-All tasks belong to workstream `main` with disjoint write sets.
+### Component 1: Backend Payload Pruning (`forge-control/src/lib/uploads-index.ts`)
+```ts
+// Idle run representation in computeAllRuns():
+const baseSummary: RunSummary = {
+  id: entry.name,
+  count: images.length,
+  image_count: images.length,
+  artifact_count: files.length - images.length,
+  file_count: files.length,
+  latest_ts: files[0].mtime,
+};
 
-```mermaid
-graph TD
-    T1["Task 1: builder (standard)<br/>Backend Rail Metadata Pruning<br/>runs.ts, routes/chat.ts, chat-delta.test.ts"]
-    T2["Task 2: builder (standard)<br/>Team & Uploads Caching & Polling<br/>routes/uploads.ts, uploads-index.ts, pollBudget.ts, ChatTeamPanel.tsx, check-chat-delta.ts"]
-    T3["Task 3: builder (junior)<br/>Harness & Evidence<br/>check-chat-rail-payload.ts, README.md"]
-    T4["Task 4: reviewer (standard)<br/>Full Diff & Regression Review<br/>(join on T1, T2, T3)"]
-
-    T1 --> T3
-    T2 --> T3
-    T1 --> T4
-    T2 --> T4
-    T3 --> T4
+// Only attach enriched browser state when active or needs human intervention
+if (browser_state.is_live || browser_state.needs_human) {
+  baseSummary.is_live = browser_state.is_live;
+  baseSummary.needs_human = browser_state.needs_human;
+  baseSummary.signal = browser_state.signal;
+  baseSummary.browser_state = browser_state;
+}
+runs.push(baseSummary);
 ```
+- ETag computation in `computeTag(runs)` includes `is_live`, `needs_human`, `signal` alongside counts and `latest_ts`, ensuring immediate invalidation when a run transitions between idle, live, and alerting states.
 
-### Tasks:
+### Component 2: Next.js App Router Route Handler (`forge-control-web/app/api/proxy/[...path]/route.ts`)
+- Mounts at `app/api/proxy/[...path]/route.ts`.
+- Handles `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`.
+- Extracts `path` parameter and search parameters, constructing target URL `${FORGE_CONTROL}/api/${subpath}${query}`.
+- Forwards incoming headers (including `if-none-match`, `if-match`, `if-modified-since`, `accept`, `content-type`, `authorization`, `cookie`).
+- Passes through upstream response status (specifically `304 Not Modified`) and all upstream headers (`etag`, `cache-control`, `content-type`, `content-length`).
+- Handles response streaming via `new Response(upstream.body, { status: upstream.status, headers: outHeaders })`.
 
-1. **Task 1: Backend Chat Rail Metadata Pruning**
-   - **Role**: `builder`
-   - **Tier**: `standard`
-   - **Workstream**: `main`
-   - **Write Set**: `["forge-control/src/db/runs.ts", "forge-control/src/routes/chat.ts", "forge-control/src/lib/chat-delta.test.ts"]`
-   - **Brief**: Implement `trimRailMetadata` in `forge-control/src/db/runs.ts` and apply to `listRuns` / `searchRuns`. Prune heavy subagent trees and raw logs from `metadata` while retaining `model`, `model_resolved`, `usage_running`, `usage_last_turn`, and `effort`. Ensure `GET /api/chat` response size drops from ~18 KB to ~2.5 KB with zero visible UI change and full context gauge compatibility. Add unit test assertions in `chat-delta.test.ts`.
+### Component 3: Frontend Integration & Visual Verification
+- `UploadsIndexRun` in `BrowserShots.tsx` already defines `is_live?`, `needs_human?`, `signal?`, and `browser_state?` as optional.
+- Verify `resolveStreamMode(browserState)` handles missing/undefined `browser_state` as `"idle"`.
+- Verify `RunShotsIndicator` renders correctly in all three states:
+  1. **Idle**: Camera glyph `📷` + count.
+  2. **Live**: Flowing blue sheen (`fg-stream-live`), badge `LIVE`, count.
+  3. **Red Mode**: Pulsing red outline (`fg-stream-red`), warning glyph `⚠️`, badge `NEEDS KONRAD`, diagnostic tooltip/popover.
 
-2. **Task 2: Team Polling & Uploads Caching Optimization**
-   - **Role**: `builder`
-   - **Tier**: `standard`
-   - **Workstream**: `main`
-   - **Write Set**: `["forge-control/src/routes/uploads.ts", "forge-control/src/lib/uploads-index.ts", "forge-control-web/app/desktop/chat/pollBudget.ts", "forge-control-web/app/desktop/team/ChatTeamPanel.tsx", "scripts/checks/check-chat-delta.ts"]`
-   - **Brief**:
-     1. Add ETag / 304 conditional request support to `GET /api/uploads/index` in `routes/uploads.ts` using `getUploadsCacheTag()` in `lib/uploads-index.ts`.
-     2. Update `TEAM_POLL_MS` in `pollBudget.ts` from 6s to 10s.
-     3. Update `scripts/checks/check-chat-delta.ts` to assert updated poll intervals and verify that degraded rate stays well under the 40 req/min ceiling.
-     4. Ensure `ChatTeamPanel.tsx` respects the updated poll interval and backs off when settled.
+---
 
-3. **Task 3: Verification Harness & Measurement Evidence**
-   - **Role**: `builder`
-   - **Tier**: `junior`
-   - **Workstream**: `main`
-   - **Write Set**: `["scripts/checks/check-chat-rail-payload.ts", "docs/plan/artifacts/chat-rail-payload/README.md"]`
-   - **Depends On**: `[<Task 1 ID>, <Task 2 ID>]`
-   - **Brief**: Create `scripts/checks/check-chat-rail-payload.ts` to measure and assert uncompressed & gzipped byte reductions for `GET /api/chat`, `GET /api/chat/:id/team`, and `GET /api/uploads/index`. Document the before-and-after attribution table in `docs/plan/artifacts/chat-rail-payload/README.md`. Verify that `gates-808.sh` and typechecks pass.
+## Bandwidth Attribution & Before/After Targets
 
-4. **Task 4: Adversarial Phase Review**
-   - **Role**: `reviewer`
-   - **Tier**: `standard`
-   - **Workstream**: `main`
-   - **Write Set**: `[]`
-   - **Depends On**: `[<Task 1 ID>, <Task 2 ID>, <Task 3 ID>]`
-   - **Brief**: Review the complete diff across `main`. Check that:
-     - All rail rows render identically (titles, statuses, preview snippets, task progress pills, context gauge, closed badges).
-     - Context occupancy and hover popover display exact token figures without regression.
-     - Payload sizes for `/chat`, `/team`, and `/uploads/index` are significantly reduced.
-     - Poll budget constants and ceiling assertions pass cleanly.
-     - No forbidden files (`ResizableSplit.tsx`, `BrowserShots.tsx`, `TeamRow.tsx`, `AgentActivity.tsx`) were modified.
+| Endpoint | Before (B/min) | Target After (Cold) | Target After (Steady 304) | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `/api/proxy/uploads/index` | **121,374 B/min** (47%) | **~30,600 B/min** (cache miss) | **~300 B/min** (304 hit) | **Target: < 20,000 B/min** |
+| `/api/proxy/chat` | 75,410 B/min (29%) | 75,410 B/min | 75,410 B/min | Landed in prior lane |
+| `/api/proxy/chat/<id>/team` | 48,670 B/min (19%) | 48,670 B/min | 0 B/min (settled) | Landed in prior lane |
+| **TOTAL CONSOLE AT REST** | **260,448 B/min** | **~170,000 B/min** | **~139,000 B/min** | **Net ~47% total reduction** |
+
+---
+
+## Task Decomposition & Workstream Allocation
+
+All tasks run in workstream `"main"`:
+
+### Task 1: Backend Payload Pruning & Cache Invalidation
+- **Role**: `builder`
+- **Tier**: `junior` (Sonnet)
+- **Workstream**: `main`
+- **Depends On**: `[]`
+- **Write Set**:
+  - `forge-control/src/lib/uploads-index.ts`
+  - `forge-control/src/lib/uploads-index.test.ts`
+- **Brief**:
+  1. In `forge-control/src/lib/uploads-index.ts`, update `computeAllRuns()` so idle runs (`!browser_state.is_live && !browser_state.needs_human`) do not serialize `browser_state`, `is_live`, `needs_human`, or `signal`. Only include these fields when a run is actively streaming (`is_live === true`) or blocked/alerting (`needs_human === true`).
+  2. Ensure `computeTag()` incorporates `is_live`, `needs_human`, and `signal` into ETag hashing so live state transitions invalidate the cache immediately.
+  3. In `forge-control/src/lib/uploads-index.test.ts`, add comprehensive unit tests asserting:
+     - Idle runs produce trimmed payloads without `browser_state` or redundant boolean flags.
+     - Live and needs_human runs retain complete `browser_state` and flags.
+     - ETag is computed deterministically and changes on both file additions and state transitions.
+  4. Ensure `cd forge-control && pnpm test` and `npx tsc --noEmit` pass with zero errors.
+
+### Task 2: Next.js Proxy Route Handler & Memory Note
+- **Role**: `builder`
+- **Tier**: `standard` (Opus)
+- **Workstream**: `main`
+- **Depends On**: `[]`
+- **Write Set**:
+  - `forge-control-web/app/api/proxy/[...path]/route.ts`
+  - `forge-control-web/next.config.mjs`
+- **Brief**:
+  1. Create `forge-control-web/app/api/proxy/[...path]/route.ts` as an App Router Route Handler supporting `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`.
+  2. Implement transparent HTTP proxying to `${FORGE_CONTROL_URL}/api/...` preserving:
+     - Request headers, specifically `If-None-Match`, `If-Match`, `If-Modified-Since`, `Accept`, `Content-Type`, `Authorization`, `Cookie`.
+     - Upstream status codes verbatim (crucially `304 Not Modified`).
+     - Upstream response headers (`ETag`, `Cache-Control`, `Content-Type`, `Content-Length`).
+     - Request and response streaming (`ReadableStream`).
+  3. Clean up `next.config.mjs` rewrites if necessary or verify App Router route handler takes precedence cleanly.
+  4. Update fleet memory note `/root/.claude/projects/-opt-forge-ai-os/memory/nextjs-rewrite-cannot-proxy-websockets.md` with findings on rewrite response header stripping and Route Handler solution.
+  5. Verify `curl http://127.0.0.1:7701/api/proxy/uploads/index` through `:7701` returns `ETag` and that repeating with `-H 'If-None-Match: <etag>'` returns `HTTP 304`.
+
+### Task 3: Client Integration, Verification Checks & Evidence Harness
+- **Role**: `builder`
+- **Tier**: `junior` (Sonnet)
+- **Workstream**: `main`
+- **Depends On**: `[Task 1 ID, Task 2 ID]`
+- **Write Set**:
+  - `forge-control-web/app/desktop/chat/BrowserShots.tsx`
+  - `scripts/checks/check-browser-stream-viewer.ts`
+  - `scripts/checks/check-uploads-payload.ts`
+  - `docs/plan/artifacts/uploads-index-payload/README.md`
+- **Brief**:
+  1. Verify `forge-control-web/app/desktop/chat/BrowserShots.tsx` handles trimmed uploads index objects seamlessly for idle, live blue, and red mode runs.
+  2. Fix `scripts/checks/check-browser-stream-viewer.ts` line 448 where `TEAM_POLL_MS` was pinned to legacy `6000` (update to `10000` as established in `pollBudget.ts`).
+  3. Create `scripts/checks/check-uploads-payload.ts` to measure and assert:
+     - Cold uncompressed payload size is < 20 KB (target ~15.3 KB vs legacy 60.7 KB).
+     - Steady-state bandwidth at 2 req/min with HTTP 304 is < 500 B/min (>99% reduction).
+     - ETag and conditional request matching through `:7701`.
+  4. Capture screenshots of the three visual states (idle camera indicator, live blue outline, red mode alert) and document before/after attribution in `docs/plan/artifacts/uploads-index-payload/README.md`.
+  5. Ensure `gates-808.sh --strict` runs clean.
+
+### Task 4: Final Adversarial Review & Gating Verification
+- **Role**: `reviewer`
+- **Tier**: `standard` (Opus)
+- **Workstream**: `main`
+- **Depends On**: `[Task 3 ID]`
+- **Write Set**: `[]`
+- **Brief**:
+  1. Perform complete adversarial check across all changes from Tasks 1, 2, and 3.
+  2. Verify that `GET /api/proxy/uploads/index` through `:7701` returns `ETag` and responds with `304 Not Modified` on `If-None-Match`.
+  3. Verify payload size reduction meets DoD (< 20,000 B/min steady-state at rest).
+  4. Inspect screenshots in `docs/plan/artifacts/uploads-index-payload/` to confirm zero visual regressions across idle, live blue, and red mode states.
+  5. Confirm all gates pass: `npx tsc --noEmit` (both packages), `node scripts/checks/no-raw-colours.cjs`, `pnpm test` (unit suite), and `bash scripts/checks/gates-808.sh --strict`.

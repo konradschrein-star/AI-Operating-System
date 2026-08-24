@@ -23,7 +23,7 @@
  *     - stopPropagation click handling to preserve row drill-in behavior.
  *  6. Polling Budget & Bandwidth Compliance:
  *     - SHOTS_FULLSCREEN_POLL_MS = 5_000ms active only while modal is open, 0 when closed.
- *     - Surface rate compliance (healthy 23 req/min, degraded 36 req/min, modal open 35 req/min ≤ 40 ceiling).
+ *     - Surface rate compliance (healthy 19 req/min, degraded 32 req/min, modal open 31 req/min ≤ 40 ceiling).
  *
  * Run:
  *   cd forge-control-web && ../forge-control/node_modules/.bin/tsx --tsconfig ../tsconfig.checks.json ../scripts/checks/check-browser-stream-viewer.ts
@@ -445,7 +445,7 @@ check("SHOTS_INDEX_POLL_MS is 30_000ms (2 req/min)", SHOTS_INDEX_POLL_MS, 30_000
 check("CHAT_LIST_POLL_MS is 10_000ms (6 req/min)", CHAT_LIST_POLL_MS, 10_000);
 check("CHAT_DETAIL_LIVE_POLL_MS is 20_000ms (3 req/min)", CHAT_DETAIL_LIVE_POLL_MS, 20_000);
 check("CHAT_DETAIL_FALLBACK_POLL_MS is 4_000ms (15 req/min)", CHAT_DETAIL_FALLBACK_POLL_MS, 4_000);
-check("TEAM_POLL_MS is 6_000ms (10 req/min)", TEAM_POLL_MS, 6_000);
+check("TEAM_POLL_MS is 10_000ms (6 req/min)", TEAM_POLL_MS, 10_000);
 check("PLAN_POLL_MS is 30_000ms (2 req/min)", PLAN_POLL_MS, 30_000);
 check("CHAT_SURFACE_REQ_PER_MIN_CEILING is 40 req/min", CHAT_SURFACE_REQ_PER_MIN_CEILING, 40);
 
@@ -456,8 +456,8 @@ const rateAtRestHealthy =
   60_000 / SHOTS_INDEX_POLL_MS +
   60_000 / PLAN_POLL_MS;
 
-check("Steady-state rate at rest (SSE live, modal closed) === 23 req/min", rateAtRestHealthy, 23);
-checkTrue("Steady-state rate is strictly below ceiling (23 ≤ 40)", rateAtRestHealthy <= CHAT_SURFACE_REQ_PER_MIN_CEILING);
+check("Steady-state rate at rest (SSE live, modal closed) === 19 req/min", rateAtRestHealthy, 19);
+checkTrue("Steady-state rate is strictly below ceiling (19 ≤ 40)", rateAtRestHealthy <= CHAT_SURFACE_REQ_PER_MIN_CEILING);
 
 const rateDegraded =
   60_000 / CHAT_LIST_POLL_MS +
@@ -467,12 +467,12 @@ const rateDegraded =
   60_000 / PLAN_POLL_MS +
   1; // secrets fallback (1 req/min)
 
-check("Degraded rate (SSE down, modal closed) === 36 req/min", rateDegraded, 36);
-checkTrue("Degraded rate is strictly below ceiling (36 ≤ 40)", rateDegraded <= CHAT_SURFACE_REQ_PER_MIN_CEILING);
+check("Degraded rate (SSE down, modal closed) === 32 req/min", rateDegraded, 32);
+checkTrue("Degraded rate is strictly below ceiling (32 ≤ 40)", rateDegraded <= CHAT_SURFACE_REQ_PER_MIN_CEILING);
 
 const rateFullscreenOpen = rateAtRestHealthy + 60_000 / SHOTS_FULLSCREEN_POLL_MS;
-check("Active rate with Fullscreen Stream Viewer open === 35 req/min", rateFullscreenOpen, 35);
-checkTrue("Fullscreen active rate is strictly below ceiling (35 ≤ 40)", rateFullscreenOpen <= CHAT_SURFACE_REQ_PER_MIN_CEILING);
+check("Active rate with Fullscreen Stream Viewer open === 31 req/min", rateFullscreenOpen, 31);
+checkTrue("Fullscreen active rate is strictly below ceiling (31 ≤ 40)", rateFullscreenOpen <= CHAT_SURFACE_REQ_PER_MIN_CEILING);
 
 /* ════════════════════════════════════════════════════════════════════════════
  * SECTION 6: Token Purity Check (NFU1)
