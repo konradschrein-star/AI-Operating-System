@@ -86,7 +86,14 @@ export type TaskRole =
   | "reviewer"
   | "steward"
   | "tester";
-export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "blocked";
+export type TaskStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "done"
+  | "failed"
+  | "blocked"
+  | "cancelled";
 /** Model/effort tier — see TIER_MODELS in lib/project-tick.ts. NULL = use
  *  the role file's static model:/effort: default. Only architect and
  *  builder tasks are ever assigned one. */
@@ -627,6 +634,185 @@ export async function closeFinishedProjects(): Promise<{
   );
   return { closed: r.rows, held: held.rows };
 }
+
+export interface ProjectDisagreement {
+  projectId: string;
+  projectName: string;
+  status: ProjectStatus;
+  tasksDone: number;
+  tasksCancelled: number;
+  tasksTotal: number;
+  reason: string;
+}
+
+export interface ProjectReconciliationResult {
+  closed: Array<{ id: string; name: string }>;
+  disagreements: ProjectDisagreement[];
+}
+
+/** Pure evaluation of project reconciliation based on task summary counts. */
+export function evaluateProjectStatusReconciliation(summary: {
+  projectId: string;
+  projectName: string;
+  status: ProjectStatus;
+  tasksTotal: number;
+  tasksDone: number;
+  tasksCancelled: number;
+  tasksNonTerminal: number;
+}): {
+  action: "close" | "disagreement" | "none";
+  disagreement?: ProjectDisagreement;
+} {
+  if (summary.tasksTotal > 0 && summary.tasksNonTerminal === 0) {
+    if (summary.status === "blocked") {
+      return { action: "close" };
+    }
+    if (summary.status === "paused") {
+      return {
+        action: "disagreement",
+        disagreement: {
+          projectId: summary.projectId,
+          projectName: summary.projectName,
+          status: summary.status,
+          tasksDone: summary.tasksDone,
+          tasksCancelled: summary.tasksCancelled,
+          tasksTotal: summary.tasksTotal,
+          reason: `paused but has all ${summary.tasksDone}/${summary.tasksTotal} tasks completed (status preserved)`,
+        },
+      };
+    }
+    if (summary.status === "active") {
+      return {
+        action: "disagreement",
+        disagreement: {
+          projectId: summary.projectId,
+          projectName: summary.projectName,
+          status: summary.status,
+          tasksDone: summary.tasksDone,
+          tasksCancelled: summary.tasksCancelled,
+          tasksTotal: summary.tasksTotal,
+          reason: `active with all ${summary.tasksDone}/${summary.tasksTotal} tasks completed but unclosed (status preserved)`,
+        },
+      };
+    }
+  }
+  return { action: "none" };
+}
+
+/** Pure evaluation of project reconciliation based on a task status array. */
+export function evaluateProjectTasksReconciliation(
+  project: { id: string; name: string; status: ProjectStatus },
+  tasks: Array<{ status: TaskStatus }>,
+): {
+  action: "close" | "disagreement" | "none";
+  disagreement?: ProjectDisagreement;
+} {
+  const tasksTotal = tasks.length;
+  const tasksDone = tasks.filter((t) => t.status === "done").length;
+  const tasksCancelled = tasks.filter((t) => t.status === "cancelled").length;
+  const tasksNonTerminal = tasks.filter(
+    (t) => t.status !== "done" && t.status !== "cancelled",
+  ).length;
+
+  return evaluateProjectStatusReconciliation({
+    projectId: project.id,
+    projectName: project.name,
+    status: project.status,
+    tasksTotal,
+    tasksDone,
+    tasksCancelled,
+    tasksNonTerminal,
+  });
+}
+
+/**
+ * Reconcile project statuses for stale blocked and finished projects.
+ *
+ * Auto-closes ONLY the unambiguous case: projects with status = 'blocked'
+ * where every task is in ('done', 'cancelled') (tasks_total > 0 and 0 non-done/non-cancelled).
+ * Sets status = 'done' and queues a completion notification.
+ *
+ * For ambiguous cases (paused or active projects with all tasks completed),
+ * their status is preserved without mutation and reported as disagreements.
+ */
+export async function reconcileProjectStatuses(): Promise<ProjectReconciliationResult> {
+  const r = await pool.query<{
+    id: string;
+    name: string;
+    status: ProjectStatus;
+    tasks_total: number;
+    tasks_done: number;
+    tasks_cancelled: number;
+    tasks_non_terminal: number;
+  }>(`
+    WITH task_summary AS (
+      SELECT
+        project_id,
+        COUNT(*)::int AS tasks_total,
+        COUNT(*) FILTER (WHERE status = 'done')::int AS tasks_done,
+        COUNT(*) FILTER (WHERE status = 'cancelled')::int AS tasks_cancelled,
+        COUNT(*) FILTER (WHERE status NOT IN ('done', 'cancelled'))::int AS tasks_non_terminal
+      FROM project_tasks
+      GROUP BY project_id
+    )
+    SELECT
+      p.id::text AS id,
+      p.name,
+      p.status,
+      COALESCE(ts.tasks_total, 0)::int AS tasks_total,
+      COALESCE(ts.tasks_done, 0)::int AS tasks_done,
+      COALESCE(ts.tasks_cancelled, 0)::int AS tasks_cancelled,
+      COALESCE(ts.tasks_non_terminal, 0)::int AS tasks_non_terminal
+    FROM projects p
+    LEFT JOIN task_summary ts ON ts.project_id = p.id
+    WHERE p.status IN ('active', 'blocked', 'paused')
+    ORDER BY p.updated_at DESC
+  `);
+
+  const closed: Array<{ id: string; name: string }> = [];
+  const disagreements: ProjectDisagreement[] = [];
+
+  for (const row of r.rows) {
+    const evaluation = evaluateProjectStatusReconciliation({
+      projectId: row.id,
+      projectName: row.name,
+      status: row.status,
+      tasksTotal: row.tasks_total,
+      tasksDone: row.tasks_done,
+      tasksCancelled: row.tasks_cancelled,
+      tasksNonTerminal: row.tasks_non_terminal,
+    });
+
+    if (evaluation.action === "close") {
+      const updateResult = await pool.query<{ id: string; name: string }>(
+        `UPDATE projects
+            SET status = 'done', updated_at = now()
+          WHERE id = $1 AND status = 'blocked'
+          RETURNING id::text, name`,
+        [row.id],
+      );
+      if (updateResult.rows[0]) {
+        const closedProject = updateResult.rows[0];
+        closed.push(closedProject);
+        console.log(
+          `[project-tick] project ${row.id} ("${row.name}") auto-closed from blocked state (all ${row.tasks_done}/${row.tasks_total} tasks completed)`,
+        );
+        await queueNotification(
+          `✅ Project "${closedProject.name}" is done — auto-closed from blocked state (all tasks completed)`,
+          "project",
+        ).catch(() => {});
+      }
+    } else if (evaluation.action === "disagreement" && evaluation.disagreement) {
+      disagreements.push(evaluation.disagreement);
+      console.warn(
+        `[project-tick] project ${row.id} ("${row.name}"): ${evaluation.disagreement.reason}`,
+      );
+    }
+  }
+
+  return { closed, disagreements };
+}
+
 
 /** Shallow-merge a patch into projects.metadata. Used by goal-mode
  *  bookkeeping (last_checkin_at) — deliberately does NOT bump updated_at so

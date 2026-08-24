@@ -255,6 +255,22 @@ export function ResizeHandle({
     backgroundClip: "content-box",
     transition: active ? "none" : "background 120ms ease",
     touchAction: "none",
+    /* `position` is what makes the `zIndex` below mean anything. Without it the
+     * handle is statically positioned, z-index does not apply to a static box,
+     * and the declaration has been decorative since it was written.
+     *
+     * Harmless while the handle was a 1px line between two unpositioned
+     * siblings. It stopped being harmless with HIT_PAD: the pad reaches 5px
+     * INTO each neighbour, so any sibling that carries its own
+     * position+z-index — CanvasPane's plan drawer is `position: relative;
+     * z-index: 10` — paints over roughly half the grab target. Found by the
+     * layout lane's round-0 worker, which measured it with `elementFromPoint`
+     * across the pad rather than assuming the drag worked because the visible
+     * line did.
+     *
+     * `relative` with no offsets moves nothing; it only lets the stacking
+     * order be stated. */
+    position: "relative",
     zIndex: 2,
   };
   const style: CSSProperties =

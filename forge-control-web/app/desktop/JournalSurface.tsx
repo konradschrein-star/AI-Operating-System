@@ -6,7 +6,13 @@ import { tokens } from "../tokens";
 import { JournalRetrospectivePane } from "./journal/JournalRetrospectivePane";
 import { MentorAgentDeck } from "./journal/MentorAgentDeck";
 import { MentorCronSwitch } from "./journal/MentorCronSwitch";
-import { useNarrowViewport } from "./_ui/ResizableSplit";
+import { ResizeHandle, useNarrowViewport, useResizablePanel } from "./_ui/ResizableSplit";
+import {
+  JOURNAL_SPLIT_INITIAL,
+  JOURNAL_SPLIT_KEY,
+  JOURNAL_SPLIT_MAX,
+  JOURNAL_SPLIT_MIN,
+} from "./journal-split";
 
 interface MentorDayMetric {
   day: string;
@@ -75,6 +81,15 @@ export function JournalSurface() {
   const [selectedDay, setSelectedDay] = useState<string>(todayStr);
   const [narrowTab, setNarrowTab] = useState<"retro" | "mentor">("retro");
   const isNarrow = useNarrowViewport(960);
+  const journalSplit = useResizablePanel({
+    storageKey: JOURNAL_SPLIT_KEY,
+    initial: JOURNAL_SPLIT_INITIAL,
+    min: JOURNAL_SPLIT_MIN,
+    max: JOURNAL_SPLIT_MAX,
+    axis: "x",
+    unit: "fraction",
+    invert: false,
+  });
 
   // Mentor Metrics Query
   const { data: metricsData, isLoading: isMetricsLoading } = useQuery<
@@ -406,7 +421,7 @@ export function JournalSurface() {
           <div
             className="scroll-tinted"
             style={{
-              flex: isNarrow ? "1 1 auto" : "1 1 55%",
+              flex: isNarrow ? "1 1 auto" : `${journalSplit.size} 1 0`,
               minWidth: 0,
               height: "100%",
               overflowY: "auto",
@@ -418,11 +433,13 @@ export function JournalSurface() {
           </div>
         )}
 
+        {!isNarrow && <ResizeHandle {...journalSplit.handleProps} />}
+
         {/* Right Column: Mentor Agent Deck (45%) */}
         {(!isNarrow || narrowTab === "mentor") && (
           <div
             style={{
-              flex: isNarrow ? "1 1 auto" : "1 1 45%",
+              flex: isNarrow ? "1 1 auto" : `${1 - journalSplit.size} 1 0`,
               minWidth: 0,
               height: "100%",
               padding: isNarrow ? 12 : 16,

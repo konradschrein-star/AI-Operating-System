@@ -11,6 +11,7 @@ import {
   createTask,
   getTask,
   unwedgeProject,
+  reconcileProjectStatuses,
   type ProjectRepo,
   type ProjectStatus,
   type ProjectTask,
@@ -147,6 +148,30 @@ export function buildProjectMetadata(body: CreateProjectBody): Record<string, un
     metadata.strict_write_sets = true;
   }
 
+  /* ── The engine is a property of the project, not a one-shot argument ─────
+   *
+   * `architect_tier` used to set the architect task's tier and then vanish:
+   * nothing recorded that the project had been asked to run on a particular
+   * engine, so nothing downstream could honour it. Two separate escapes have
+   * now been measured, both silent:
+   *
+   *   1. fix chains were created with no tier at all, fell past TIER_MODELS
+   *      and ran on the default engine — 81 of 213 runs (38%) of one overnight
+   *      build executed on Claude while every project had been seeded gemini;
+   *   2. the ARCHITECT seeds its own children through
+   *      `POST /api/projects/:id/tasks` and picks their tiers itself. On
+   *      2026-08-24 a gemini architect seeded `junior` and `standard`
+   *      builders, so the work Konrad had explicitly asked to run on Gemini
+   *      ran on Sonnet and Opus.
+   *
+   * Storing it is what makes the request a SETTING rather than a suggestion
+   * that survives only as long as every downstream caller happens to agree.
+   * `tier_pin` is read by the task-create route, which applies it over a
+   * caller-chosen tier. */
+  if (body.architect_tier) {
+    metadata.tier_pin = body.architect_tier;
+  }
+
   // An empty/whitespace string is "the caller had nothing to send", not an
   // error — that is the shape a shell `--arg` or an unset template variable
   // produces. Anything else non-empty must be a real uuid.
@@ -186,6 +211,14 @@ r.get("/board", async (c) => {
 r.get("/managers", async (c) => {
   const managers = await listManagerRollup();
   return c.json({ managers });
+});
+
+/* Project status reconciliation — auto-closes unambiguous blocked projects
+ * with all tasks completed, and reports disagreements for paused/active.
+ * Registered before /:id so "reconcile" is never matched as a project id. */
+r.get("/reconcile", async (c) => {
+  const result = await reconcileProjectStatuses();
+  return c.json(result);
 });
 
 r.get("/", async (c) => {
@@ -735,13 +768,37 @@ r.post("/:id/tasks", async (c) => {
     );
   }
 
+  /* The project's pinned engine wins over a caller-chosen tier.
+   *
+   * This route's main caller is an ARCHITECT seeding its own plan, and an
+   * architect picks tiers by judging how hard each task looks. That judgement
+   * is reasonable in the abstract and wrong whenever the operator has already
+   * chosen an engine: on 2026-08-24 a gemini architect seeded `junior` and
+   * `standard` builders, and the work Konrad had explicitly asked to run on
+   * Gemini ran on Sonnet and Opus instead. Nothing errored; the tier simply
+   * came from whoever spoke last.
+   *
+   * So the pin is applied, not merely defaulted. A project created without
+   * `architect_tier` has no pin and this changes nothing for it. */
+  const tierPin = project.metadata?.tier_pin;
+  const pinnedTier =
+    typeof tierPin === "string" && TIERS.has(tierPin as TaskTier)
+      ? (tierPin as TaskTier)
+      : undefined;
+  const requestedTier = body.tier as TaskTier | undefined;
+  if (pinnedTier && requestedTier && requestedTier !== pinnedTier) {
+    console.log(
+      `[projects] task tier '${requestedTier}' overridden by project ${id} pin '${pinnedTier}'`,
+    );
+  }
+
   const { task, created } = await createTask({
     project_id: id,
     round,
     role: body.role as TaskRole,
     title,
     brief,
-    tier: body.tier as TaskTier | undefined,
+    tier: pinnedTier ?? requestedTier,
     /* THE SENTINEL — the single line in this phase most worth a second reader
      * (02-architecture.md §2.2, ruled as E2 in §9.1). `dependsOn` is `undefined`
      * when the caller sent NO depends_on, which createTask() writes as SQL NULL:

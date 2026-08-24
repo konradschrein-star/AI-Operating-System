@@ -15,6 +15,13 @@ import {
 } from "../api";
 import { jumpToRun, type NavigateTo } from "./deep-link";
 import { fmtEur } from "./settings/usageApi";
+import { ResizeHandle, useResizablePanel } from "./_ui/ResizableSplit";
+import {
+  AUTONOMY_RAIL_INITIAL,
+  AUTONOMY_RAIL_KEY,
+  AUTONOMY_RAIL_MAX,
+  AUTONOMY_RAIL_MIN,
+} from "./autonomy-rail-split";
 
 /** Mirrors DEFAULT_GEMINI_DAILY_TOKEN_CAP in forge-control's db/autonomy.ts.
  *  Used ONLY as the input's placeholder before the server's own number lands;
@@ -233,6 +240,16 @@ export function AutonomySurface({ onNav }: { onNav: NavigateTo }) {
     refetchInterval: 8000,
   });
 
+  const railPanel = useResizablePanel({
+    storageKey: AUTONOMY_RAIL_KEY,
+    initial: AUTONOMY_RAIL_INITIAL,
+    min: AUTONOMY_RAIL_MIN,
+    max: AUTONOMY_RAIL_MAX,
+    axis: "x",
+    unit: "px",
+    invert: false,
+  });
+
   const [cat, setCat] = useState<string | null>(null);
   const [tripStatusFilter, setTripStatusFilter] = useState<
     "all" | "unresolved" | "resolved"
@@ -365,7 +382,7 @@ export function AutonomySurface({ onNav }: { onNav: NavigateTo }) {
       {/* Category Rail */}
       <div
         style={{
-          width: 220,
+          width: railPanel.size,
           flex: "none",
           borderRight: `1px solid ${tokens.borderSoft}`,
           padding: "14px 0",
@@ -452,6 +469,8 @@ export function AutonomySurface({ onNav }: { onNav: NavigateTo }) {
           )}
         </div>
       </div>
+
+      <ResizeHandle {...railPanel.handleProps} />
 
       {/* Main Content Area */}
       <div

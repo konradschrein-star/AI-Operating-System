@@ -46,6 +46,13 @@ import {
   type TaskTier,
 } from "../api";
 import { statCanvas, subscribeCanvas } from "./canvasLive";
+import { ResizeHandle, useResizablePanel } from "./_ui/ResizableSplit";
+import {
+  CANVAS_PLAN_INITIAL,
+  CANVAS_PLAN_KEY,
+  CANVAS_PLAN_MAX,
+  CANVAS_PLAN_MIN,
+} from "./canvas-plan-split";
 /**
  * ROUND 806 PUT THIS IMPORT BACK, ON MEASUREMENT. Round 803 moved it into
  * `./ExcalidrawEditor` so the 144,615-byte stylesheet would travel in the
@@ -287,6 +294,15 @@ export function CanvasPane({
 
   // Plan drawer state
   const [planOpen, setPlanOpen] = useState(false);
+  const planPanel = useResizablePanel({
+    storageKey: CANVAS_PLAN_KEY,
+    initial: CANVAS_PLAN_INITIAL,
+    min: CANVAS_PLAN_MIN,
+    max: CANVAS_PLAN_MAX,
+    axis: "x",
+    unit: "px",
+    invert: true,
+  });
   const [planTab, setPlanTab] = useState<"visual" | "markdown">("visual");
   const [planLoading, setPlanLoading] = useState(false);
   const [planErr, setPlanErr] = useState<string | null>(null);
@@ -1100,20 +1116,22 @@ export function CanvasPane({
         </div>
 
         {planOpen && (
-          <div
-            style={{
-              width: 520,
-              minWidth: 380,
-              maxWidth: "50vw",
-              borderLeft: `1px solid ${tokens.borderDivider}`,
-              background: tokens.bgBody,
-              display: "flex",
-              flexDirection: "column",
-              height: "100%",
-              position: "relative",
-              zIndex: 10,
-            }}
-          >
+          <>
+            <ResizeHandle {...planPanel.handleProps} />
+            <div
+              style={{
+                width: planPanel.size,
+                minWidth: 380,
+                maxWidth: "50vw",
+                borderLeft: `1px solid ${tokens.borderDivider}`,
+                background: tokens.bgBody,
+                display: "flex",
+                flexDirection: "column",
+                height: "100%",
+                position: "relative",
+                zIndex: 10,
+              }}
+            >
             {/* Drawer Header */}
             <div
               style={{
@@ -2584,7 +2602,8 @@ export function CanvasPane({
               )}
             </div>
           </div>
-        )}
+        </>
+      )}
       </div>
     </div>
   );

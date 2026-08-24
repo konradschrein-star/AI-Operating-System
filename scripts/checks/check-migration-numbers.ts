@@ -35,13 +35,14 @@
  */
 
 import { readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MIGRATIONS_DIR = fileURLToPath(
+export const MIGRATIONS_DIR = fileURLToPath(
   new URL("../../db/migrations/", import.meta.url),
 );
 
-const NUMBERED = /^(\d+)_.*\.sql$/;
+export const NUMBERED = /^(\d+)_.*\.sql$/;
 
 /* ── KNOWN DEBT: one historical collision, recorded rather than rewritten ─────
  *
@@ -57,44 +58,68 @@ const NUMBERED = /^(\d+)_.*\.sql$/;
  * pinned to the exact pair, so a THIRD file landing on 0040 still fails. This
  * entry is the only thing standing between this gate and being green, and it
  * must not grow. If you are about to add a line here, renumber instead. */
-const KNOWN_COLLISIONS = new Map<string, string[]>([
+export const KNOWN_COLLISIONS = new Map<string, string[]>([
   ["0040", ["0040_task_graph.sql", "0040_usage_hourly.sql"]],
 ]);
 
 /** A collision is excused only if the file set matches EXACTLY. A new file
  *  joining a known-debt number is a new collision. */
-function isKnownDebt(n: string, files: string[]): boolean {
-  const known = KNOWN_COLLISIONS.get(n);
+export function isKnownDebt(
+  n: string,
+  files: string[],
+  knownMap: Map<string, string[]> = KNOWN_COLLISIONS,
+): boolean {
+  const known = knownMap.get(n);
   if (!known || known.length !== files.length) return false;
   const a = [...known].sort();
   const b = [...files].sort();
   return a.every((f, i) => f === b[i]);
 }
 
-function main(): number {
-  let files: string[];
-  try {
-    files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
-  } catch (e) {
-    console.error(`check-migration-numbers: cannot read ${MIGRATIONS_DIR}: ${String(e)}`);
-    return 1;
-  }
+export interface MigrationCheckResult {
+  ok: boolean;
+  exitCode: number;
+  files: string[];
+  byNumber: Map<string, string[]>;
+  unnumbered: string[];
+  badWidth: string[];
+  collisions: Array<[string, string[]]>;
+  excused: Array<[string, string[]]>;
+  highest?: string;
+  errors: string[];
+  logs: string[];
+}
 
-  if (files.length === 0) {
-    // An empty directory means the path moved, not that the repo has no
-    // migrations. Refusing beats reporting a vacuous pass.
-    console.error(
-      `check-migration-numbers: found 0 .sql files in ${MIGRATIONS_DIR} — ` +
-        "that reads as a moved directory, not an empty one. Refusing to pass.",
-    );
-    return 1;
+/** Pure validator for a given list of .sql migration filenames. */
+export function validateMigrationFiles(
+  files: string[],
+  knownMap: Map<string, string[]> = KNOWN_COLLISIONS,
+): MigrationCheckResult {
+  const sortedFiles = [...files].sort();
+  const errors: string[] = [];
+  const logs: string[] = [];
+
+  if (sortedFiles.length === 0) {
+    errors.push("found 0 .sql files — refusing to pass on empty migration set");
+    return {
+      ok: false,
+      exitCode: 1,
+      files: sortedFiles,
+      byNumber: new Map(),
+      unnumbered: [],
+      badWidth: [],
+      collisions: [],
+      excused: [],
+      errors,
+      logs,
+    };
   }
 
   const byNumber = new Map<string, string[]>();
   const unnumbered: string[] = [];
   const badWidth: string[] = [];
 
-  for (const f of files) {
+  for (const f of sortedFiles) {
     const m = NUMBERED.exec(f);
     if (!m) {
       unnumbered.push(f);
@@ -106,39 +131,125 @@ function main(): number {
   }
 
   const allCollisions = [...byNumber.entries()].filter(([, fs]) => fs.length > 1);
-  const collisions = allCollisions.filter(([n, fs]) => !isKnownDebt(n, fs));
-  const excused = allCollisions.filter(([n, fs]) => isKnownDebt(n, fs));
+  const collisions = allCollisions.filter(([n, fs]) => !isKnownDebt(n, fs, knownMap));
+  const excused = allCollisions.filter(([n, fs]) => isKnownDebt(n, fs, knownMap));
+
   for (const [n, fs] of excused) {
-    console.log(`  known debt  ${n}: ${fs.join("  ↔  ")} — both already applied to production`);
+    logs.push(`known debt  ${n}: ${fs.join("  ↔  ")} — both already applied to production`);
   }
 
   for (const f of unnumbered) {
-    console.error(`  UNNUMBERED  ${f} — cannot be ordered against the others`);
+    errors.push(`UNNUMBERED  ${f} — cannot be ordered against the others`);
   }
   for (const f of badWidth) {
-    console.error(`  BAD WIDTH   ${f} — numbers must be 4 digits, zero-padded`);
+    errors.push(`BAD WIDTH   ${f} — numbers must be 4 digits, zero-padded`);
   }
   for (const [n, fs] of collisions) {
-    console.error(`  COLLISION   ${n}: ${fs.join("  ↔  ")}`);
+    errors.push(`COLLISION   ${n}: ${fs.join("  ↔  ")}`);
   }
 
-  const failed = collisions.length + unnumbered.length + badWidth.length;
-  if (failed > 0) {
-    console.error(
-      `\ncheck-migration-numbers: FAIL — ${collisions.length} collision(s), ` +
-        `${unnumbered.length} unnumbered, ${badWidth.length} bad width, over ${files.length} file(s).\n` +
-        "Renumber to the next free integer. Git will NOT conflict on this for you:\n" +
-        "the filenames differ, so colliding migrations merge cleanly and only fail\n" +
-        "later, inside a database, where there is no `git checkout` to undo it.",
-    );
-    return 1;
-  }
-
+  const failedCount = collisions.length + unnumbered.length + badWidth.length;
+  const ok = failedCount === 0;
   const highest = [...byNumber.keys()].sort().pop();
-  console.log(
-    `check-migration-numbers: PASS — ${files.length} migration(s), every number unique, highest ${highest}.`,
-  );
-  return 0;
+
+  if (!ok) {
+    errors.push(
+      `FAIL — ${collisions.length} collision(s), ` +
+        `${unnumbered.length} unnumbered, ${badWidth.length} bad width, over ${sortedFiles.length} file(s). ` +
+        "Renumber to the next free integer. Git will NOT conflict on this for you.",
+    );
+  } else {
+    logs.push(
+      `PASS — ${sortedFiles.length} migration(s), every number unique, highest ${highest}.`,
+    );
+  }
+
+  return {
+    ok,
+    exitCode: ok ? 0 : 1,
+    files: sortedFiles,
+    byNumber,
+    unnumbered,
+    badWidth,
+    collisions,
+    excused,
+    highest,
+    errors,
+    logs,
+  };
 }
 
-process.exit(main());
+/** Validate migration files on disk from directory. */
+export function validateMigrationDir(
+  dirPath: string = MIGRATIONS_DIR,
+  knownMap: Map<string, string[]> = KNOWN_COLLISIONS,
+): MigrationCheckResult {
+  let files: string[];
+  try {
+    files = readdirSync(dirPath).filter((f) => f.endsWith(".sql"));
+  } catch (e) {
+    return {
+      ok: false,
+      exitCode: 1,
+      files: [],
+      byNumber: new Map(),
+      unnumbered: [],
+      badWidth: [],
+      collisions: [],
+      excused: [],
+      errors: [`cannot read ${dirPath}: ${String(e)}`],
+      logs: [],
+    };
+  }
+
+  if (files.length === 0) {
+    return {
+      ok: false,
+      exitCode: 1,
+      files: [],
+      byNumber: new Map(),
+      unnumbered: [],
+      badWidth: [],
+      collisions: [],
+      excused: [],
+      errors: [
+        `check-migration-numbers: found 0 .sql files in ${dirPath} — ` +
+          "that reads as a moved directory, not an empty one. Refusing to pass.",
+      ],
+      logs: [],
+    };
+  }
+
+  return validateMigrationFiles(files, knownMap);
+}
+
+export function main(dirPath: string = MIGRATIONS_DIR): number {
+  const result = validateMigrationDir(dirPath);
+
+  for (const log of result.logs) {
+    if (log.startsWith("known debt")) {
+      console.log(`  ${log}`);
+    } else {
+      console.log(`check-migration-numbers: ${log}`);
+    }
+  }
+
+  for (const err of result.errors) {
+    if (err.startsWith("UNNUMBERED") || err.startsWith("BAD WIDTH") || err.startsWith("COLLISION")) {
+      console.error(`  ${err}`);
+    } else {
+      console.error(`check-migration-numbers: ${err}`);
+    }
+  }
+
+  return result.exitCode;
+}
+
+const isDirectRun =
+  Boolean(process.argv[1]) &&
+  (fileURLToPath(import.meta.url) === process.argv[1] ||
+    resolve(process.argv[1]) === fileURLToPath(import.meta.url));
+
+if (isDirectRun) {
+  process.exit(main());
+}
