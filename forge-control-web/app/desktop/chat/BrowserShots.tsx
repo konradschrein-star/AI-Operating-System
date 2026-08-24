@@ -578,10 +578,43 @@ export interface UploadsShotResponse {
   browser_state?: BrowserStateSummary | null;
 }
 
+/* THE CONDITIONAL REQUEST IS MADE EXPLICITLY, not left to the HTTP cache.
+ *
+ * The server side of this is correct and was verified end to end: the origin
+ * emits an ETag, honours `If-None-Match` in both strong and weak form, and the
+ * Route Handler now carries both directions through (the old next.config
+ * rewrite did not, which is why this endpoint cost 121 KB/min).
+ *
+ * The browser still never used it. Measured in a real page, three consecutive
+ * fetches of this exact URL:
+ *
+ *   req 1: If-None-Match=(NOT SENT) -> HTTP 200  etag=W/"a37..."  enc=gzip
+ *   req 2: If-None-Match=(NOT SENT) -> HTTP 200  etag=W/"a37..."  enc=gzip
+ *   req 3: If-None-Match=(NOT SENT) -> HTTP 200  etag=W/"a37..."  enc=gzip
+ *
+ * `fetch()` leaves revalidation to the HTTP cache, and whether the cache
+ * revalidates depends on heuristics, the `Vary` set Next attaches, and the
+ * profile's cache state. A saving that only materialises when a heuristic
+ * happens to agree is not a saving you can measure or rely on.
+ *
+ * So we hold the last ETag and send it ourselves. Then the 304 is a property
+ * of OUR code, observable in any browser and in any harness, rather than a
+ * hope about someone's cache. On 304 there is no body to parse — return the
+ * rows we already have.
+ *
+ * Module-scope, not a ref: every mount of every indicator shares one poll of
+ * one URL, so they should share one validator too. */
+let uploadsIndexEtag: string | null = null;
+let uploadsIndexCache: UploadsIndexRun[] = [];
+
 async function fetchUploadsIndex(): Promise<UploadsIndexRun[]> {
-  const res = await fetch(`${PROXY_ROOT}/uploads/index`, {
-    headers: { accept: "application/json" },
-  });
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (uploadsIndexEtag) headers["if-none-match"] = uploadsIndexEtag;
+
+  const res = await fetch(`${PROXY_ROOT}/uploads/index`, { headers });
+
+  if (res.status === 304) return uploadsIndexCache;
+
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText} on /uploads/index`);
   }
@@ -589,6 +622,11 @@ async function fetchUploadsIndex(): Promise<UploadsIndexRun[]> {
   if (!Array.isArray(body.runs)) {
     throw new Error("/uploads/index returned no `runs` array");
   }
+  // Only remember the validator once the payload it describes parsed cleanly —
+  // caching an ETag for a body we rejected would answer every later 304 with
+  // rows we never accepted.
+  uploadsIndexEtag = res.headers.get("etag");
+  uploadsIndexCache = body.runs;
   return body.runs;
 }
 
