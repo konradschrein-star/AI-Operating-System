@@ -193,6 +193,60 @@ async function claimNextRun(): Promise<ClaimedRun | null> {
   return r.rows[0] ?? null;
 }
 
+/**
+ * Hand a duplicate claim back to the turn that is already running.
+ *
+ * claimNextRun() has just flipped the row to `running` and STRIPPED
+ * `pending_input` (its own comment explains why: a claimed run has consumed its
+ * input). For a duplicate claim both of those are wrong — the live process
+ * never saw this input — so the flag goes straight back. Status is left
+ * `running` because that is now true again and the live process owns the row.
+ *
+ * Deliberately unguarded on status: the row is `running` because we just made
+ * it so, one statement ago, and narrowing the WHERE would only add a way for
+ * this to silently do nothing.
+ */
+async function deferDuplicateClaim(id: string): Promise<void> {
+  await pool.query(
+    `UPDATE runs
+        SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"pending_input":true}'::jsonb,
+            updated_at = now()
+      WHERE id = $1`,
+    [id],
+  );
+}
+
+/**
+ * The other half of deferDuplicateClaim: requeue a run that is still carrying
+ * an unread `pending_input` after its live turn ended.
+ *
+ * Both terms are load-bearing. `pending_input = 'true'` means E2 never consumed
+ * it (E2 clears the flag in the same statement it requeues), and the status
+ * filter means we only act on a row nobody else is driving — a `queued` row is
+ * already on its way and a `completed` one belongs to the stranded-input sweep.
+ * A run that ended `failed` or `stuck` keeps its input for a human, since
+ * requeueing into a failure loop is how a bad turn becomes an expensive one.
+ */
+async function requeueIfTurnStillOwed(id: string): Promise<void> {
+  const r = await pool.query(
+    `UPDATE runs
+        SET status = 'queued',
+            completed_at = NULL,
+            wake_after = NULL,
+            metadata = metadata - 'pending_input',
+            updated_at = now()
+      WHERE id = $1
+        AND status = 'running'
+        AND metadata->>'pending_input' = 'true'`,
+    [id],
+  );
+  if ((r.rowCount ?? 0) > 0) {
+    console.log(
+      `[executor] run ${id}: deferred turn re-queued — its live turn ended without reading pending_input`,
+    );
+  }
+}
+
 function buildPromptFromThread(
   thread: ThreadEntry[],
   { assistantMarker = true }: { assistantMarker?: boolean } = {},
@@ -1408,6 +1462,40 @@ async function loop(): Promise<void> {
       const limit = await getConcurrencyLimit();
       if (inFlight.size < limit) {
         const run = await claimNextRun();
+        if (run && inFlight.has(run.id)) {
+          // TWO PROCESSES, ONE RUN — the bug that put "Executor failed:
+          // claude-code exit 0:" into Konrad's chat mid-conversation on
+          // 2026-08-25, and into three other threads before it.
+          //
+          // claimNextRun() only takes `queued` rows, so this cannot happen on
+          // its own. It happens when a row this executor is ALREADY running
+          // goes back to `queued` underneath it — the api-overload and
+          // usage-wall parks (db/runs.ts) both write `queued` off a `failed`
+          // row, and a duplicate's own failure is enough to open that door.
+          // The claim then spawns a SECOND `claude --resume <session>` against
+          // the session the live process is holding. The CLI does not error on
+          // that: it exits 0 having emitted no `result` event, which
+          // cc-runner reads as a failed turn, which marks the whole run failed
+          // while the real turn is still working. The operator sees a red
+          // system line in a conversation that is in fact fine.
+          //
+          // The turn is NOT dropped. `pending_input` is the sanctioned way to
+          // say "this run owes another turn" (07 §5) — E1/E2 in completeRun
+          // read it and requeue once the live turn finishes, which is exactly
+          // the semantics a second claim was reaching for.
+          console.warn(
+            `[executor] run ${run.id} was claimed while already in flight — deferring to the live turn instead of racing its session`,
+          );
+          await deferDuplicateClaim(run.id);
+          // Safety net for the one order E1/E2 cannot cover: if the live turn
+          // had already passed its completion handshake when we set the flag,
+          // nobody is left to read it. Re-queue it ourselves once that promise
+          // settles — guarded so it does nothing when E2 did its job.
+          void inFlight
+            .get(run.id)
+            ?.finally(() => requeueIfTurnStillOwed(run.id));
+          continue;
+        }
         if (run) {
           const p = processRun(run)
             .catch((err) => {

@@ -255,3 +255,126 @@ describe("project status reconciliation — source invariants and routing", () =
     );
   });
 });
+
+/* ==========================================================================
+ * Queue truth (2026-08-25). Three defects, one root: 'cancelled' was a
+ * TaskStatus in TypeScript that the DB CHECK constraint had never heard of, so
+ * there was no way to retire a task row. Operators retired them as 'blocked'
+ * instead — a status that is NOT terminal — and every such row silently held
+ * back every round above it.
+ *
+ * These are source invariants rather than behavioural tests because the rules
+ * they guard live in SQL string literals: no fake Querier can prove what
+ * Postgres will do with them, and a test that mocked the answer would be
+ * asserting its own fixture. What CAN be proved here is that the rule is
+ * written once and that no site has drifted back to the old one.
+ * ========================================================================== */
+describe("queue truth — cancelled is terminal, and terminality is written once", () => {
+  const PROJECTS_DB_SRC = readSource("../db/projects.ts");
+  const MIGRATION_SRC = readSource("../../../db/migrations/0046_task_status_cancelled.sql");
+
+  test("0046 widens the CHECK constraint to admit 'cancelled'", () => {
+    assert.match(
+      MIGRATION_SRC,
+      /ADD CONSTRAINT project_tasks_status_check[\s\S]*'cancelled'/,
+      "migration 0046 must add 'cancelled' to project_tasks_status_check",
+    );
+    for (const kept of ["pending", "ready", "running", "done", "failed", "blocked"]) {
+      assert.match(
+        MIGRATION_SRC,
+        new RegExp(`'${kept}'`),
+        `widening a CHECK must be additive — '${kept}' may not be dropped`,
+      );
+    }
+  });
+
+  test("TERMINAL_TASK_STATUSES is the single definition and holds both statuses", () => {
+    assert.match(
+      PROJECTS_DB_SRC,
+      /export const TERMINAL_TASK_STATUSES: readonly TaskStatus\[\] = \["done", "cancelled"\]/,
+      "TERMINAL_TASK_STATUSES must be exported with exactly done + cancelled",
+    );
+  });
+
+  test("no site in db/projects.ts still treats 'done' as the only terminal status", () => {
+    // The drift guard. Six SQL literals said this before the rule was written
+    // once; the helper exists so a seventh cannot be added by copy-paste.
+    // Matches the SQL comparison only — the prose in comments is not code, so
+    // the pattern is anchored on a column reference before it.
+    const drifted = PROJECTS_DB_SRC.match(/\w+\.status <> 'done'/g) ?? [];
+    assert.deepEqual(
+      drifted,
+      [],
+      `these sites still exclude only 'done': ${drifted.join(", ")}`,
+    );
+  });
+
+  test("the two claims of ACHIEVEMENT additionally require a finished row", () => {
+    // Terminal is not the same as carried. A project whose every task was
+    // cancelled must not close as 'done', and a round whose every task was
+    // cancelled must not fire 🏁 — so both sites need a positive 'done' test
+    // on top of the not-still-open test.
+    const closeBody = PROJECTS_DB_SRC.slice(
+      PROJECTS_DB_SRC.indexOf("export async function closeFinishedProjects"),
+      PROJECTS_DB_SRC.indexOf("export function evaluateProjectStatusReconciliation"),
+    );
+    assert.ok(closeBody.length > 0, "closeFinishedProjects body not found");
+    assert.match(
+      closeBody,
+      /WHERE project_id = p\.id AND status = 'done'/,
+      "closeFinishedProjects must require at least one 'done' task row",
+    );
+
+    const roundBody = PROJECTS_DB_SRC.slice(
+      PROJECTS_DB_SRC.indexOf("export async function roundIsComplete"),
+    ).slice(0, 1200);
+    assert.match(
+      roundBody,
+      /AND EXISTS \([\s\S]*t\.status = 'done'/,
+      "roundIsComplete must require at least one 'done' task row before it reports complete",
+    );
+  });
+
+  test("sweepClosedProjectTasks mutates only CANCELLED projects, never done ones", () => {
+    const body = PROJECTS_DB_SRC.slice(
+      PROJECTS_DB_SRC.indexOf("export async function sweepClosedProjectTasks"),
+      PROJECTS_DB_SRC.indexOf("/** Shallow-merge a patch into projects.metadata"),
+    );
+    assert.ok(body.length > 0, "sweepClosedProjectTasks body not found");
+
+    const update = body.slice(body.indexOf("UPDATE project_tasks"), body.indexOf("SELECT p.id::text"));
+    assert.match(
+      update,
+      /p\.status = 'cancelled'/,
+      "the only rows this may cancel belong to a cancelled project",
+    );
+    assert.ok(
+      !/p\.status = 'done'/.test(update),
+      "a project asserted done must be REPORTED, never silently rewritten",
+    );
+    assert.match(
+      update,
+      /t\.status IN \('pending', 'ready', 'blocked', 'failed'\)/,
+      "'running' rows are owned by a live run and must be left alone",
+    );
+  });
+
+  test("reconcileProjectStatuses actually runs the closed-project sweep", () => {
+    assert.match(
+      PROJECTS_DB_SRC,
+      /const orphans = await sweepClosedProjectTasks\(\);/,
+      "the sweep is dead code unless reconcileProjectStatuses calls it",
+    );
+  });
+
+  test("cancelTask refuses 'running' and 'done'", () => {
+    const body = PROJECTS_DB_SRC.slice(
+      PROJECTS_DB_SRC.indexOf("export async function cancelTask"),
+    ).slice(0, 1400);
+    assert.match(
+      body,
+      /AND status IN \('pending', 'ready', 'blocked', 'failed'\)/,
+      "cancelTask must not touch a running row (a live run owns it) or a done one",
+    );
+  });
+});

@@ -629,7 +629,23 @@ export async function runClaudeCode(opts: {
         return;
       }
       if (code !== 0 || resultText === null) {
-        const detail = resultText ?? stderr ?? "no output";
+        // `resultText ?? stderr` alone produced the message Konrad actually
+        // read in his chat on 2026-08-25: "claude-code exit 0: " — a colon and
+        // then nothing, because `??` only falls through on null and stderr was
+        // the empty string. Exit 0 with no result event and no stderr is also
+        // not a generic failure: it is what the CLI does when the session it
+        // was told to --resume is already open in another process, which is
+        // the shape of a double-claimed run (deferDuplicateClaim in
+        // executor.ts). Name it, so the next reader gets a cause instead of an
+        // empty colon.
+        const detail =
+          resultText ||
+          stderr ||
+          (code === 0
+            ? opts.sessionId
+              ? `exited cleanly without emitting a result event — session ${opts.sessionId} is most likely already open in another process`
+              : "exited cleanly without emitting a result event"
+            : "no output");
         // Session resume misses show up as an immediate non-zero exit
         // mentioning the session — let the caller retry fresh explicitly.
         if (

@@ -117,13 +117,19 @@ export type TaskStatus =
  */
 export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = ["done", "cancelled"];
 
-/** SQL predicate for "this row is still open", for one aliased table.
+/** SQL predicate for "this row is still open", optionally table-qualified.
  *
  *  A helper rather than a copied literal so the six call sites cannot drift
  *  apart again. It interpolates a hardcoded alias into SQL and NOTHING from a
- *  caller's input — every call below passes a literal written in this file. */
-function stillOpen(alias: string): string {
-  return `${alias}.status NOT IN ('done', 'cancelled')`;
+ *  caller's input — every call below passes a literal written in this file.
+ *
+ *  The un-qualified form is not a convenience: closeFinishedProjects()'s
+ *  subquery is deliberately alias-free, because project-tick.test.ts counts
+ *  `[a-z].project_id = p.id` correlations there to prove R70's three
+ *  quantifiers are all still correlated. Adding a fourth single-letter alias
+ *  inside that statement makes a real guard read as broken. */
+function stillOpen(alias?: string): string {
+  return `${alias ? `${alias}.` : ""}status NOT IN ('done', 'cancelled')`;
 }
 
 /** SQL predicate for "this row reached a terminal state", same contract. */
@@ -635,8 +641,8 @@ export async function closeFinishedProjects(): Promise<{
         AND EXISTS (SELECT 1 FROM project_tasks
                      WHERE project_id = p.id AND status = 'done')
         AND NOT EXISTS (
-          SELECT 1 FROM project_tasks t
-           WHERE t.project_id = p.id AND ${stillOpen("t")}
+          SELECT 1 FROM project_tasks
+           WHERE project_id = p.id AND ${stillOpen()}
         )
         AND NOT EXISTS (
           -- R70. "There is no workstream W <> 'main' of this project for which
@@ -678,8 +684,8 @@ export async function closeFinishedProjects(): Promise<{
         AND EXISTS (SELECT 1 FROM project_tasks
                      WHERE project_id = p.id AND status = 'done')
         AND NOT EXISTS (
-          SELECT 1 FROM project_tasks t
-           WHERE t.project_id = p.id AND ${stillOpen("t")}
+          SELECT 1 FROM project_tasks
+           WHERE project_id = p.id AND ${stillOpen()}
         )
       ORDER BY p.updated_at ASC`,
   );
@@ -1655,6 +1661,53 @@ export async function setTaskStatus(
     `UPDATE project_tasks SET status = $2, updated_at = now() WHERE id = $1`,
     [id, status],
   );
+}
+
+/**
+ * Retire ONE task row — the verb that did not exist, which is why the board
+ * filled up with rows titled `[RETIRED as duplicate] …` sitting in 'blocked'.
+ *
+ * A 'blocked' row is not terminal: promoteReadyTasks() holds back every round
+ * above it, so hand-retiring a duplicate silently wedged the whole project.
+ * Two projects died that way (aios-goals-day-system, os-usable-for-work) before
+ * 0046 made 'cancelled' writable.
+ *
+ * REFUSES 'running' and 'done':
+ *  - 'running' — a live run owns that row. Writing behind its back strands the
+ *    run and leaves the tick reconciling a task that moved under it. Stop the
+ *    run first, then cancel.
+ *  - 'done' — cancelling finished work would erase the record that it happened,
+ *    and closeFinishedProjects()/roundIsComplete() both count 'done' rows to
+ *    decide whether a claim of completion is honest.
+ *
+ * Writes 'cancelled' and NEVER 'done', which preserves the invariant
+ * markVerdictTaskDone() documents: a verdict row reaching 'done' can still only
+ * have come from that function, never from an API route.
+ *
+ * The reason is prepended to the title rather than stored in a column — there
+ * is no notes column, and the board renders titles. Returns null when nothing
+ * moved, so the caller can tell "refused" from "cancelled" without a re-read.
+ */
+export async function cancelTask(
+  id: string,
+  reason: string,
+): Promise<ProjectTask | null> {
+  const label = reason.trim().slice(0, 60);
+  const r = await pool.query<ProjectTask>(
+    `UPDATE project_tasks
+        SET status = 'cancelled',
+            title = CASE
+                      WHEN $2::text = '' THEN title
+                      WHEN title LIKE '[CANCELLED%' THEN title
+                      ELSE '[CANCELLED: ' || $2::text || '] ' || title
+                    END,
+            updated_at = now()
+      WHERE id = $1
+        AND status IN ('pending', 'ready', 'blocked', 'failed')
+      RETURNING *`,
+    [id, label],
+  );
+  return r.rows[0] ?? null;
 }
 
 /**

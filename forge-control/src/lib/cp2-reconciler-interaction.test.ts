@@ -802,7 +802,30 @@ describe("R40 — the workstream term reaches every site that keys on (project, 
       "export interface SettledRunningTask",
       "roundIsComplete",
     );
-    assert.match(body, /WHERE project_id = \$1 AND round = \$2 AND workstream = \$3 AND status <> 'done'/);
+    // 2026-08-25: roundIsComplete became TWO subqueries — "nothing still open"
+    // AND "at least one row actually finished" — so that a group whose every
+    // task was CANCELLED reports incomplete instead of firing 🏁 at Konrad for
+    // work nobody carried. The single-literal match that used to stand here
+    // could not survive that. R45's claim is unchanged and is now asserted over
+    // BOTH subqueries: if either lost the workstream term, one workstream's
+    // rows would answer for another's.
+    const keyed =
+      body.match(/t\.project_id = \$1 AND t\.round = \$2 AND t\.workstream = \$3/g) ?? [];
+    assert.equal(
+      keyed.length,
+      2,
+      "every subquery in roundIsComplete must key on (project, round, workstream) — R45",
+    );
+    assert.match(
+      body,
+      /AND \$\{stillOpen\("t"\)\}/,
+      "the open-rows test must use the one terminality rule, not a literal of its own",
+    );
+    assert.match(
+      body,
+      /AND EXISTS \([\s\S]*t\.status = 'done'/,
+      "terminal is not carried: a group of only-cancelled rows must not report complete",
+    );
     // Both callers pass one: the group path in consolidation, and the per-task
     // path for non-verdict roles. A caller that forgot would announce a round
     // another workstream is still working inside.

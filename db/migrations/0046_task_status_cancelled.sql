@@ -1,0 +1,31 @@
+-- 'cancelled' becomes a legal TASK status (Konrad, 2026-08-25: "fix the queue
+-- truth problems").
+--
+-- THE TYPE ALREADY SAID IT. db/projects.ts has carried
+--   export type TaskStatus = ... | "blocked" | "cancelled";
+-- and evaluateProjectTasksReconciliation() has counted `status === 'cancelled'`
+-- rows for as long as reconciliation has existed. The CHECK constraint never
+-- learned it. So the branch was structurally inert — `tasksCancelled` could
+-- only ever be 0 — and any code that tried to write the status would have died
+-- at the UPDATE. Same shape as 0043_gemini_tier: implemented in TypeScript,
+-- never migrated, and therefore reading as "supported and broken" rather than
+-- "not there".
+--
+-- WHAT IT COST, on live rows. With no way to retire a task, operators retired
+-- them by hand as `blocked` and renamed the title to say so.
+-- `aios-goals-day-system` carried five of them —
+--   [RETIRED as duplicate] backend-data-model-and-google-calendar
+--   [RETIRED as duplicate] web-api-and-core-ui-primitives
+--   [RETIRED as duplicate] day-planner-timeline-and-goals-view
+--   [RETIRED as duplicate] task-database-habits-and-stats
+--   [RETIRED as duplicate] review-and-verification
+-- — every one of them a duplicate whose twin row is 'done'. The project was
+-- closed anyway, so those rows became permanently unreachable: promoteReadyTasks
+-- only advances an ACTIVE project, and every stall detector scopes to open
+-- projects. The same hand-retirement wedged `os-usable-for-work` on 2026-08-18,
+-- because a non-'done' row in an earlier round holds back every round above it.
+--
+-- Widening a CHECK is additive: no existing row can violate the larger set.
+ALTER TABLE project_tasks DROP CONSTRAINT project_tasks_status_check;
+ALTER TABLE project_tasks ADD CONSTRAINT project_tasks_status_check
+  CHECK (status IN ('pending', 'ready', 'running', 'done', 'failed', 'blocked', 'cancelled'));

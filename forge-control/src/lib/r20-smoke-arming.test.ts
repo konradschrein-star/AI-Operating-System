@@ -138,10 +138,27 @@ describe("F1 the round-2 reviewer has an author", () => {
     const start = projectsSrc.indexOf("export async function closeFinishedProjects(");
     assert.ok(start > 0, "closeFinishedProjects moved — this test has gone stale");
     const fn = projectsSrc.slice(start, projectsSrc.indexOf("\n/**", start));
-    // The close is blocked by ANY task that is not 'done'. That is precisely
-    // why the reviewer must exist before round 1 settles.
+    // The close is blocked by ANY task that has not reached a terminal state.
+    // That is precisely why the reviewer must exist before round 1 settles.
+    //
+    // 2026-08-25: "not 'done'" became "not terminal". A CANCELLED row is
+    // retired on purpose and must stop holding its project open — which is
+    // exactly what a hand-retired `blocked` row used to do, forever. A PENDING
+    // reviewer is untouched by that change and still stops the close, which is
+    // this test's whole claim. The companion term is asserted with it, because
+    // terminal is not the same as carried: a project of only-cancelled rows is
+    // abandoned, not done.
     assert.match(fn, /NOT EXISTS/);
-    assert.match(fn, /status <> 'done'/);
+    assert.match(
+      fn,
+      /AND \$\{stillOpen\(\)\}/,
+      "the close gate must read the one terminality rule, not a literal of its own",
+    );
+    assert.match(
+      fn,
+      /WHERE project_id = p\.id AND status = 'done'/,
+      "a project whose every task was cancelled must not close as done",
+    );
   });
 });
 

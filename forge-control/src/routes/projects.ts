@@ -10,6 +10,7 @@ import {
   listManagerRollup,
   createTask,
   getTask,
+  cancelTask,
   unwedgeProject,
   reconcileProjectStatuses,
   type ProjectRepo,
@@ -830,6 +831,54 @@ r.post("/:id/tasks", async (c) => {
  * and un-block the project. The bulk counterpart to POST /api/tasks/:id/retry
  * — one call to get a frozen project moving again instead of hand-written SQL
  * against project_tasks (E3). */
+/* Retire ONE task row — the verb whose absence filled the board with rows
+ * titled `[RETIRED as duplicate] …` parked in 'blocked'. 'blocked' is not
+ * terminal, so each of those silently held back every round above it; two
+ * projects died that way before 0046 made 'cancelled' writable.
+ *
+ * POST, not DELETE: the row is kept. A cancelled task is part of the project's
+ * history — what was planned and deliberately not done — and the reconciler
+ * counts it. Deleting it would make the graph's `depends_on` arrays dangle,
+ * which sweepDanglingDependencies() then has to clean up after.
+ *
+ * Registered before `/:id/...` param routes cannot collide here (the task id is
+ * a second segment), but it stays next to unwedge on purpose: they are the two
+ * operator verbs that move task rows, and they should be read together. */
+r.post("/:id/tasks/:taskId/cancel", async (c) => {
+  const id = c.req.param("id");
+  const taskId = c.req.param("taskId");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid project id" }, 400);
+  if (!UUID_RE.test(taskId)) return c.json({ error: "invalid task id" }, 400);
+  const project = await getProject(id);
+  if (!project) return c.json({ error: "project not found" }, 404);
+
+  const task = await getTask(taskId);
+  if (!task) return c.json({ error: "task not found" }, 404);
+  // A task id that belongs to ANOTHER project must not be cancellable through
+  // this project's URL — the path would otherwise assert a relationship it
+  // never checked.
+  if (task.project_id !== id) {
+    return c.json({ error: "task does not belong to this project" }, 404);
+  }
+
+  const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
+  const cancelled = await cancelTask(taskId, (body.reason ?? "").trim());
+  if (!cancelled) {
+    // cancelTask's WHERE is the authority on which states are cancellable, so
+    // the 409 names the state that refused rather than re-deciding it here.
+    return c.json(
+      {
+        error:
+          `task is '${task.status}' — only pending, ready, blocked or failed rows can be cancelled. ` +
+          `Stop its run first if it is running.`,
+        task,
+      },
+      409,
+    );
+  }
+  return c.json({ task: cancelled });
+});
+
 r.post("/:id/unwedge", async (c) => {
   const id = c.req.param("id");
   if (!UUID_RE.test(id)) return c.json({ error: "invalid project id" }, 400);
