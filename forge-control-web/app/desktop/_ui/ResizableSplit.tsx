@@ -245,13 +245,22 @@ export function ResizeHandle({
   /* The visible rule is 1px. The GRAB TARGET is not: a 1px strip is a
    * pixel-hunt with a pointer, and a divider you cannot reliably catch reads
    * as a divider that does not move — which is exactly how these were being
-   * experienced. So the element is HIT_PAD px thick, paints only its content
-   * box (hence `backgroundClip`), and cancels its own padding with a negative
-   * margin so the layout footprint stays the 1px it always was. Nothing moves;
-   * the handle simply becomes catchable. */
+   * experienced.
+   *
+   * Under global `box-sizing: border-box`, a 1px element with 5px horizontal
+   * padding collapses its content box to 0px (max(0, 1 - 10)). Because
+   * `backgroundClip: content-box` restricts painting to the content box,
+   * the line painted 0px (invisible). Setting `boxSizing: content-box`
+   * guarantees a 1px painted content box while padding creates an 11px
+   * grab target (1px + 2*5px). Negative margins (-5px each side) cancel
+   * the padding so the net layout footprint remains strictly 1px.
+   *
+   * Hover/active emphasis uses `tokens.borderEmphasis` instead of the old
+   * saturated blue accent slab. */
   const base: CSSProperties = {
     flex: "none",
-    background: lit ? tokens.accent : tokens.borderSoft,
+    boxSizing: "content-box",
+    background: lit ? tokens.borderEmphasis : tokens.borderSoft,
     backgroundClip: "content-box",
     transition: active ? "none" : "background 120ms ease",
     touchAction: "none",
@@ -277,7 +286,7 @@ export function ResizeHandle({
     axis === "x"
       ? {
           ...base,
-          width: lit ? 3 : 1,
+          width: 1,
           padding: `0 ${HIT_PAD}px`,
           margin: `0 -${HIT_PAD}px`,
           cursor: "col-resize",
@@ -285,7 +294,7 @@ export function ResizeHandle({
         }
       : {
           ...base,
-          height: lit ? 3 : 1,
+          height: 1,
           padding: `${HIT_PAD}px 0`,
           margin: `-${HIT_PAD}px 0`,
           cursor: "row-resize",
