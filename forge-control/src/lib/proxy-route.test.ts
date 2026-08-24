@@ -294,7 +294,7 @@ describe("Next.js Proxy Route Handler (app/api/proxy/[...path]/route.ts)", () =>
     assert.equal(res.status, 502);
     assert.equal(res.headers.get("x-proxy-bailout"), "upgrade");
     const body = (await res.json()) as { error: string };
-    assert.ok(body.error.includes("WebSocket upgrades and VNC paths are not supported"));
+    assert.ok(body.error.includes("WebSocket upgrades are not supported"));
   });
 
   test("Bails out on Upgrade: websocket header with 502", async () => {
@@ -313,19 +313,45 @@ describe("Next.js Proxy Route Handler (app/api/proxy/[...path]/route.ts)", () =>
     assert.equal(res.headers.get("x-proxy-bailout"), "upgrade");
   });
 
-  test("Bails out on /vnc/ path with 502 (noVNC websockify takeover protection)", async () => {
-    const req = new Request("http://localhost:7701/api/proxy/uploads/run-123/vnc/websockify", {
-      method: "GET",
-    });
+  /* The bail is on the UPGRADE, not on the path.
+   *
+   * A real websockify request always carries `Connection: Upgrade`, so it is
+   * caught by the two tests above. noVNC's SHELL — `vnc.html` and its assets —
+   * is ordinary HTTP under the same `/vnc/` prefix, and bailing on the whole
+   * subtree left the viewer unable to render even the page that would explain
+   * the failure. Strictly worse than the rewrite this replaced, which served
+   * the shell fine and failed only the socket.
+   *
+   * So: a plain GET under /vnc/ must be PROXIED like any other path. It is
+   * proxied here to an unreachable upstream purely to prove it reached the
+   * proxy path rather than the bailout — the 502 that comes back carries no
+   * `x-proxy-bailout` header, which is the distinction that matters. */
+  test("does NOT bail on a plain HTTP GET under /vnc/ — only upgrades bail", async () => {
+    const oldUrl = process.env.FORGE_CONTROL_URL;
+    process.env.FORGE_CONTROL_URL = "http://127.0.0.1:59998";
+    try {
+      const req = new Request("http://localhost:7701/api/proxy/uploads/run-123/vnc/vnc.html", {
+        method: "GET",
+      });
 
-    const res = await GET(req, {
-      params: Promise.resolve({ path: ["uploads", "run-123", "vnc", "websockify"] }),
-    });
+      const res = await GET(req, {
+        params: Promise.resolve({ path: ["uploads", "run-123", "vnc", "vnc.html"] }),
+      });
 
-    assert.equal(res.status, 502);
-    assert.equal(res.headers.get("x-proxy-bailout"), "upgrade");
-    const body = (await res.json()) as { error: string };
-    assert.ok(body.error.includes("WebSocket upgrades and VNC paths are not supported"));
+      assert.equal(
+        res.headers.get("x-proxy-bailout"),
+        null,
+        "a plain GET under /vnc/ must go through the proxy, not the upgrade bailout",
+      );
+      const body = (await res.json()) as { error: string };
+      assert.ok(
+        body.error.includes("upstream fetch failed"),
+        `expected an upstream-fetch failure, got: ${body.error}`,
+      );
+    } finally {
+      if (oldUrl === undefined) delete process.env.FORGE_CONTROL_URL;
+      else process.env.FORGE_CONTROL_URL = oldUrl;
+    }
   });
 
   test("Handles upstream connection failure gracefully with 502", async () => {

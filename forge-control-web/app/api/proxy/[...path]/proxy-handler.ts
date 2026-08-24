@@ -20,9 +20,10 @@
  * Manager Constraint:
  * Route Handlers cannot host or proxy WebSockets (NextRequest lacks raw socket
  * access and Response rejects status 101). Any request carrying
- * `Connection: Upgrade` or targeting `/vnc/` bails out early (502 with
- * x-proxy-bailout header) so it does not swallow paths intended for
- * dedicated WebSocket reverse proxies.
+ * `Connection: Upgrade` bails out early (502 with an x-proxy-bailout header)
+ * so it does not swallow paths intended for a dedicated WebSocket reverse
+ * proxy. The bail is on the UPGRADE alone — see the note at the check itself
+ * for why matching the `/vnc/` path as well was wrong.
  */
 
 // Read per-request, not captured at module-import time: a top-level const
@@ -54,16 +55,34 @@ export async function handleProxy(req: Request, ctx?: RouteContext): Promise<Res
   const pathSegments = resolvedParams?.path;
   const subpath = Array.isArray(pathSegments) ? pathSegments.join("/") : (pathSegments ?? "");
 
-  // WebSocket / VNC bailout constraint
+  /* UPGRADE REQUESTS ONLY — not every path with "vnc" in it.
+   *
+   * The manager constraint that produced this block said "Connection: Upgrade
+   * OR the path contains /vnc/", and the second half was too coarse — my
+   * wording, not the builder's mistake. noVNC's SHELL is ordinary HTTP:
+   * `vnc.html`, its JS and its CSS are plain GETs this handler proxies
+   * perfectly well. Only the `websockify` socket needs a transport a Route
+   * Handler cannot provide.
+   *
+   * Bailing on the whole subtree made it WORSE than the rewrite it replaced.
+   * Before: the shell loaded (200) and only the canvas failed to connect.
+   * After: the shell 502s too, so the viewer cannot even render the thing that
+   * would show Konrad why. A narrower bail keeps the diagnosis visible and
+   * leaves exactly one broken hop instead of two.
+   *
+   * `upgrade` is also in HOP_BY_HOP below, so the header is never forwarded on
+   * the requests that DO get proxied. */
   const connectionHeader = req.headers.get("connection")?.toLowerCase() ?? "";
   const upgradeHeader = req.headers.get("upgrade")?.toLowerCase() ?? "";
   const isUpgrade = connectionHeader.includes("upgrade") || upgradeHeader.length > 0;
-  const isVnc = subpath.includes("vnc") || (Array.isArray(pathSegments) && pathSegments.includes("vnc"));
 
-  if (isUpgrade || isVnc) {
+  if (isUpgrade) {
     return new Response(
       JSON.stringify({
-        error: "WebSocket upgrades and VNC paths are not supported by the Route Handler",
+        error:
+          "WebSocket upgrades are not supported by a Next.js Route Handler " +
+          "(no socket access, and Response rejects status 101). This path needs " +
+          "a dedicated reverse proxy.",
       }),
       {
         status: 502,
