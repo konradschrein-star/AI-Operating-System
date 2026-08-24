@@ -1,169 +1,152 @@
-# Architecture Plan: aios-uploads-index-payload
+# aios-browser-takeover-live — plan (round 0)
 
-## Executive Summary & Recommendation
+**Goal.** Konrad clicks a link in his chat, lands in the agent's live Chrome, logs in by
+hand, the agent resumes. No SSH tunnel.
 
-**Recommendation**:
-1. **Backend Payload Pruning (`forge-control/src/lib/uploads-index.ts`)**: Prune idle run rows in `/api/uploads/index` by omitting `browser_state`, `is_live`, `needs_human`, and `signal` when inactive (`!is_live && !needs_human`). Only serialize active indicators (`is_live: true`, `needs_human: true`, `signal`, and `browser_state`) when a run is live or alerting. This reduces uncompressed response body from **~60.7 KB down to ~15.3 KB** across 133 runs (~75% reduction).
-2. **Proxy Header Passthrough Route Handler (`forge-control-web/app/api/proxy/[...path]/route.ts`)**: Replace the Next.js `rewrites()` rule in `next.config.mjs` for `/api/proxy/*` with a dedicated App Router Route Handler that explicitly forwards conditional request headers (`If-None-Match`, `If-Match`, `If-Modified-Since`) and faithfully passes through upstream status codes (notably **HTTP 304 Not Modified**) and headers (`ETag`, `Cache-Control`, `Content-Type`).
-3. **Client Integration & Verification**: Ensure `BrowserShots.tsx` (`useShotIndex`, `RunShotsIndicator`) handles optional `browser_state` smoothly without layout shifts, preserving identical visual indicators (idle camera count, live blue flowing sheen, and red pulse alert with diagnostic popover). Prove zero visual regression via screenshots of all 3 states.
-4. **Target Metric**: Restore steady-state `/uploads/index` bandwidth from **121,374 B/min down to ~300 B/min** (>99.7% reduction at 2 req/min / 30s poll), well below the **< 20,000 B/min** project threshold.
+## Recommendation
 
-**Reasoning**:
-- The 4x payload explosion (16 KB -> 60 KB) occurred because `aios-browser-stream-viewer` attached a full 14-field `browser_state` object to all 133 runs in the index, even though 99% are historical/idle runs that never need it. Detailed shot & browser state is already loaded on-demand via `GET /api/uploads/:id/shots` when an indicator is clicked.
-- The caching failure occurred because Next.js internal `rewrites()` in `next.config.mjs` strip `ETag` and conditional caching headers on reverse-proxied responses. Bypassing the rewrite with an App Router Route Handler restores full HTTP 304 conditional request semantics for the browser without altering the NextAuth middleware security boundary.
+Carry the websockify upgrade on a **dedicated, single-purpose URL prefix**
+`/api/browser-takeover/ws/<ticket>` served by an exact nginx `location` that
+`proxy_pass`es to `127.0.0.1:7700`, bypassing Next entirely. The **ticket is the
+credential**: an HMAC-SHA256-signed, 120-second, run+profile+port-bound blob carried in
+the URL *path segment*. forge-control verifies it before proxying a single byte, and takes
+the profile and port **from the signed payload**, never from a client-supplied run id.
+Every existing upgrade arm that accepts a bare run id is deleted, so there is exactly one
+authentication rule on the socket instead of "the safe one and the other one".
 
-**Rejected Alternatives**:
-- *Omit runs with zero screenshots entirely from `/uploads/index`*: Rejected because `LibrarySurface.tsx` requires all run directories containing listable artifacts (patches, diffs, logs, transcripts).
-- *Poll `/uploads/index` only for currently visible runs*: Rejected because the console rail / team list dynamically scrolls and filtering by visible run IDs adds query complexity without eliminating cache invalidation overhead.
-- *Rely on client-side polling backoff or longer poll intervals*: Rejected because a 30s poll interval (`SHOTS_INDEX_POLL_MS`) is already budgeted, and slowing it down degrades live screenshot freshness for active agent tasks.
-- *Use custom nginx location bypass for `/api/proxy/uploads/index`*: Rejected because nginx bypasses NextAuth middleware and introduces routing fragmentation across routes.
+Reasoning, in order of what drove the design:
 
----
+1. **A dedicated prefix, not a regex over `/api/uploads/`.** The nginx location bypasses
+   NextAuth. Anything it covers is public. `location /api/browser-takeover/ws/` covers
+   exactly one handler and cannot shadow an upload route, a shots index, or a future
+   `/api/uploads/*` addition. A regex like `~ ^/api/uploads/[^/]+/vnc/websockify$` would
+   work today and would silently widen the day someone adds a sibling path.
+2. **Ticket in the path, not the query.** Measured in noVNC's own source: `ui.js:1019-1025`
+   builds the socket URL by bare string concatenation, `url += '/' + path`, and
+   `webutil.js:32-43` captures the `path` query var with `[^&#]*`. A ticket in a path
+   segment (base64url — no `&`, no `#`) round-trips cleanly. A query-form ticket also
+   happens to survive today, but only because `?` is not in that exclusion set; it breaks
+   the moment a ticket needs a second parameter. Path form has no such edge.
+3. **Verify at upgrade time, not for the session's life.** The ticket authorises
+   *establishing* the socket. Once the 101 is written the session runs as long as Konrad
+   needs. 120 s is generous for a click-to-connect and short enough that a leaked URL is
+   worthless.
+4. **`reconnect=0` is mandatory, not cosmetic.** noVNC rebuilds the socket URL from the
+   `path` setting frozen at page load (`ui.js:1062-1070` → `connect()` → `rfb.js:83`), so an
+   auto-reconnect replays an **expired** ticket and shows Konrad an opaque failure. Disable
+   noVNC's reconnect; the viewer re-mints and reloads the iframe instead.
+5. **Only forge-control holds the signing key.** The mint endpoint lives on `:7700` and is
+   reached through the already-authenticated `/api/proxy` hop, so the Next process never
+   needs the secret and there is one copy of it on the box.
 
-## Architectural Analysis & System Design
+Rejected alternatives, one line each:
 
-### 1. State Ownership, Work Dispatch, and Failure Modes
-- **State Ownership**:
-  - `forge-control/src/lib/uploads-index.ts` owns the filesystem sweep over `/opt/ai-os/uploads`, cache invalidation (`invalidateRunsCache()`), and ETag calculation (`getUploadsCacheTag()`).
-  - `forge-control-web/app/api/proxy/[...path]/route.ts` owns the transport-level HTTP request/response proxying between the browser and forge-control (`:7700`).
-  - `BrowserShots.tsx` owns the client query hook (`useShotIndex`, query key `["uploads-index"]`), deriving stream mode via `resolveStreamMode(browserState)`.
-- **What Dispatches Work**:
-  - Client: TanStack Query in `BrowserShots.tsx` dispatches `GET /api/proxy/uploads/index` every 30s (`SHOTS_INDEX_POLL_MS`).
-  - Proxy: `route.ts` receives request, attaches `If-None-Match` from client, and invokes `http://127.0.0.1:7700/api/uploads/index`.
-  - Backend: `routes/uploads.ts` compares `If-None-Match` with in-memory `tag`. If matched, returns `304 Not Modified` with 0 body bytes.
-- **Failure Modes & Degradation**:
-  - *forge-control offline*: Route handler catches network error and returns `502 Bad Gateway` with clear JSON error. TanStack Query enters error state and retains previous query data (`staleTime`).
-  - *Corrupted / missing run directory*: `uploads-index.ts` skips unreadable entries without throwing (`catch(() => [])`), maintaining index availability.
-  - *Browser state resolution failure*: `resolveBrowserState` falls back gracefully to `{ is_live: false, needs_human: false }`, rendering idle camera count.
-- **How Konrad Sees It Broke**:
-  - Hard errors surfaced via console toast / red indicator error badge.
-  - Test suites (`pnpm test`, `check-uploads-payload.ts`, `gates-808.sh --strict`) fail on any non-200/304 response, dropped ETag, or oversized payload.
+- *Make the Next Route Handler proxy the upgrade* — impossible: no socket access, `Response`
+  rejects 101 (vercel/next.js #58698, #95514); this is the gap, not the fix.
+- *nginx `auth_request` against the NextAuth session* — the session cookie is a JWE that only
+  the Next process can open, so it needs a new decrypt endpoint anyway; a signed ticket is
+  the same work without a second round trip on every upgrade.
+- *HTTP Basic auth on the location* — survives an upgrade, but adds a second credential
+  Konrad must hold and is unbound to run, profile, or expiry.
+- *Bare run id over a loopback-only nginx location* — the brief's own prohibition, and the
+  correct one: guessing a run id would hand over a logged-in Google session.
+- *Single-use tickets with a replay store* — adds state to a stateless check to defend
+  against replay inside a 120 s window by whoever already holds the URL.
+- *`location ~ ^/api/uploads/.../websockify$`* — see (1).
 
----
+## Corrections to the brief's established facts
 
-## Technical Specifications
+Both measured on this host, 2026-08-25, and both change what a builder should do:
 
-### Component 1: Backend Payload Pruning (`forge-control/src/lib/uploads-index.ts`)
-```ts
-// Idle run representation in computeAllRuns():
-const baseSummary: RunSummary = {
-  id: entry.name,
-  count: images.length,
-  image_count: images.length,
-  artifact_count: files.length - images.length,
-  file_count: files.length,
-  latest_ts: files[0].mtime,
-};
+1. **"Right now NOTHING listens in 6900-6959 or 5990-6049" is no longer true.** `ss -ltnp`
+   shows `websockify` on `127.0.0.1:6941` (pid 3831317) and `x11vnc` on `127.0.0.1:6031`
+   and `[::1]:6031` (pid 3831277) — a live takeover stack on display `:131`. Both are
+   loopback-only, so the "never on 0.0.0.0" rule holds. Do not assume a clean slate.
+2. **The driver IS in this repo.** The brief says the driver is at
+   `/opt/ai-os/scratch/gemfix/scripts/research-browser.mjs` and "NOT /opt/ai-os/scripts/".
+   True, but incomplete: `scripts/research-browser.mjs` is **tracked in this repo**
+   (last touched `b0d0f4b`), 2284 lines, and byte-identical to both the scratch copy and
+   the live `/opt/forge-ai-os/scripts/research-browser.mjs`. Builders edit the **worktree
+   copy**; the deploy task ships it.
 
-// Only attach enriched browser state when active or needs human intervention
-if (browser_state.is_live || browser_state.needs_human) {
-  baseSummary.is_live = browser_state.is_live;
-  baseSummary.needs_human = browser_state.needs_human;
-  baseSummary.signal = browser_state.signal;
-  baseSummary.browser_state = browser_state;
-}
-runs.push(baseSummary);
-```
-- ETag computation in `computeTag(runs)` includes `is_live`, `needs_human`, `signal` alongside counts and `latest_ts`, ensuring immediate invalidation when a run transitions between idle, live, and alerting states.
+And one thing the brief overstated in our favour:
 
-### Component 2: Next.js App Router Route Handler (`forge-control-web/app/api/proxy/[...path]/route.ts`)
-- Mounts at `app/api/proxy/[...path]/route.ts`.
-- Handles `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`.
-- Extracts `path` parameter and search parameters, constructing target URL `${FORGE_CONTROL}/api/${subpath}${query}`.
-- Forwards incoming headers (including `if-none-match`, `if-match`, `if-modified-since`, `accept`, `content-type`, `authorization`, `cookie`).
-- Passes through upstream response status (specifically `304 Not Modified`) and all upstream headers (`etag`, `cache-control`, `content-type`, `content-length`).
-- Handles response streaming via `new Response(upstream.body, { status: upstream.status, headers: outHeaders })`.
+3. **`ensureTakeover` already runs on a login wall, unconditionally** — `research-browser.mjs:1774`,
+   inside `handleRequest`, before the verdict is even checked. Deliverable 3 is therefore
+   *not* "start the takeover stack"; the stack already starts. The only missing half is the
+   **marker** that lets `resolveProfileForRun` map a run id to a profile.
 
-### Component 3: Frontend Integration & Visual Verification
-- `UploadsIndexRun` in `BrowserShots.tsx` already defines `is_live?`, `needs_human?`, `signal?`, and `browser_state?` as optional.
-- Verify `resolveStreamMode(browserState)` handles missing/undefined `browser_state` as `"idle"`.
-- Verify `RunShotsIndicator` renders correctly in all three states:
-  1. **Idle**: Camera glyph `📷` + count.
-  2. **Live**: Flowing blue sheen (`fg-stream-live`), badge `LIVE`, count.
-  3. **Red Mode**: Pulsing red outline (`fg-stream-red`), warning glyph `⚠️`, badge `NEEDS KONRAD`, diagnostic tooltip/popover.
+## What owns state, what dispatches, what happens on failure
 
----
+| Concern | Owner |
+| --- | --- |
+| Signing key | `/opt/ai-os/.secrets/forge-control.env` (0600), the file `ecosystem.config.cjs` already reads |
+| Ticket mint | forge-control `:7700`, behind the authenticated `/api/proxy` hop |
+| Ticket verify | forge-control's `'upgrade'` listener, before any byte is proxied |
+| Profile → display → port | `displaySlot()` / `portsForDisplay()`, unchanged |
+| Run → profile | `browser_state.json` in the run's upload dir, written by the driver |
+| Takeover processes | `research-browser.mjs`'s `ensureTakeover`, unchanged |
 
-## Bandwidth Attribution & Before/After Targets
+**On failure, everything fails closed and loudly.** Missing secret → mint and verify both
+throw; no unsigned path exists. Bad/expired ticket → the socket gets an HTTP status line and
+closes, and the reason is logged. Stack down → the mint endpoint still answers, the socket
+proxy fails to connect to loopback, and the takeover page renders the error rather than a
+blank canvas. No fallback anywhere converts a failure into a silent success.
 
-| Endpoint | Before (B/min) | Target After (Cold) | Target After (Steady 304) | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| `/api/proxy/uploads/index` | **121,374 B/min** (47%) | **~30,600 B/min** (cache miss) | **~300 B/min** (304 hit) | **Target: < 20,000 B/min** |
-| `/api/proxy/chat` | 75,410 B/min (29%) | 75,410 B/min | 75,410 B/min | Landed in prior lane |
-| `/api/proxy/chat/<id>/team` | 48,670 B/min (19%) | 48,670 B/min | 0 B/min (settled) | Landed in prior lane |
-| **TOTAL CONSOLE AT REST** | **260,448 B/min** | **~170,000 B/min** | **~139,000 B/min** | **Net ~47% total reduction** |
+**How Konrad sees it broke:** the `/takeover/<runId>` page renders the failure text
+inline — it is the page the reminder links to, so a failure is visible at exactly the moment
+he tries to use it. forge-control logs one line per upgrade attempt (accepted or rejected)
+with run id, profile, port and outcome — never the ticket itself.
 
----
+### Secret provisioning — the landmine to avoid
 
-## Task Decomposition & Workstream Allocation
+`ecosystem.config.cjs`'s `required()` **throws and refuses to boot the whole control plane**
+if a name is missing. Do **not** wire `TAKEOVER_TICKET_SECRET` through `required()`: a deploy
+that reloads pm2 before the secret file is updated would take the entire AI OS down for a
+browser feature. Pass it through as an optional env var and make the **ticket code** throw on
+mint and on verify when it is absent. The feature dies loudly; the OS stays up. The deploy
+task writes the secret to the 0600 file **before** any restart regardless.
 
-All tasks run in workstream `"main"`:
+## Work
 
-### Task 1: Backend Payload Pruning & Cache Invalidation
-- **Role**: `builder`
-- **Tier**: `junior` (Sonnet)
-- **Workstream**: `main`
-- **Depends On**: `[]`
-- **Write Set**:
-  - `forge-control/src/lib/uploads-index.ts`
-  - `forge-control/src/lib/uploads-index.test.ts`
-- **Brief**:
-  1. In `forge-control/src/lib/uploads-index.ts`, update `computeAllRuns()` so idle runs (`!browser_state.is_live && !browser_state.needs_human`) do not serialize `browser_state`, `is_live`, `needs_human`, or `signal`. Only include these fields when a run is actively streaming (`is_live === true`) or blocked/alerting (`needs_human === true`).
-  2. Ensure `computeTag()` incorporates `is_live`, `needs_human`, and `signal` into ETag hashing so live state transitions invalidate the cache immediately.
-  3. In `forge-control/src/lib/uploads-index.test.ts`, add comprehensive unit tests asserting:
-     - Idle runs produce trimmed payloads without `browser_state` or redundant boolean flags.
-     - Live and needs_human runs retain complete `browser_state` and flags.
-     - ETag is computed deterministically and changes on both file additions and state transitions.
-  4. Ensure `cd forge-control && pnpm test` and `npx tsc --noEmit` pass with zero errors.
+Files, one owner each:
 
-### Task 2: Next.js Proxy Route Handler & Memory Note
-- **Role**: `builder`
-- **Tier**: `standard` (Opus)
-- **Workstream**: `main`
-- **Depends On**: `[]`
-- **Write Set**:
-  - `forge-control-web/app/api/proxy/[...path]/route.ts`
-  - `forge-control-web/next.config.mjs`
-- **Brief**:
-  1. Create `forge-control-web/app/api/proxy/[...path]/route.ts` as an App Router Route Handler supporting `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `HEAD`.
-  2. Implement transparent HTTP proxying to `${FORGE_CONTROL_URL}/api/...` preserving:
-     - Request headers, specifically `If-None-Match`, `If-Match`, `If-Modified-Since`, `Accept`, `Content-Type`, `Authorization`, `Cookie`.
-     - Upstream status codes verbatim (crucially `304 Not Modified`).
-     - Upstream response headers (`ETag`, `Cache-Control`, `Content-Type`, `Content-Length`).
-     - Request and response streaming (`ReadableStream`).
-  3. Clean up `next.config.mjs` rewrites if necessary or verify App Router route handler takes precedence cleanly.
-  4. Update fleet memory note `/root/.claude/projects/-opt-forge-ai-os/memory/nextjs-rewrite-cannot-proxy-websockets.md` with findings on rewrite response header stripping and Route Handler solution.
-  5. Verify `curl http://127.0.0.1:7701/api/proxy/uploads/index` through `:7701` returns `ETag` and that repeating with `-H 'If-None-Match: <etag>'` returns `HTTP 304`.
+- `forge-control/src/lib/takeover-ticket.ts` (+ test) — mint/verify. Payload
+  `{v:1, rid, prof, port, exp, jti}` → `base64url(json).base64url(hmac)`. Read the env var
+  **inside** the function, never at module scope (a module-level capture is what made an
+  earlier round's proxy tests run against production). `timingSafeEqual` on the signature,
+  then expiry, then `PROFILE_RE`, then the 6900-6959 port range.
+- `forge-control/src/lib/browser-takeover.ts` — new `kind: "ticket"` arm matching
+  `/api/browser-takeover/ws/<ticket>`; `handleBrowserTakeoverUpgrade` requires a valid ticket
+  on **every** arm it accepts; delete the bare run-id and bare profile upgrade arms. Reuse
+  `proxyTakeoverUpgrade` untouched. Keep both port-allowlist checks. **Fix the false comment
+  at lines 665-666** — `next.config.mjs` contains no `rewrites()` at all (verified: 14 lines,
+  `reactStrictMode` and a webpack alias only).
+- `forge-control/src/routes/uploads.ts` — `GET .../vnc/ticket`, registered **before** the
+  `r.all("/:id/vnc/*")` catch-all, which would otherwise swallow it.
+- `forge-control-web/app/desktop/chat/browser-shots.ts` — `vncProxyUrl` takes a ticket,
+  emits `path=api/browser-takeover/ws/<ticket>` and `reconnect=0`.
+- `forge-control-web/app/takeover/[runId]/page.tsx` — the reminder's landing page. Needed
+  because `/desktop` is a single client-state route with no deep links, so a phone
+  notification has nowhere else to point.
+- `scripts/research-browser.mjs` — write `browser_state.json` into the run's upload dir at
+  login-wall time; replace the `ssh -N -L` line with the https URL.
+- `deploy/nginx/os.schreinercontentsystems.com.conf` — the location block, reviewable in
+  git. Note the live file `/etc/nginx/sites-enabled/os.schreinercontentsystems.com` is a
+  **real file, not a symlink** to `sites-available`. `$connection_upgrade` is already mapped
+  globally in `/etc/nginx/conf.d/00-gzip-and-upgrade.conf:30`. `access_log off` on this
+  location — the ticket is in the URI.
+- `scripts/checks/check-browser-takeover-ticket.ts` — the gate.
 
-### Task 3: Client Integration, Verification Checks & Evidence Harness
-- **Role**: `builder`
-- **Tier**: `junior` (Sonnet)
-- **Workstream**: `main`
-- **Depends On**: `[Task 1 ID, Task 2 ID]`
-- **Write Set**:
-  - `forge-control-web/app/desktop/chat/BrowserShots.tsx`
-  - `scripts/checks/check-browser-stream-viewer.ts`
-  - `scripts/checks/check-uploads-payload.ts`
-  - `docs/plan/artifacts/uploads-index-payload/README.md`
-- **Brief**:
-  1. Verify `forge-control-web/app/desktop/chat/BrowserShots.tsx` handles trimmed uploads index objects seamlessly for idle, live blue, and red mode runs.
-  2. Fix `scripts/checks/check-browser-stream-viewer.ts` line 448 where `TEAM_POLL_MS` was pinned to legacy `6000` (update to `10000` as established in `pollBudget.ts`).
-  3. Create `scripts/checks/check-uploads-payload.ts` to measure and assert:
-     - Cold uncompressed payload size is < 20 KB (target ~15.3 KB vs legacy 60.7 KB).
-     - Steady-state bandwidth at 2 req/min with HTTP 304 is < 500 B/min (>99% reduction).
-     - ETag and conditional request matching through `:7701`.
-  4. Capture screenshots of the three visual states (idle camera indicator, live blue outline, red mode alert) and document before/after attribution in `docs/plan/artifacts/uploads-index-payload/README.md`.
-  5. Ensure `gates-808.sh --strict` runs clean.
+## Proof the deploy task must produce
 
-### Task 4: Final Adversarial Review & Gating Verification
-- **Role**: `reviewer`
-- **Tier**: `standard` (Opus)
-- **Workstream**: `main`
-- **Depends On**: `[Task 3 ID]`
-- **Write Set**: `[]`
-- **Brief**:
-  1. Perform complete adversarial check across all changes from Tasks 1, 2, and 3.
-  2. Verify that `GET /api/proxy/uploads/index` through `:7701` returns `ETag` and responds with `304 Not Modified` on `If-None-Match`.
-  3. Verify payload size reduction meets DoD (< 20,000 B/min steady-state at rest).
-  4. Inspect screenshots in `docs/plan/artifacts/uploads-index-payload/` to confirm zero visual regressions across idle, live blue, and red mode states.
-  5. Confirm all gates pass: `npx tsc --noEmit` (both packages), `node scripts/checks/no-raw-colours.cjs`, `pnpm test` (unit suite), and `bash scripts/checks/gates-808.sh --strict`.
+Real browser, signed in, screenshots to `/opt/ai-os/uploads/$FORGE_RUN_ID/`, each one read
+back with the Read tool:
+
+1. The takeover page connected — a live Chrome canvas, not a shell.
+2. **No ticket** → socket refused.
+3. **Expired ticket** → socket refused.
+4. **Tampered ticket** (flipped byte in the signature) → socket refused.
+
+A route that cannot be shown to reject is not secured. If any of these cannot be produced,
+the task says so plainly rather than reporting success.
