@@ -1,14 +1,24 @@
 "use client";
 
 /**
- * BrowserShots.tsx — "which UI did you actually look at?", rendered. Round 1350.
+ * BrowserShots.tsx — "which UI did you actually look at?", rendered. Round 1350 & Round 1 (Browser Stream Viewer).
  *
  * Three surfaces, one visual grammar:
- *   `BrowserShots`        the transcript block, under the tool row that took or
- *                         opened the shots (AssistantThread.tsx).
- *   `RunShotsIndicator`   the camera indicator on a panel row (TeamRow.tsx,
- *                         live/AgentActivity.tsx).
- *   `ShotStrip`           the thumbnail strip both of them expand into.
+ *   `BrowserShots`          the transcript block, under the tool row that took or
+ *                           opened the shots (AssistantThread.tsx).
+ *   `RunShotsIndicator`     the camera indicator on a panel row (TeamRow.tsx,
+ *                           live/AgentActivity.tsx).
+ *   `ShotStrip`             the thumbnail strip both of them expand into.
+ *   `FullscreenShotViewer`  fullscreen modal viewer with manual noVNC takeover.
+ *
+ * ── LIVE BLUE FLOWING OUTLINE & RED MODE ───────────────────────────────────
+ * When a stream is actively producing shots or a browser session is running,
+ * components display a live flowing blue outline/sheen (tokens.accent / tokens.decide).
+ * When Konrad's action is required (exit code 4 login wall, captcha, or stuck signal),
+ * components switch to Red Mode (tokens.bleed / tokens.dangerActionBorder) with
+ * clear diagnostics on WHY and WHAT TO DO.
+ * Both animations strictly honor @media (prefers-reduced-motion: reduce) with
+ * static solid outline/glow fallbacks and zero layout shift.
  *
  * ── WHY NO IMAGE COMES FROM MARKDOWN ──────────────────────────────────────
  * `rehype-forge-allowlist.ts` renders every markdown image as inert text, and
@@ -37,22 +47,102 @@
  * re-renders nothing at all.
  */
 
-import { useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import {
   newestFirst,
+  resolveStreamMode,
+  resolveStreamWarning,
   shotClock,
   shotSrc,
   shotsNoun,
   stampToIso,
   uploadsDirId,
+  vncProxyUrl,
   type BrowserShotRef,
+  type BrowserStateSummary,
+  type StreamMode,
 } from "./browser-shots";
 
 /** The glyph. One camera, both surfaces, so the transcript block and the panel
  *  indicator read as the same fact seen twice. */
 const CAMERA = "📷";
+
+/* ── Stream animation styles (Pure tokens, zero raw colour, reduced motion) ── */
+
+export function StreamStyles() {
+  return (
+    <style>{`
+      @keyframes fg-stream-flow-blue {
+        0% {
+          box-shadow: 0 0 0 1px var(--fg-accent), 0 0 8px rgba(var(--fg-accent-rgb), 0.25);
+        }
+        50% {
+          box-shadow: 0 0 0 1.5px var(--fg-decide), 0 0 14px rgba(var(--fg-accent-rgb), 0.55);
+        }
+        100% {
+          box-shadow: 0 0 0 1px var(--fg-accent), 0 0 8px rgba(var(--fg-accent-rgb), 0.25);
+        }
+      }
+
+      @keyframes fg-stream-pulse-red {
+        0% {
+          box-shadow: 0 0 0 1px var(--fg-bleed), 0 0 6px var(--fg-dangerActionBorder);
+        }
+        50% {
+          box-shadow: 0 0 0 2px var(--fg-bleed), 0 0 14px var(--fg-dangerActionBorder);
+        }
+        100% {
+          box-shadow: 0 0 0 1px var(--fg-bleed), 0 0 6px var(--fg-dangerActionBorder);
+        }
+      }
+
+      @keyframes fg-badge-pulse {
+        0%, 100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.55;
+          transform: scale(0.92);
+        }
+      }
+
+      .fg-stream-live {
+        animation: fg-stream-flow-blue 3s ease-in-out infinite;
+      }
+
+      .fg-stream-red {
+        animation: fg-stream-pulse-red 2s ease-in-out infinite;
+      }
+
+      .fg-pulse-badge {
+        animation: fg-badge-pulse 2s ease-in-out infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .fg-stream-live,
+        .fg-stream-red,
+        .fg-pulse-badge {
+          animation: none !important;
+        }
+        .fg-stream-live {
+          box-shadow: 0 0 0 1.5px var(--fg-accent) !important;
+        }
+        .fg-stream-red {
+          box-shadow: 0 0 0 1.5px var(--fg-bleed) !important;
+        }
+      }
+    `}</style>
+  );
+}
 
 /* ── The strip ────────────────────────────────────────────────────────────── */
 
@@ -79,6 +169,8 @@ const THUMB_FRAME: CSSProperties = {
   background: tokens.bgGutter,
   textDecoration: "none",
   display: "block",
+  cursor: "pointer",
+  position: "relative",
 };
 
 /**
@@ -87,7 +179,15 @@ const THUMB_FRAME: CSSProperties = {
  * wrapping grid in the panel would push the rows below it down by a variable
  * amount every time one opened.
  */
-export function ShotStrip({ shots }: { shots: readonly ShotLike[] }) {
+export function ShotStrip({
+  shots,
+  mode = "idle",
+  onSelectShot,
+}: {
+  shots: readonly ShotLike[];
+  mode?: StreamMode;
+  onSelectShot?: (index: number) => void;
+}) {
   if (shots.length === 0) {
     return (
       <div className="mono" style={{ fontSize: 10, color: tokens.textFaint, padding: "6px 10px" }}>
@@ -95,6 +195,14 @@ export function ShotStrip({ shots }: { shots: readonly ShotLike[] }) {
       </div>
     );
   }
+
+  const frameBorder =
+    mode === "needs_human"
+      ? `1px solid ${tokens.dangerActionBorder}`
+      : mode === "live"
+        ? `1px solid ${tokens.accent}`
+        : `1px solid ${tokens.borderDivider}`;
+
   return (
     <div
       data-shot-strip
@@ -107,7 +215,7 @@ export function ShotStrip({ shots }: { shots: readonly ShotLike[] }) {
         alignItems: "flex-start",
       }}
     >
-      {shots.map((s) => {
+      {shots.map((s, idx) => {
         const src = shotSrc(s.dirId, s.name);
         if (src === null) {
           /* A name that fails validation is REPORTED, not hidden: silently
@@ -128,11 +236,15 @@ export function ShotStrip({ shots }: { shots: readonly ShotLike[] }) {
           <a
             key={`${s.dirId}/${s.name}`}
             href={src}
-            target="_blank"
-            rel="noreferrer noopener"
-            title={`${s.label}${clock ? ` · ${clock} UTC` : ""} — open full size`}
-            style={THUMB_FRAME}
-            onClick={(e) => e.stopPropagation()}
+            title={`${s.label}${clock ? ` · ${clock} UTC` : ""} — click for fullscreen viewer`}
+            style={{ ...THUMB_FRAME, border: frameBorder }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onSelectShot) {
+                e.preventDefault();
+                onSelectShot(idx);
+              }
+            }}
           >
             {/* `loading="lazy"` on top of the mount gate: the strip may hold a
                 dozen shots and only the first few are on screen. */}
@@ -152,11 +264,7 @@ export function ShotStrip({ shots }: { shots: readonly ShotLike[] }) {
                 background: tokens.bgCard,
               }}
             />
-            {/* Label and time are a flex ROW, not one text flow: the label is
-                the part that may be arbitrarily long, so it is the part that
-                ellipses. A time that gets truncated away is the one thing this
-                caption may not do — "which shot is this, and when" is the whole
-                question the strip answers. */}
+            {/* Label and time are a flex ROW, not one text flow */}
             <div
               className="mono"
               style={{
@@ -167,6 +275,7 @@ export function ShotStrip({ shots }: { shots: readonly ShotLike[] }) {
                 color: tokens.textMuted2,
                 padding: "3px 5px",
                 borderTop: `1px solid ${tokens.borderDivider}`,
+                background: tokens.bgCard,
               }}
             >
               <span
@@ -191,6 +300,487 @@ export function ShotStrip({ shots }: { shots: readonly ShotLike[] }) {
   );
 }
 
+/* ── Fullscreen Viewer Modal ──────────────────────────────────────────────── */
+
+export function FullscreenShotViewer({
+  shots,
+  initialIndex = 0,
+  dirId,
+  mode = "idle",
+  state,
+  onClose,
+}: {
+  shots: readonly ShotLike[];
+  initialIndex?: number;
+  dirId: string;
+  mode?: StreamMode;
+  state?: BrowserStateSummary | null;
+  onClose: () => void;
+}) {
+  const [currentIndex, setCurrentIndex] = useState(
+    Math.max(0, Math.min(initialIndex, Math.max(0, shots.length - 1))),
+  );
+  const [viewMode, setViewMode] = useState<"screenshot" | "manual">("screenshot");
+  const modalRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  const currentShot = shots[currentIndex] ?? shots[0];
+  const warning = useMemo(() => resolveStreamWarning(state), [state]);
+
+  // Focus trap and keyboard navigation
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    modalRef.current?.focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === "ArrowLeft") {
+        e.stopPropagation();
+        setCurrentIndex((i) => (i > 0 ? i - 1 : shots.length - 1));
+      } else if (e.key === "ArrowRight") {
+        e.stopPropagation();
+        setCurrentIndex((i) => (i < shots.length - 1 ? i + 1 : 0));
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      previousFocusRef.current?.focus();
+    };
+  }, [shots.length, onClose]);
+
+  const currentSrc = currentShot ? shotSrc(currentShot.dirId, currentShot.name) : null;
+  const vncUrl = vncProxyUrl(dirId);
+
+  return (
+    <div
+      ref={modalRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Browser Stream Fullscreen Viewer"
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 99999,
+        background: tokens.bgBody,
+        display: "flex",
+        flexDirection: "column",
+        outline: "none",
+      }}
+    >
+      <StreamStyles />
+
+      {/* Top Header Bar */}
+      <div
+        className="mono"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "8px 16px",
+          borderBottom: `1px solid ${tokens.borderDivider}`,
+          background: tokens.bgTabBar,
+          gap: 12,
+          flex: "none",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <span style={{ fontSize: 13 }} aria-hidden>
+            {CAMERA}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: tokens.textHi }}>
+            {dirId}
+          </span>
+          {shots.length > 0 && (
+            <span style={{ fontSize: 10.5, color: tokens.textMuted2 }}>
+              Shot {currentIndex + 1} of {shots.length}
+            </span>
+          )}
+          {currentShot && (
+            <span
+              style={{
+                fontSize: 10.5,
+                color: tokens.textLabel,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {currentShot.label}
+              {shotClock(currentShot.ts) ? ` · ${shotClock(currentShot.ts)} UTC` : ""}
+            </span>
+          )}
+        </div>
+
+        {/* Center / Status Indicator */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {mode === "needs_human" ? (
+            <div
+              className="fg-stream-red mono"
+              style={{
+                padding: "3px 8px",
+                borderRadius: 4,
+                background: tokens.dangerActionBg,
+                color: tokens.bleed,
+                fontSize: 10,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span className="fg-pulse-badge" aria-hidden>
+                🔴
+              </span>
+              <span>NEEDS KONRAD{warning?.service ? `: ${warning.service.toUpperCase()}` : ""}</span>
+            </div>
+          ) : mode === "live" ? (
+            <div
+              className="fg-stream-live mono"
+              style={{
+                padding: "3px 8px",
+                borderRadius: 4,
+                background: tokens.primaryActionBg,
+                color: tokens.accent,
+                fontSize: 10,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span className="fg-pulse-badge" aria-hidden>
+                ●
+              </span>
+              <span>LIVE STREAM</span>
+            </div>
+          ) : (
+            <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
+              ARCHIVED STILLS
+            </span>
+          )}
+        </div>
+
+        {/* Right Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            onClick={() => setViewMode((m) => (m === "screenshot" ? "manual" : "screenshot"))}
+            className="mono"
+            style={{
+              padding: "4px 10px",
+              borderRadius: 4,
+              fontSize: 10.5,
+              fontWeight: 600,
+              cursor: "pointer",
+              border: `1px solid ${viewMode === "manual" ? tokens.accent : tokens.border}`,
+              background: viewMode === "manual" ? tokens.primaryActionBg : tokens.bgCard,
+              color: viewMode === "manual" ? tokens.accent : tokens.textSoft,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span>{viewMode === "manual" ? "📷 Stills View" : "🎮 Take Control (Manual Mode)"}</span>
+          </button>
+
+          {currentSrc && (
+            <a
+              href={currentSrc}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="mono"
+              style={{
+                padding: "4px 8px",
+                borderRadius: 4,
+                fontSize: 10.5,
+                textDecoration: "none",
+                background: tokens.bgCard,
+                color: tokens.textMuted2,
+                border: `1px solid ${tokens.border}`,
+              }}
+              title="Open raw image in new tab"
+            >
+              ↗ Raw
+            </a>
+          )}
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="mono"
+            style={{
+              padding: "4px 10px",
+              borderRadius: 4,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              background: tokens.bgCard,
+              color: tokens.textHi,
+              border: `1px solid ${tokens.borderDivider}`,
+            }}
+            title="Close (ESC)"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      {/* Red Mode Diagnostic Banner in Fullscreen */}
+      {mode === "needs_human" && warning && (
+        <div
+          className="mono"
+          style={{
+            padding: "8px 16px",
+            background: tokens.dangerActionBg,
+            borderBottom: `1px solid ${tokens.dangerActionBorder}`,
+            color: tokens.bleed,
+            fontSize: 11,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flex: "none",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 13 }} aria-hidden>
+              ⚠️
+            </span>
+            <span style={{ fontWeight: 700 }}>{warning.title}:</span>
+            <span style={{ color: tokens.textSoft }}>{warning.detail}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 10, color: tokens.textMuted }}>{warning.action}</span>
+            {viewMode !== "manual" && (
+              <button
+                type="button"
+                onClick={() => setViewMode("manual")}
+                style={{
+                  padding: "3px 8px",
+                  borderRadius: 4,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  background: tokens.bleed,
+                  color: tokens.onAccent,
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                Take Control Now
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Main Content Stage */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: tokens.bgBody,
+          overflow: "hidden",
+        }}
+      >
+        {viewMode === "manual" ? (
+          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+            <div
+              className="mono"
+              style={{
+                padding: "4px 12px",
+                background: tokens.bgTabBar,
+                borderBottom: `1px solid ${tokens.borderDivider}`,
+                fontSize: 10,
+                color: tokens.textMuted2,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>
+                Manual Browser Takeover &middot; Authenticated Loopback Proxy (127.0.0.1)
+              </span>
+              <span style={{ color: tokens.accent }}>Direct VNC Control Active</span>
+            </div>
+            {vncUrl ? (
+              <iframe
+                src={vncUrl}
+                title="Live Browser Takeover"
+                style={{
+                  flex: 1,
+                  width: "100%",
+                  height: "100%",
+                  border: "none",
+                  background: tokens.bgBody,
+                }}
+              />
+            ) : (
+              <div
+                className="mono"
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: tokens.bleed,
+                  fontSize: 12,
+                }}
+              >
+                Could not construct authenticated proxy URL for run {dirId}
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            {currentSrc ? (
+              <img
+                src={currentSrc}
+                alt={currentShot?.label ?? "Browser stream fullscreen preview"}
+                style={{
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  objectFit: "contain",
+                  display: "block",
+                }}
+              />
+            ) : (
+              <div className="mono" style={{ color: tokens.textFaint, fontSize: 12 }}>
+                No screenshot selected
+              </div>
+            )}
+
+            {/* Left / Right Nav Arrows */}
+            {shots.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCurrentIndex((i) => (i > 0 ? i - 1 : shots.length - 1));
+                  }}
+                  className="mono"
+                  style={{
+                    position: "absolute",
+                    left: 16,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    background: tokens.overlay,
+                    color: tokens.textHi,
+                    border: `1px solid ${tokens.borderDivider}`,
+                    cursor: "pointer",
+                    fontSize: 18,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                  title="Previous Shot (Left Arrow)"
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCurrentIndex((i) => (i < shots.length - 1 ? i + 1 : 0));
+                  }}
+                  className="mono"
+                  style={{
+                    position: "absolute",
+                    right: 16,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    background: tokens.overlay,
+                    color: tokens.textHi,
+                    border: `1px solid ${tokens.borderDivider}`,
+                    cursor: "pointer",
+                    fontSize: 18,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                  title="Next Shot (Right Arrow)"
+                >
+                  ›
+                </button>
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Bottom Thumbnail Scrubber */}
+      {shots.length > 1 && viewMode === "screenshot" && (
+        <div
+          className="scroll-tinted"
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: "8px 16px",
+            borderTop: `1px solid ${tokens.borderDivider}`,
+            background: tokens.bgTabBar,
+            overflowX: "auto",
+            flex: "none",
+          }}
+        >
+          {shots.map((s, idx) => {
+            const src = shotSrc(s.dirId, s.name);
+            const isSelected = idx === currentIndex;
+            return (
+              <button
+                key={`${s.dirId}/${s.name}`}
+                type="button"
+                onClick={() => setCurrentIndex(idx)}
+                style={{
+                  width: 80,
+                  height: 48,
+                  flex: "none",
+                  border: isSelected ? `2px solid ${tokens.accent}` : `1px solid ${tokens.borderDivider}`,
+                  borderRadius: 4,
+                  overflow: "hidden",
+                  padding: 0,
+                  background: tokens.bgCard,
+                  cursor: "pointer",
+                  opacity: isSelected ? 1 : 0.65,
+                }}
+                title={s.label}
+              >
+                {src && (
+                  <img
+                    src={src}
+                    alt={s.label}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      display: "block",
+                    }}
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── The transcript block ─────────────────────────────────────────────────── */
 
 /**
@@ -201,65 +791,219 @@ export function ShotStrip({ shots }: { shots: readonly ShotLike[] }) {
  * 10.5px header. It sits directly under the tool row it came from and must
  * read as part of that row's story, not as a new kind of card.
  */
-export function BrowserShots({ refs }: { refs: readonly BrowserShotRef[] }) {
+export function BrowserShots({
+  refs,
+  isLive,
+  needsHuman,
+  signal,
+  reason,
+}: {
+  refs: readonly BrowserShotRef[];
+  isLive?: boolean;
+  needsHuman?: boolean;
+  signal?: string | null;
+  reason?: string | null;
+}) {
   const [open, setOpen] = useState(false);
+  const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
+
   const ordered = useMemo(() => newestFirst(refs), [refs]);
+  const dirId = ordered[0]?.dirId ?? null;
+
+  const index = useShotIndex();
+  const runInfo = dirId ? index.get(dirId) : undefined;
+
+  const browserState: BrowserStateSummary | null = useMemo(() => {
+    if (runInfo?.browser_state) return runInfo.browser_state;
+    return {
+      is_live: isLive ?? runInfo?.is_live,
+      needs_human: needsHuman ?? runInfo?.needs_human,
+      signal: signal ?? runInfo?.signal,
+      reason,
+    };
+  }, [runInfo, isLive, needsHuman, signal, reason]);
+
+  const mode = useMemo(() => {
+    if (needsHuman === true) return "needs_human";
+    if (isLive === true) return "live";
+    return resolveStreamMode(browserState, ordered);
+  }, [needsHuman, isLive, browserState, ordered]);
+
+  const warning = useMemo(
+    () => (mode === "needs_human" ? resolveStreamWarning(browserState, ordered) : null),
+    [mode, browserState, ordered],
+  );
+
   if (ordered.length === 0) return null;
   const newest = ordered[0];
   const noun = shotsNoun(ordered);
 
+  const leftBorderColor =
+    mode === "needs_human"
+      ? tokens.bleed
+      : mode === "live"
+        ? tokens.accent
+        : tokens.decide;
+
+  const containerClass =
+    mode === "needs_human"
+      ? "fg-stream-red"
+      : mode === "live"
+        ? "fg-stream-live"
+        : "";
+
   return (
-    <div
-      data-browser-shots={ordered.length}
-      style={{
-        border: `1px solid ${open ? tokens.borderDivider : "transparent"}`,
-        borderLeft: `2px solid ${tokens.decide}`,
-        borderRadius: 8,
-        background: open ? tokens.toolBg : "transparent",
-        overflow: "hidden",
-      }}
-    >
+    <>
+      <StreamStyles />
       <div
-        onClick={() => setOpen((v) => !v)}
-        className="mono"
+        data-browser-shots={ordered.length}
+        data-stream-mode={mode}
+        className={containerClass}
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "6px 10px",
-          cursor: "pointer",
-          fontSize: 10.5,
-          userSelect: "none",
+          border: `1px solid ${open ? tokens.borderDivider : "transparent"}`,
+          borderLeft: `2px solid ${leftBorderColor}`,
+          borderRadius: 8,
+          background: open ? tokens.toolBg : "transparent",
+          overflow: "hidden",
+          transition: "box-shadow 0.2s ease",
         }}
       >
-        <span style={{ flex: "none" }} aria-hidden>
-          {CAMERA}
-        </span>
-        <span style={{ flex: "none", color: tokens.textLabel, fontWeight: 600 }}>
-          {ordered.length} {noun}
-        </span>
-        <span
+        <div
+          onClick={() => setOpen((v) => !v)}
+          className="mono"
           style={{
-            color: tokens.textMuted2,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            flex: 1,
-            minWidth: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 10px",
+            cursor: "pointer",
+            fontSize: 10.5,
+            userSelect: "none",
           }}
         >
-          {newest.label}
-          {shotClock(newest.ts) ? ` · ${shotClock(newest.ts)}` : ""}
-        </span>
-        <span style={{ flex: "none", color: tokens.textGhost }}>{open ? "▾" : "▸"}</span>
-      </div>
-      {/* The `<img>` tags do not exist until this branch renders. */}
-      {open && (
-        <div style={{ borderTop: `1px solid ${tokens.borderDivider}` }}>
-          <ShotStrip shots={ordered} />
+          <span style={{ flex: "none" }} aria-hidden>
+            {CAMERA}
+          </span>
+          <span style={{ flex: "none", color: tokens.textLabel, fontWeight: 600 }}>
+            {ordered.length} {noun}
+          </span>
+
+          {/* Mode Badges */}
+          {mode === "needs_human" && (
+            <span
+              className="mono"
+              style={{
+                flex: "none",
+                fontSize: 9,
+                fontWeight: 700,
+                color: tokens.bleed,
+                background: tokens.dangerActionBg,
+                padding: "1px 5px",
+                borderRadius: 3,
+                border: `1px solid ${tokens.dangerActionBorder}`,
+              }}
+            >
+              ⚠️ NEEDS KONRAD
+            </span>
+          )}
+          {mode === "live" && (
+            <span
+              className="mono"
+              style={{
+                flex: "none",
+                fontSize: 9,
+                fontWeight: 700,
+                color: tokens.accent,
+                background: tokens.primaryActionBg,
+                padding: "1px 5px",
+                borderRadius: 3,
+                border: `1px solid ${tokens.accent}`,
+              }}
+            >
+              ● LIVE
+            </span>
+          )}
+
+          <span
+            style={{
+              color: mode === "needs_human" ? tokens.bleed : tokens.textMuted2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {warning ? `${warning.title} — ${warning.detail}` : newest.label}
+            {!warning && shotClock(newest.ts) ? ` · ${shotClock(newest.ts)}` : ""}
+          </span>
+          <span style={{ flex: "none", color: tokens.textGhost }}>{open ? "▾" : "▸"}</span>
         </div>
+
+        {/* Expanded View */}
+        {open && (
+          <div style={{ borderTop: `1px solid ${tokens.borderDivider}` }}>
+            {mode === "needs_human" && warning && (
+              <div
+                className="mono"
+                style={{
+                  padding: "6px 10px",
+                  background: tokens.dangerActionBg,
+                  borderBottom: `1px solid ${tokens.dangerActionBorder}`,
+                  color: tokens.bleed,
+                  fontSize: 10,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <span>
+                  <strong>{warning.title}:</strong> {warning.detail} ({warning.action})
+                </span>
+                {dirId && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFullscreenIndex(0);
+                    }}
+                    style={{
+                      padding: "2px 6px",
+                      borderRadius: 3,
+                      fontSize: 9.5,
+                      background: tokens.bleed,
+                      color: tokens.onAccent,
+                      border: "none",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Take Control
+                  </button>
+                )}
+              </div>
+            )}
+            <ShotStrip
+              shots={ordered}
+              mode={mode}
+              onSelectShot={(idx) => setFullscreenIndex(idx)}
+            />
+          </div>
+        )}
+      </div>
+
+      {fullscreenIndex !== null && dirId && (
+        <FullscreenShotViewer
+          shots={ordered}
+          initialIndex={fullscreenIndex}
+          dirId={dirId}
+          mode={mode}
+          state={browserState}
+          onClose={() => setFullscreenIndex(null)}
+        />
       )}
-    </div>
+    </>
   );
 }
 
@@ -273,19 +1017,35 @@ export function BrowserShots({ refs }: { refs: readonly BrowserShotRef[] }) {
  */
 const PROXY_ROOT = "/api/proxy";
 
-interface UploadsIndexRun {
+export interface UploadsIndexRun {
   id: string;
   count: number;
+  image_count?: number;
+  artifact_count?: number;
+  file_count?: number;
   latest_ts: string | null;
+  is_live?: boolean;
+  needs_human?: boolean;
+  signal?: string | null;
+  browser_state?: BrowserStateSummary | null;
 }
 
-interface UploadsShot {
+export interface UploadsShot {
   name: string;
   url: string;
   label: string | null;
   ts: string | null;
   size: number;
   mtime: string;
+  kind?: string;
+}
+
+export interface UploadsShotResponse {
+  id: string;
+  count: number;
+  image_count: number;
+  shots: UploadsShot[];
+  browser_state?: BrowserStateSummary | null;
 }
 
 async function fetchUploadsIndex(): Promise<UploadsIndexRun[]> {
@@ -302,18 +1062,18 @@ async function fetchUploadsIndex(): Promise<UploadsIndexRun[]> {
   return body.runs;
 }
 
-async function fetchRunShots(dirId: string): Promise<UploadsShot[]> {
+async function fetchRunShots(dirId: string): Promise<UploadsShotResponse> {
   const res = await fetch(`${PROXY_ROOT}/uploads/${dirId}/shots`, {
     headers: { accept: "application/json" },
   });
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText} on /uploads/${dirId}/shots`);
   }
-  const body = (await res.json()) as { shots?: UploadsShot[] };
+  const body = (await res.json()) as UploadsShotResponse;
   if (!Array.isArray(body.shots)) {
     throw new Error(`/uploads/${dirId}/shots returned no \`shots\` array`);
   }
-  return body.shots;
+  return body;
 }
 
 /** 30s, as briefed. One key, therefore one poll for the whole page. The
@@ -322,13 +1082,13 @@ async function fetchRunShots(dirId: string): Promise<UploadsShot[]> {
 import { SHOTS_INDEX_POLL_MS as INDEX_POLL_MS } from "./pollBudget";
 
 /**
- * The shared index: `12-hex dir id → how many images it holds`.
+ * The shared index: `12-hex dir id → run summary with count & live/stuck signals`.
  *
  * A Map rather than the raw array so a row's lookup is O(1) — the panel can
  * hold ~40 rows and the index ~40 runs, and the quadratic version of that is a
  * scan per row per render on the surface whose hover cost is a project gate.
  */
-export function useShotIndex(): ReadonlyMap<string, number> {
+export function useShotIndex(): ReadonlyMap<string, UploadsIndexRun> {
   const q = useQuery({
     queryKey: ["uploads-index"],
     queryFn: fetchUploadsIndex,
@@ -336,8 +1096,8 @@ export function useShotIndex(): ReadonlyMap<string, number> {
     staleTime: INDEX_POLL_MS,
   });
   return useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of q.data ?? []) m.set(r.id, r.count);
+    const m = new Map<string, UploadsIndexRun>();
+    for (const r of q.data ?? []) m.set(r.id, r);
     return m;
   }, [q.data]);
 }
@@ -354,15 +1114,26 @@ export function useShotIndex(): ReadonlyMap<string, number> {
 export function RunShotsIndicator({
   runId,
   paddingLeft = 8,
+  isLive,
+  needsHuman,
+  signal,
+  reason,
 }: {
   runId: string | null;
   /** Aligns the indicator with the row's text column. Rows differ in indent. */
   paddingLeft?: number;
+  isLive?: boolean;
+  needsHuman?: boolean;
+  signal?: string | null;
+  reason?: string | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
+
   const index = useShotIndex();
   const dirId = uploadsDirId(runId);
-  const count = dirId === null ? undefined : index.get(dirId);
+  const runInfo = dirId === null ? undefined : index.get(dirId);
+  const count = runInfo?.count;
 
   /* Not fetched until the strip is open — the index already told us the count,
    * which is all the collapsed row claims. */
@@ -375,70 +1146,232 @@ export function RunShotsIndicator({
 
   if (dirId === null || count === undefined || count === 0) return null;
 
-  const shots: ShotLike[] = (shotsQ.data ?? []).map((s) => ({
+  const browserState: BrowserStateSummary | null =
+    shotsQ.data?.browser_state ??
+    runInfo?.browser_state ?? {
+      is_live: isLive ?? runInfo?.is_live,
+      needs_human: needsHuman ?? runInfo?.needs_human,
+      signal: signal ?? runInfo?.signal,
+      reason,
+    };
+
+  const mode =
+    needsHuman === true
+      ? "needs_human"
+      : isLive === true
+        ? "live"
+        : resolveStreamMode(browserState);
+
+  const warning = mode === "needs_human" ? resolveStreamWarning(browserState) : null;
+
+  const shots: ShotLike[] = (shotsQ.data?.shots ?? []).map((s) => ({
     dirId,
     name: s.name,
     label: s.label ?? s.name,
-    /* The server sends the convention's compact stamp; `mtime` is the fallback
-     * for a file whose name carries none. */
     ts: stampToIso(s.ts) ?? s.mtime,
   }));
 
+  const buttonClass =
+    mode === "needs_human"
+      ? "fg-stream-red"
+      : mode === "live"
+        ? "fg-stream-live"
+        : "";
+
+  const buttonBg =
+    mode === "needs_human"
+      ? tokens.dangerActionBg
+      : mode === "live"
+        ? tokens.primaryActionBg
+        : "transparent";
+
+  const buttonBorder =
+    mode === "needs_human"
+      ? `1px solid ${tokens.dangerActionBorder}`
+      : mode === "live"
+        ? `1px solid ${tokens.accent}`
+        : "none";
+
+  const buttonColor =
+    mode === "needs_human"
+      ? tokens.bleed
+      : mode === "live"
+        ? tokens.accent
+        : tokens.textMuted2;
+
+  const titlePrefix =
+    mode === "needs_human"
+      ? `[Needs Konrad: ${warning?.detail ?? "Action required"}] `
+      : mode === "live"
+        ? "[Live Stream] "
+        : "";
+
   return (
-    <div data-run-shots={dirId} style={{ paddingLeft }}>
-      <button
-        type="button"
-        data-run-shots-toggle
-        title={`${count} image${count === 1 ? "" : "s"} under /opt/ai-os/uploads/${dirId} — click to ${open ? "hide" : "show"}`}
-        onClick={(e) => {
-          /* The row itself drills into the run on click. This button is a
-             different verb and must not trigger it. */
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
-        className="mono"
-        style={{
-          background: "transparent",
-          border: "none",
-          padding: "0 2px",
-          margin: 0,
-          fontFamily: "inherit",
-          fontSize: 9.5,
-          lineHeight: 1.6,
-          color: tokens.textMuted2,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-        }}
-      >
-        <span aria-hidden>{CAMERA}</span>
-        <span>{count}</span>
-        <span style={{ color: tokens.textGhost }}>{open ? "▾" : "▸"}</span>
-      </button>
-      {open && (
-        <div
-          onClick={(e) => e.stopPropagation()}
+    <>
+      <StreamStyles />
+      <div data-run-shots={dirId} data-stream-mode={mode} style={{ paddingLeft }}>
+        <button
+          type="button"
+          data-run-shots-toggle
+          title={`${titlePrefix}${count} image${count === 1 ? "" : "s"} under /opt/ai-os/uploads/${dirId} — click to ${open ? "hide" : "show"}`}
+          onClick={(e) => {
+            /* The row itself drills into the run on click. This button is a
+               different verb and must not trigger it. */
+            e.stopPropagation();
+            setOpen((v) => !v);
+          }}
+          className={`mono ${buttonClass}`}
           style={{
-            border: `1px solid ${tokens.borderDivider}`,
-            borderRadius: 6,
-            background: tokens.toolBg,
-            marginTop: 3,
+            background: buttonBg,
+            border: buttonBorder,
+            borderRadius: 4,
+            padding: "0 4px",
+            margin: 0,
+            fontFamily: "inherit",
+            fontSize: 9.5,
+            lineHeight: 1.6,
+            height: 18,
+            color: buttonColor,
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            transition: "box-shadow 0.2s ease",
           }}
         >
-          {shotsQ.isError ? (
-            <div className="mono" style={{ fontSize: 9.5, color: tokens.bleed, padding: "6px 8px" }}>
-              could not load shots — {String(shotsQ.error)}
-            </div>
-          ) : shotsQ.isPending ? (
-            <div className="mono" style={{ fontSize: 9.5, color: tokens.textFaint, padding: "6px 8px" }}>
-              loading {count} image{count === 1 ? "" : "s"}…
-            </div>
-          ) : (
-            <ShotStrip shots={shots} />
+          <span aria-hidden>{mode === "needs_human" ? "⚠️" : CAMERA}</span>
+          <span>{count}</span>
+          {mode === "needs_human" && (
+            <span style={{ fontWeight: 700, fontSize: 8.5 }}>NEEDS KONRAD</span>
           )}
-        </div>
+          {mode === "live" && (
+            <span style={{ fontWeight: 700, fontSize: 8.5 }}>LIVE</span>
+          )}
+          <span style={{ color: tokens.textGhost }}>{open ? "▾" : "▸"}</span>
+        </button>
+
+        {open && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              border: `1px solid ${mode === "needs_human" ? tokens.dangerActionBorder : mode === "live" ? tokens.accent : tokens.borderDivider}`,
+              borderRadius: 6,
+              background: tokens.toolBg,
+              marginTop: 3,
+              overflow: "hidden",
+            }}
+          >
+            {/* Header bar with Fullscreen trigger */}
+            <div
+              className="mono"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "4px 8px",
+                borderBottom: `1px solid ${tokens.borderDivider}`,
+                background: tokens.bgCard,
+                fontSize: 9,
+              }}
+            >
+              <span style={{ color: tokens.textMuted2 }}>
+                {mode === "needs_human" ? (
+                  <strong style={{ color: tokens.bleed }}>⚠️ Action required</strong>
+                ) : mode === "live" ? (
+                  <strong style={{ color: tokens.accent }}>● Live Browser Stream</strong>
+                ) : (
+                  "Browser Shots"
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setFullscreenIndex(0);
+                }}
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${tokens.borderDivider}`,
+                  borderRadius: 3,
+                  padding: "1px 5px",
+                  fontSize: 9,
+                  color: tokens.textSoft,
+                  cursor: "pointer",
+                }}
+              >
+                ⤢ Fullscreen
+              </button>
+            </div>
+
+            {/* Red Mode Warning Header */}
+            {mode === "needs_human" && warning && (
+              <div
+                className="mono"
+                style={{
+                  padding: "4px 8px",
+                  background: tokens.dangerActionBg,
+                  borderBottom: `1px solid ${tokens.dangerActionBorder}`,
+                  color: tokens.bleed,
+                  fontSize: 9.5,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 6,
+                }}
+              >
+                <span>{warning.detail}</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFullscreenIndex(0);
+                  }}
+                  style={{
+                    padding: "1px 5px",
+                    borderRadius: 3,
+                    fontSize: 8.5,
+                    background: tokens.bleed,
+                    color: tokens.onAccent,
+                    border: "none",
+                    cursor: "pointer",
+                    fontWeight: 600,
+                  }}
+                >
+                  Take Control
+                </button>
+              </div>
+            )}
+
+            {shotsQ.isError ? (
+              <div className="mono" style={{ fontSize: 9.5, color: tokens.bleed, padding: "6px 8px" }}>
+                could not load shots — {String(shotsQ.error)}
+              </div>
+            ) : shotsQ.isPending ? (
+              <div className="mono" style={{ fontSize: 9.5, color: tokens.textFaint, padding: "6px 8px" }}>
+                loading {count} image{count === 1 ? "" : "s"}…
+              </div>
+            ) : (
+              <ShotStrip
+                shots={shots}
+                mode={mode}
+                onSelectShot={(idx) => setFullscreenIndex(idx)}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {fullscreenIndex !== null && dirId && (
+        <FullscreenShotViewer
+          shots={shots}
+          initialIndex={fullscreenIndex}
+          dirId={dirId}
+          mode={mode}
+          state={browserState}
+          onClose={() => setFullscreenIndex(null)}
+        />
       )}
-    </div>
+    </>
   );
 }
+
