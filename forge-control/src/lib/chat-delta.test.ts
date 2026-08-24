@@ -77,7 +77,7 @@ describe("parseSinceParam", () => {
 /* ── chatDeltaResponse ────────────────────────────────────────────────────── */
 
 describe("chatDeltaResponse", () => {
-  test("since omitted: full fetch, from 0, total unchanged, thread untouched", () => {
+  test("since omitted: full fetch, from 0, total unchanged, thread untouched, prompt present", () => {
     const run = fixtureRun();
     const res = chatDeltaResponse(run, undefined);
     assert.equal(res.from, 0);
@@ -86,17 +86,21 @@ describe("chatDeltaResponse", () => {
       res.run.thread.map((e) => e.content),
       ["first", "second", "third"],
     );
+    assert.equal("prompt" in res.run, true);
+    assert.equal(res.run.prompt, "fixture prompt");
   });
 
-  test("since === thread.length: empty delta fetch, not an empty full fetch", () => {
+  test("since === thread.length: empty delta fetch, prompt omitted", () => {
     const run = fixtureRun();
     const res = chatDeltaResponse(run, 3);
     assert.equal(res.from, 3);
     assert.equal(res.total, 3);
     assert.deepEqual(res.run.thread, []);
+    assert.equal("prompt" in res.run, false);
+    assert.equal(res.run.prompt, undefined);
   });
 
-  test("since < thread.length: append delta, only the new entries", () => {
+  test("since < thread.length: append delta, only new entries, prompt omitted", () => {
     const run = fixtureRun();
     const res = chatDeltaResponse(run, 1);
     assert.equal(res.from, 1);
@@ -105,9 +109,11 @@ describe("chatDeltaResponse", () => {
       res.run.thread.map((e) => e.content),
       ["second", "third"],
     );
+    assert.equal("prompt" in res.run, false);
+    assert.equal(res.run.prompt, undefined);
   });
 
-  test("since === 0: append delta over the whole thread, same content as full fetch", () => {
+  test("since === 0: delta fetch over whole thread, prompt omitted", () => {
     const run = fixtureRun();
     const res = chatDeltaResponse(run, 0);
     assert.equal(res.from, 0);
@@ -116,9 +122,11 @@ describe("chatDeltaResponse", () => {
       res.run.thread.map((e) => e.content),
       ["first", "second", "third"],
     );
+    assert.equal("prompt" in res.run, false);
+    assert.equal(res.run.prompt, undefined);
   });
 
-  test("recovery: since > thread.length (stale/compacted cache) falls back to a full fetch", () => {
+  test("recovery: since > thread.length (stale/compacted cache) falls back to full fetch with prompt", () => {
     const run = fixtureRun();
     const res = chatDeltaResponse(run, 99);
     assert.equal(res.from, 0);
@@ -127,12 +135,30 @@ describe("chatDeltaResponse", () => {
       res.run.thread.map((e) => e.content),
       ["first", "second", "third"],
     );
+    assert.equal("prompt" in res.run, true);
+    assert.equal(res.run.prompt, "fixture prompt");
   });
 
-  test("full-fetch responses do not mutate the caller's run object", () => {
+  test("delta responses preserve all envelope metadata while omitting prompt", () => {
     const run = fixtureRun();
-    const before = run.thread;
+    const res = chatDeltaResponse(run, 1);
+    assert.equal(res.run.id, run.id);
+    assert.equal(res.run.title, run.title);
+    assert.equal(res.run.status, run.status);
+    assert.equal(res.run.worker, run.worker);
+    assert.equal(res.run.budget_usd, run.budget_usd);
+    assert.equal(res.run.spent_usd, run.spent_usd);
+    assert.equal(res.run.message_count, run.message_count);
+    assert.equal(res.run.last_message_preview, run.last_message_preview);
+    assert.deepEqual(res.run.metadata, run.metadata);
+    assert.equal("prompt" in res.run, false);
+  });
+
+  test("responses do not mutate the caller's run object", () => {
+    const run = fixtureRun();
+    const beforeThread = run.thread;
     chatDeltaResponse(run, 1);
-    assert.equal(run.thread, before);
+    assert.equal(run.thread, beforeThread);
+    assert.equal(run.prompt, "fixture prompt");
   });
 });
