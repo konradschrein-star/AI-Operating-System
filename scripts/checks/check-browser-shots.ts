@@ -358,12 +358,8 @@ check("signal: login_required → needs_human (Red Mode)", resolveStreamMode({ s
 check("stuck_signal: heartbeat_stale → needs_human (Red Mode)", resolveStreamMode({ stuck_signal: "heartbeat_stale" }), "needs_human");
 check("ref with login-wall label → needs_human (Red Mode)", resolveStreamMode(null, [
   {
-    dirId: "148ae1fd8f65",
     name: "20260805T101530Z-perplexity-login-wall.png",
-    url: "/api/uploads/148ae1fd8f65/20260805T101530Z-perplexity-login-wall.png",
     label: "perplexity-login-wall",
-    ts: "2026-08-05T10:15:30Z",
-    source: "bash",
   },
 ]), "needs_human");
 

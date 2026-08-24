@@ -39,6 +39,7 @@
 import { readFileSync } from "node:fs";
 
 import { openChatRun, openSettings } from "../../forge-control-web/app/desktop/deep-link.ts";
+import type { Surface } from "../../forge-control-web/app/desktop/nav-items.ts";
 import {
   CHAT_STORAGE_KEYS,
   restoredNavStack,
@@ -78,9 +79,9 @@ function check(name: string, actual: unknown, expected: unknown): void {
 }
 
 /** Records what the shell was asked to switch to. */
-function spy(): { calls: string[]; nav: (s: never) => void } {
+function spy(): { calls: string[]; nav: (s: Surface) => void } {
   const calls: string[] = [];
-  return { calls, nav: (s: never) => void calls.push(String(s)) };
+  return { calls, nav: (s: Surface) => void calls.push(String(s)) };
 }
 
 const RUN = "2ef126b7-d6d9-4a55-a8e7-d9acf0508645";
