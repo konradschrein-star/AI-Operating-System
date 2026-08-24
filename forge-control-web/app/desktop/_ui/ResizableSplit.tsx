@@ -260,7 +260,21 @@ export function ResizeHandle({
   const base: CSSProperties = {
     flex: "none",
     boxSizing: "content-box",
-    background: lit ? tokens.borderEmphasis : tokens.borderSoft,
+    /* `backgroundColor`, not the `background` SHORTHAND: `background` is a
+     * shorthand for backgroundClip/Origin/Image/… too, and React's style
+     * diffing only re-applies props that changed between renders. Hover
+     * toggles `lit`, so `background` is the one prop that changes on every
+     * hover — React re-sets *only* that key, and the browser's shorthand
+     * setter resets every OTHER background-* longhand (including the
+     * `backgroundClip: "content-box"` below, which never itself changes and
+     * so is never re-applied) back to its initial value. Net effect: the
+     * first hover of any divider's lifetime silently and permanently flips
+     * backgroundClip to border-box, so the "1px hairline" paints the full
+     * 11px hit-pad forever after — a live, browser-only regression a
+     * source-regex/arithmetic test cannot see, since it only exists after
+     * React re-renders a real DOM node. `backgroundColor` is a longhand: it
+     * never touches backgroundClip. */
+    backgroundColor: lit ? tokens.borderEmphasis : tokens.borderSoft,
     backgroundClip: "content-box",
     transition: active ? "none" : "background 120ms ease",
     touchAction: "none",

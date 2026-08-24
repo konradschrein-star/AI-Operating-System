@@ -46,8 +46,37 @@ describe("ResizeHandle — source assertions & design token rules", () => {
   test("ResizeHandle uses tokens.borderSoft at rest and tokens.borderEmphasis when lit", () => {
     assert.match(
       RESIZABLE_SPLIT_SRC,
-      /background:\s*lit\s*\?\s*tokens\.borderEmphasis\s*:\s*tokens\.borderSoft/,
+      /backgroundColor:\s*lit\s*\?\s*tokens\.borderEmphasis\s*:\s*tokens\.borderSoft/,
       "ResizeHandle must use tokens.borderEmphasis on hover/active and tokens.borderSoft at rest",
+    );
+  });
+
+  test("ResizeHandle sets the hover/rest colour via backgroundColor, never the background SHORTHAND", () => {
+    // Regression: `background` is a shorthand for backgroundClip/Origin/Image
+    // too. React's style diffing only re-applies style keys that CHANGED
+    // between renders; `lit` toggles on every hover, so a shorthand
+    // `background: lit ? … : …` is the one prop React re-sets on hover — and
+    // the browser's shorthand setter then resets every OTHER background-*
+    // longhand (including the constant `backgroundClip: "content-box"`,
+    // which never changes and so is never re-applied) back to its initial
+    // value. Verified live in a real browser: the FIRST hover of any
+    // divider's lifetime silently and permanently flips backgroundClip to
+    // border-box, painting the full 11px hit-pad instead of a 1px hairline
+    // — forever after, even once the pointer moves away. A source-regex or
+    // pure-arithmetic test cannot see this; it only exists once React
+    // actually re-renders a mounted DOM node. This assertion is the
+    // regression guard for aios-divider-visibility round 1's browser probe.
+    const handleStart = RESIZABLE_SPLIT_SRC.indexOf("export function ResizeHandle");
+    assert.ok(handleStart !== -1, "ResizeHandle component must exist");
+    const handleEnd = RESIZABLE_SPLIT_SRC.indexOf("export const NARROW_MAX_PX", handleStart);
+    const handleSource = RESIZABLE_SPLIT_SRC.slice(handleStart, handleEnd !== -1 ? handleEnd : undefined);
+
+    assert.doesNotMatch(
+      handleSource,
+      /\bbackground:\s*lit\b/,
+      "ResizeHandle must not set the `background` shorthand alongside a separately-set backgroundClip — " +
+        "React only re-applies props that changed on re-render, so the shorthand silently resets the " +
+        "longhand back to its browser default on the first hover. Use backgroundColor instead.",
     );
   });
 
