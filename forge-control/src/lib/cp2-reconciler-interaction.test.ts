@@ -569,6 +569,31 @@ describe("claim G — every other thread writer is single-statement or cannot to
     assert.match(body, /AND status = 'failed'/);
   });
 
+  /* The API-overload park (529/503) is the same kind of writer as the
+   * usage-wall park and is held to the same invariant.
+   *
+   * Its slice ENDS at the usage-wall function because it sits immediately
+   * above it — which is also why it sits there. Inserting it between the
+   * usage-wall marker and `runCounts` put two `pool.query` calls inside the
+   * slice above and turned that assertion red. The boundary markers in this
+   * file are load-bearing: a new thread writer goes ABOVE a marker, never
+   * between a marker and its terminator. */
+  test("requeueRunAfterApiOverload is one statement and only ever touches a 'failed' row", () => {
+    const body = sliceBetween(
+      RUNS_DB,
+      "export async function requeueRunAfterApiOverload",
+      "export async function requeueRunAfterUsageWall",
+      "requeueRunAfterApiOverload",
+    );
+    assert.equal((body.match(/pool\.query/g) ?? []).length, 1);
+    assert.match(body, /thread = thread \|\| \$3::jsonb/);
+    assert.match(body, /AND status = 'failed'/);
+    // Its own counter. Sharing `usage_wall_attempts` would let a busy-server
+    // blip spend the retries a real quota wall needs.
+    assert.match(body, /api_overload_attempts/);
+    assert.doesNotMatch(body, /usage_wall_attempts/);
+  });
+
   test("the executor's streamed append never moves status", () => {
     const body = sliceBetween(
       EXECUTOR,
