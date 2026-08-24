@@ -1,0 +1,328 @@
+#!/usr/bin/env node
+/**
+ * canvas — draw on Konrad's Excalidraw surface from the shell.
+ *
+ * Why this exists: the browser writes a drawing by PUTting the whole
+ * `elements[]` array. For one of Konrad's real maps that is ~1.3 MB of JSON,
+ * about 27k tokens — an agent cannot afford to add one card that way. This CLI
+ * speaks the op vocabulary instead (`POST /api/canvas/patch`), so adding a node
+ * costs a command line and reading a board costs a couple of hundred tokens.
+ *
+ * Everything writes through forge-control, which owns the mtime guard, the
+ * .excalidraw.md codec, and the SSE push that makes the drawing appear on
+ * Konrad's screen within about a second.
+ *
+ *   canvas ls [query]                          list drawings, newest first
+ *   canvas open <query>                        open it in the web UI (agent's hand)
+ *   canvas new <name> [--folder F]             create a blank drawing
+ *   canvas dump <path|query>                   compact digest — read before you draw
+ *   canvas add-node <path|query> <label> [--color s] [--x n] [--y n]
+ *   canvas connect <path|query> <from> <to> [--label text] [--dashed]
+ *   canvas column <path|query> <label>...      vertical flow of connected cards
+ *   canvas patch <path|query> [--ops file.json | -]   raw ops, escape hatch
+ *
+ * <path|query> takes either a vault-relative path or a fuzzy name:
+ *   canvas add-node "patch test" "Fetch layer" --color planned
+ *
+ * Colours are statuses from the planning design doc: built, partial, planned,
+ * gap, blocked, proposal — or blue/violet/red/green/yellow/grey, or a #hex.
+ */
+
+import { readFileSync } from "node:fs";
+
+const API = process.env.FORGE_CONTROL_URL ?? "http://127.0.0.1:7700";
+const EXT = ".excalidraw.md";
+
+function die(msg) {
+  process.stderr.write(`canvas: ${msg}\n`);
+  process.exit(1);
+}
+
+async function call(method, path, body) {
+  let res;
+  try {
+    res = await fetch(`${API}/api/canvas${path}`, {
+      method,
+      headers: body ? { "content-type": "application/json" } : { accept: "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    die(`cannot reach forge-control at ${API} (${e.message}). Is pm2 forge-control online?`);
+  }
+  const text = await res.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    die(`${method} ${path} → ${res.status}, non-JSON body: ${text.slice(0, 300)}`);
+  }
+  if (!res.ok) {
+    const detail = json?.detail ?? json?.error ?? text;
+    die(`${method} ${path} → ${res.status}: ${detail}`);
+  }
+  return json;
+}
+
+/** Pull `--flag value` and `--flag` pairs out of argv, leaving positionals. */
+function parseFlags(argv, boolFlags = []) {
+  const flags = {};
+  const rest = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      const name = a.slice(2);
+      if (boolFlags.includes(name)) flags[name] = true;
+      else {
+        const v = argv[++i];
+        if (v === undefined) die(`--${name} needs a value`);
+        flags[name] = v;
+      }
+    } else rest.push(a);
+  }
+  return { flags, rest };
+}
+
+/** Accept an exact vault path or a fuzzy name. Same scoring the server uses for
+ *  intents, done here so one list call serves the whole command. */
+async function resolvePath(input) {
+  if (!input) die("a drawing path or name is required");
+  const { items } = await call("GET", "/list");
+  const exact = items.find((i) => i.path === input);
+  if (exact) return exact.path;
+  const q = input.toLowerCase().replace(/\.excalidraw\.md$/, "").trim();
+  const scored = items
+    .map((i) => {
+      const name = i.name.toLowerCase();
+      let score = 0;
+      if (name === q) score = 1000;
+      else if (name.includes(q)) score = 500 - (name.length - q.length);
+      else if (i.path.toLowerCase().includes(q)) score = 250;
+      else {
+        const words = q.split(/\s+/).filter(Boolean);
+        if (words.length && words.every((w) => name.includes(w))) score = 200;
+      }
+      return { ...i, score };
+    })
+    .filter((i) => i.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) {
+    die(`no drawing matches "${input}". Try: canvas ls`);
+  }
+  return scored[0].path;
+}
+
+function relTime(ms) {
+  const d = Date.now() - ms;
+  if (d < 60_000) return "just now";
+  if (d < 3_600_000) return `${Math.round(d / 60_000)}m ago`;
+  if (d < 86_400_000) return `${Math.round(d / 3_600_000)}h ago`;
+  return `${Math.round(d / 86_400_000)}d ago`;
+}
+
+const short = (id) => String(id).slice(0, 8);
+
+/* --- commands ------------------------------------------------------------ */
+
+async function cmdLs(argv) {
+  const { items } = await call("GET", "/list");
+  const q = (argv[0] ?? "").toLowerCase();
+  const rows = q
+    ? items.filter((i) => `${i.folder}/${i.name}`.toLowerCase().includes(q))
+    : items;
+  if (!rows.length) return console.log("no drawings");
+  for (const i of rows) {
+    console.log(
+      `${relTime(i.mtime).padStart(9)}  ${String(i.size).padStart(7)}B  ${i.path}`,
+    );
+  }
+}
+
+async function cmdOpen(argv) {
+  const query = argv.join(" ").trim();
+  if (!query) die("usage: canvas open <query>");
+  const out = await call("POST", "/open", { query, reason: "opened from the canvas CLI" });
+  console.log(`opened ${out.path} (intent #${out.seq}) — it is on Konrad's screen now`);
+}
+
+async function cmdNew(argv) {
+  const { flags, rest } = parseFlags(argv);
+  const name = rest.join(" ").trim();
+  if (!name) die("usage: canvas new <name> [--folder Folder]");
+  const out = await call("POST", "/new", { name, folder: flags.folder });
+  console.log(out.path);
+}
+
+/**
+ * Compact digest. The whole point of the read path: a 462-element board is
+ * 1.3 MB of JSON but a couple of hundred tokens of this.
+ */
+async function cmdDump(argv) {
+  const { flags, rest } = parseFlags(argv);
+  const path = await resolvePath(rest[0]);
+  const doc = await call("GET", `/file?path=${encodeURIComponent(path)}`);
+  const els = doc.elements.filter((e) => e.isDeleted !== true);
+  const limit = Number(flags.limit ?? 60);
+
+  // Bound text belongs to its container; index it so cards print with labels.
+  const labelOf = new Map();
+  for (const e of els) {
+    if (e.type === "text" && typeof e.containerId === "string" && e.containerId) {
+      labelOf.set(e.containerId, e.text ?? "");
+    }
+  }
+  const nameOf = (id) => {
+    const l = labelOf.get(id);
+    if (l) return `"${String(l).replace(/\n/g, " ").slice(0, 40)}"`;
+    return short(id);
+  };
+
+  const shapes = els.filter(
+    (e) => e.type === "rectangle" || e.type === "ellipse" || e.type === "diamond",
+  );
+  const arrows = els.filter((e) => e.type === "arrow" || e.type === "line");
+  const looseText = els.filter((e) => e.type === "text" && !e.containerId);
+  const other = els.filter(
+    (e) => !shapes.includes(e) && !arrows.includes(e) && !looseText.includes(e),
+  );
+
+  console.log(`${path}`);
+  console.log(`${els.length} elements · modified ${relTime(doc.mtime)} · ${doc.format}`);
+
+  if (shapes.length) {
+    console.log(`\nSHAPES (${shapes.length})`);
+    for (const s of shapes.slice(0, limit)) {
+      const status = s.customData?.aios?.status ?? s.customData?.aios?.kind ?? "";
+      console.log(
+        `  ${short(s.id)}  ${String(s.type).padEnd(9)} ${nameOf(s.id).padEnd(42)} @${Math.round(s.x)},${Math.round(s.y)} ${Math.round(s.width)}x${Math.round(s.height)}${status ? `  [${status}]` : ""}`,
+      );
+    }
+    if (shapes.length > limit) console.log(`  (+${shapes.length - limit} more — --limit N)`);
+  }
+
+  if (arrows.length) {
+    console.log(`\nEDGES (${arrows.length})`);
+    for (const a of arrows.slice(0, limit)) {
+      const from = a.startBinding?.elementId;
+      const to = a.endBinding?.elementId;
+      const lbl = labelOf.get(a.id);
+      const ends = from || to ? `${from ? nameOf(from) : "·"} → ${to ? nameOf(to) : "·"}` : "unbound";
+      console.log(`  ${short(a.id)}  ${ends}${lbl ? `  "${lbl}"` : ""}`);
+    }
+    if (arrows.length > limit) console.log(`  (+${arrows.length - limit} more)`);
+  }
+
+  if (looseText.length) {
+    console.log(`\nTEXT (${looseText.length})`);
+    for (const t of looseText.slice(0, limit)) {
+      console.log(
+        `  ${short(t.id)}  "${String(t.text ?? "").replace(/\n/g, " ").slice(0, 60)}" @${Math.round(t.x)},${Math.round(t.y)}`,
+      );
+    }
+    if (looseText.length > limit) console.log(`  (+${looseText.length - limit} more)`);
+  }
+
+  if (other.length) {
+    const counts = {};
+    for (const e of other) counts[e.type] = (counts[e.type] ?? 0) + 1;
+    console.log(
+      `\nOTHER  ${Object.entries(counts).map(([t, n]) => `${n}× ${t}`).join(", ")}`,
+    );
+  }
+}
+
+async function patch(path, ops) {
+  const out = await call("POST", "/patch", { path, ops });
+  return out;
+}
+
+async function cmdAddNode(argv) {
+  const { flags, rest } = parseFlags(argv);
+  const path = await resolvePath(rest[0]);
+  const label = rest.slice(1).join(" ").trim();
+  if (!label) die('usage: canvas add-node <path|query> "<label>" [--color planned] [--x 0 --y 0]');
+  const op = { op: "addNode", label };
+  if (flags.color) op.color = flags.color;
+  if (flags.x !== undefined) op.x = Number(flags.x);
+  if (flags.y !== undefined) op.y = Number(flags.y);
+  if (flags.width !== undefined) op.width = Number(flags.width);
+  if (flags.height !== undefined) op.height = Number(flags.height);
+  const out = await patch(path, [op]);
+  console.log(`+ ${label}  →  ${out.nodes[label]}  (${out.elementCount} elements now)`);
+}
+
+async function cmdConnect(argv) {
+  const { flags, rest } = parseFlags(argv, ["dashed"]);
+  const path = await resolvePath(rest[0]);
+  const [from, to] = rest.slice(1);
+  if (!from || !to) die('usage: canvas connect <path|query> "<from>" "<to>" [--label text] [--dashed]');
+  const op = { op: "connect", fromLabel: from, toLabel: to };
+  if (flags.label) op.label = flags.label;
+  if (flags.dashed) op.style = "dashed";
+  const out = await patch(path, [op]);
+  console.log(`→ ${from} → ${to}${flags.label ? ` "${flags.label}"` : ""}  (arrow ${short(out.added[0])})`);
+}
+
+async function cmdColumn(argv) {
+  const { flags, rest } = parseFlags(argv);
+  const path = await resolvePath(rest[0]);
+  const labels = rest.slice(1);
+  if (labels.length < 1) die('usage: canvas column <path|query> "<label>" "<label>" ...');
+  const op = { op: "addColumn", labels };
+  if (flags.color) op.color = flags.color;
+  if (flags.x !== undefined) op.x = Number(flags.x);
+  if (flags.y !== undefined) op.y = Number(flags.y);
+  const out = await patch(path, [op]);
+  console.log(
+    `+ column: ${labels.join(" → ")}  (${labels.length} cards, ${Math.max(0, labels.length - 1)} arrows, ${out.elementCount} elements now)`,
+  );
+}
+
+async function cmdPatch(argv) {
+  const { flags, rest } = parseFlags(argv);
+  const path = await resolvePath(rest[0]);
+  const src = flags.ops ?? rest[1] ?? "-";
+  const raw = src === "-" ? readFileSync(0, "utf8") : readFileSync(src, "utf8");
+  let ops;
+  try {
+    ops = JSON.parse(raw);
+  } catch (e) {
+    die(`ops must be JSON: ${e.message}`);
+  }
+  if (!Array.isArray(ops)) die("ops must be a JSON array");
+  const out = await patch(path, ops);
+  console.log(JSON.stringify(out, null, 2));
+}
+
+const USAGE = `canvas — draw on the AI OS Excalidraw surface
+
+  canvas ls [query]
+  canvas open <query>
+  canvas new <name> [--folder Folder]
+  canvas dump <path|query> [--limit 60]
+  canvas add-node <path|query> "<label>" [--color built|partial|planned|gap|proposal|#hex] [--x N --y N]
+  canvas connect <path|query> "<from label>" "<to label>" [--label text] [--dashed]
+  canvas column <path|query> "<label>" "<label>" ...
+  canvas patch <path|query> [--ops file.json | -]
+
+<path|query> is a vault-relative path or a fuzzy drawing name.
+Writes push to the open web pane over SSE — Konrad sees them in about a second.`;
+
+const COMMANDS = {
+  ls: cmdLs,
+  open: cmdOpen,
+  new: cmdNew,
+  dump: cmdDump,
+  "add-node": cmdAddNode,
+  connect: cmdConnect,
+  column: cmdColumn,
+  patch: cmdPatch,
+};
+
+const [, , cmd, ...argv] = process.argv;
+if (!cmd || cmd === "-h" || cmd === "--help" || cmd === "help") {
+  console.log(USAGE);
+  process.exit(cmd ? 0 : 1);
+}
+const handler = COMMANDS[cmd];
+if (!handler) die(`unknown command "${cmd}"\n\n${USAGE}`);
+handler(argv).catch((e) => die(e.stack ?? e.message));
