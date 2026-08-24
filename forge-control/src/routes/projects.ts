@@ -11,6 +11,7 @@ import {
   createTask,
   getTask,
   unwedgeProject,
+  reconcileProjectStatuses,
   type ProjectRepo,
   type ProjectStatus,
   type ProjectTask,
@@ -186,6 +187,14 @@ r.get("/board", async (c) => {
 r.get("/managers", async (c) => {
   const managers = await listManagerRollup();
   return c.json({ managers });
+});
+
+/* Project status reconciliation — auto-closes unambiguous blocked projects
+ * with all tasks completed, and reports disagreements for paused/active.
+ * Registered before /:id so "reconcile" is never matched as a project id. */
+r.get("/reconcile", async (c) => {
+  const result = await reconcileProjectStatuses();
+  return c.json(result);
 });
 
 r.get("/", async (c) => {

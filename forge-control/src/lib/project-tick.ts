@@ -39,6 +39,7 @@ import {
   setProjectWorkspace,
   demoteTaskTier,
   closeFinishedProjects,
+  reconcileProjectStatuses,
   listTasksForProject,
   getProject,
   managerChatRunId,
@@ -2796,6 +2797,7 @@ export async function projectTick(): Promise<void> {
     // second half, and it is done here rather than in db/projects.ts because
     // naming the workstreams runs the pure predicate, which lives in this file.
     await reportUnintegratedWorkstreams(finished.held);
+    await reconcileProjectStatuses();
     await goalHeartbeats();
   } catch (e) {
     console.error("[project-tick] tick failed:", e instanceof Error ? e.message : e);
