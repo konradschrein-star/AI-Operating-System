@@ -1792,7 +1792,18 @@ export const triggerScheduleRun = async (
 export type ProjectRepo = "ai-os" | "content-forge";
 export type ProjectStatus = "active" | "paused" | "done" | "blocked" | "cancelled";
 export type TaskRole = "architect" | "planner" | "scout" | "builder" | "reviewer";
-export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "blocked";
+// `cancelled` joined the DB CHECK constraint in 0046_task_status_cancelled.sql
+// (2026-08-25). It is TERMINAL but not success: every "is this row still
+// open" filter in this app enumerates the open statuses, so a cancelled row
+// is excluded by construction rather than by a rule that has to remember it.
+export type TaskStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "done"
+  | "failed"
+  | "blocked"
+  | "cancelled";
 export type TaskTier = "fast" | "standard" | "flagship";
 
 export const PROJECT_REPO_OPTIONS: ProjectRepo[] = ["ai-os", "content-forge"];
@@ -2109,9 +2120,13 @@ export interface CalendarEvent {
   summary: string;
   start: string;
   end: string;
+  /** True for a `date`-only event — a 24-hour band, not a block at midnight. */
+  all_day?: boolean;
   location?: string;
   description?: string;
   status?: string;
+  updated?: string;
+  recurring_event_id?: string;
   htmlLink?: string;
 }
 
@@ -2770,10 +2785,53 @@ export const fetchCalendarEvents = async (
   return [];
 };
 
+/**
+ * Events for one whole day, or one whole Mon–Sun week.
+ *
+ * Prefer these over `fetchCalendarEvents(start, end)` with hand-built strings.
+ * The window is resolved server-side through Europe/Berlin, which is the only
+ * way it comes out right: the previous caller built `${day}T00:00:00Z` and so
+ * asked for a UTC day, losing everything before 02:00 local and pulling in two
+ * hours of the next day.
+ */
+export const fetchCalendarView = async (
+  view: "day" | "week",
+  day: string,
+): Promise<CalendarEvent[]> => {
+  const r = await getJson<{ events?: CalendarEvent[] }>(
+    `/daily/calendar?view=${view}&day=${encodeURIComponent(day)}`,
+  );
+  return Array.isArray(r.events) ? r.events : [];
+};
+
 export const createCalendarEvent = (
   input: CreateCalendarEventInput,
 ): Promise<DayWriteResult> =>
   postJson<DayWriteResult>("/daily/calendar/events", input);
+
+export const updateCalendarEvent = (
+  eventId: string,
+  patch: {
+    summary?: string;
+    start?: string;
+    end?: string;
+    location?: string;
+    description?: string;
+    task_id?: string;
+  },
+): Promise<DayWriteResult> =>
+  patchJson<DayWriteResult>(`/daily/calendar/events/${encodeURIComponent(eventId)}`, patch);
+
+/** Pull Google Calendar into the task board. Idempotent — keyed on event id. */
+export const syncCalendarToTasks = (
+  input: { day?: string; view?: "day" | "week"; dry_run?: boolean } = {},
+): Promise<{
+  ok: boolean;
+  events: number;
+  created: number;
+  updated: number;
+  skipped: number;
+}> => postJson("/daily/calendar/sync", input);
 
 export const fetchLifeGoals = async (params?: {
   horizon?: string;

@@ -96,6 +96,12 @@ const STATUS_COLOR: Record<TaskStatus, string> = {
   done: tokens.ok,
   failed: tokens.bleed,
   blocked: tokens.warn,
+  // Retired on purpose (0046_task_status_cancelled.sql). `textMuted2` rather
+  // than `textFaint`: a cancelled row must not wear `pending`'s colour, because
+  // the two say opposite things about whether the board still owes you that
+  // work — and this map is exhaustive over TaskStatus, so it is the one place
+  // that has to answer.
+  cancelled: tokens.textMuted2,
 };
 
 const STATUS_ORDER: Record<string, number> = {

@@ -88,8 +88,18 @@ const DONE = "done";
  *
  * Straight off the table constraint, not off a hopeful reading of the engine:
  *   status varchar(16) NOT NULL DEFAULT 'pending'
- *     CHECK (status IN ('pending','ready','running','done','failed','blocked'))
- *   — db/migrations/0030_coding_projects.sql:44-45
+ *     CHECK (status IN ('pending','ready','running','done','failed','blocked',
+ *                       'cancelled'))
+ *   — db/migrations/0030_coding_projects.sql:44-45, widened by
+ *     db/migrations/0046_task_status_cancelled.sql (2026-08-25)
+ *
+ * `cancelled` is in the constraint and deliberately NOT in the list below.
+ * This list means "a status a LIVE row can be found in", and it is the input to
+ * the invariant in scripts/checks/check-plan-store.ts that every entry has a
+ * colour of its own. A cancelled row is retired: the right colour for it is the
+ * neutral fallback, which is exactly what statusTokenName() already returns for
+ * it — asserted there by name, so this is a documented answer rather than an
+ * unhandled one.
  *
  * On this project's real corpus the live distribution is done/pending/running
  * = 50/9/1; `ready` is transient (project-tick promotes and claims in the same
