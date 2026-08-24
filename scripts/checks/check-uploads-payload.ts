@@ -460,15 +460,27 @@ async function runRouteHandlerChecks(): Promise<number> {
     check("WebSocket upgrade request returns 502 bailout", upgradeRes.status, 502);
     check("Upgrade bailout carries x-proxy-bailout: upgrade header", upgradeRes.headers.get("x-proxy-bailout"), "upgrade");
 
-    // Test 4: /vnc/ path bailout -> 502 with x-proxy-bailout: upgrade
-    const vncPathReq = new Request("http://localhost:7701/api/proxy/uploads/run-abc/vnc/websockify", {
+    // Test 4: VNC websockify upgrade request returns 502 bailout, while plain HTTP is proxied
+    const vncUpgradeReq = new Request("http://localhost:7701/api/proxy/uploads/run-abc/vnc/websockify", {
       method: "GET",
+      headers: {
+        connection: "Upgrade",
+        upgrade: "websocket",
+      },
     });
-    const vncPathRes = await GET(vncPathReq, {
+    const vncUpgradeRes = await GET(vncUpgradeReq, {
       params: Promise.resolve({ path: ["uploads", "run-abc", "vnc", "websockify"] }),
     });
-    check("VNC path request returns 502 bailout", vncPathRes.status, 502);
-    check("VNC path bailout carries x-proxy-bailout: upgrade header", vncPathRes.headers.get("x-proxy-bailout"), "upgrade");
+    check("VNC websockify upgrade request returns 502 bailout", vncUpgradeRes.status, 502);
+    check("VNC upgrade bailout carries x-proxy-bailout: upgrade header", vncUpgradeRes.headers.get("x-proxy-bailout"), "upgrade");
+
+    const vncPlainReq = new Request("http://localhost:7701/api/proxy/uploads/run-abc/vnc/vnc.html", {
+      method: "GET",
+    });
+    const vncPlainRes = await GET(vncPlainReq, {
+      params: Promise.resolve({ path: ["uploads", "run-abc", "vnc", "vnc.html"] }),
+    });
+    check("VNC plain HTTP request does not trigger upgrade bailout", vncPlainRes.headers.get("x-proxy-bailout"), null);
 
     return measuredNotModifiedHeaderBytes;
   } finally {
