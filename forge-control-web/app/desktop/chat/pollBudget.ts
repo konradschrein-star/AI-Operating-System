@@ -58,7 +58,12 @@ export const PLAN_POLL_MS = 30_000;
  *  one poll for the whole page however many indicators subscribe. 2 req/min. */
 export const SHOTS_INDEX_POLL_MS = 30_000;
 
+/** The active fullscreen stream viewer poll (`BrowserStreamViewer`), active ONLY
+ *  while the modal is open. 12 req/min (5s) while open, 0 req/min when closed. */
+export const SHOTS_FULLSCREEN_POLL_MS = 5_000;
+
 /** The committed whole-surface ceiling, in requests per minute, with every
  *  panel open. Measured by `docs/plan/artifacts/phase600/nav-walk.cjs:310`
  *  (P3) at rest, at depth 1 and at depth 2 — not by arithmetic. */
 export const CHAT_SURFACE_REQ_PER_MIN_CEILING = 40;
+

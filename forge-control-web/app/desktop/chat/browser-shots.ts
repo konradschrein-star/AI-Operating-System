@@ -330,7 +330,7 @@ export function isLoginWallName(name: string | null | undefined): boolean {
  */
 export function resolveStreamMode(
   state?: BrowserStateSummary | null,
-  refs?: readonly BrowserShotRef[],
+  refs?: readonly { name: string; label?: string }[],
 ): StreamMode {
   // 1. Red mode checks (priority order of trust)
   if (state?.needs_human === true || state?.needs_login === true) {
@@ -344,7 +344,7 @@ export function resolveStreamMode(
   }
   if (refs && refs.length > 0) {
     for (const r of refs) {
-      if (isLoginWallName(r.name) || isLoginWallName(r.label)) {
+      if (isLoginWallName(r.name) || (r.label && isLoginWallName(r.label))) {
         return "needs_human";
       }
     }
@@ -364,7 +364,7 @@ export function resolveStreamMode(
  */
 export function resolveStreamWarning(
   state?: BrowserStateSummary | null,
-  refs?: readonly BrowserShotRef[],
+  refs?: readonly { name: string; label?: string }[],
 ): StreamWarningInfo | null {
   const mode = resolveStreamMode(state, refs);
   if (mode !== "needs_human") return null;
