@@ -11,6 +11,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "/opt/ai-os/uploads";
 
@@ -163,7 +164,24 @@ export interface RunSummary {
 }
 
 const LIST_CACHE_MS = 10_000;
-let cache: { at: number; runs: RunSummary[] } | null = null;
+let cache: { at: number; runs: RunSummary[]; tag: string } | null = null;
+let cacheVersion = 0;
+
+function computeTag(runs: RunSummary[]): string {
+  const h = crypto.createHash("sha1");
+  for (const r of runs) {
+    h.update(`${r.id}:${r.count}:${r.image_count}:${r.artifact_count}:${r.file_count}:${r.latest_ts ?? ""};`);
+  }
+  return `"${h.digest("hex").slice(0, 16)}"`;
+}
+
+/**
+ * Returns the current uploads index ETag cache tag.
+ */
+export function getUploadsCacheTag(): string {
+  if (cache) return cache.tag;
+  return `"${crypto.createHash("sha1").update(`v${cacheVersion}`).digest("hex").slice(0, 16)}"`;
+}
 
 async function computeAllRuns(): Promise<RunSummary[]> {
   const entries = await fs.readdir(UPLOAD_DIR, { withFileTypes: true }).catch((err) => {
@@ -203,7 +221,8 @@ export async function listAllRuns(): Promise<RunSummary[]> {
   const now = Date.now();
   if (cache && now - cache.at < LIST_CACHE_MS) return cache.runs;
   const runs = await computeAllRuns();
-  cache = { at: now, runs };
+  const tag = computeTag(runs);
+  cache = { at: now, runs, tag };
   return runs;
 }
 
@@ -214,5 +233,6 @@ export async function listAllRuns(): Promise<RunSummary[]> {
  * did not arrive".
  */
 export function invalidateRunsCache(): void {
+  cacheVersion++;
   cache = null;
 }

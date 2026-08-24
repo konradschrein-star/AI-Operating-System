@@ -47,8 +47,8 @@ export const CHAT_DETAIL_LIVE_POLL_MS = 20_000;
 export const CHAT_DETAIL_FALLBACK_POLL_MS = 4_000;
 
 /** The team tree (`ChatTeamPanel`), paused whenever the panel is not visible.
- *  10 req/min. Round 705 moved it out from 5s. */
-export const TEAM_POLL_MS = 6_000;
+ *  6 req/min. Round 0 of aios-chat-list-payload moved it out from 6s (10 req/min). */
+export const TEAM_POLL_MS = 10_000;
 
 /** The plan zone (`PlanKanban`), paused whenever the zone is not visible.
  *  2 req/min. Round 705 moved it out from 15s. */

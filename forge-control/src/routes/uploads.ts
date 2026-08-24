@@ -17,6 +17,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import {
   ID_RE,
+  getUploadsCacheTag,
   invalidateRunsCache,
   listAllRuns,
   listRunShots,
@@ -123,6 +124,26 @@ r.post("/", async (c) => {
 // read as the `:id`/`:name` params instead of matching here.
 r.get("/index", async (c) => {
   const runs = await listAllRuns();
+  const tag = getUploadsCacheTag();
+  const ifNoneMatch = c.req.header("if-none-match");
+  if (ifNoneMatch) {
+    const cleanServer = tag.replace(/^W\//, "").replace(/^"|"$/g, "");
+    const parts = ifNoneMatch.split(",").map((p) => p.trim());
+    const match = parts.some((p) => {
+      if (p === "*") return true;
+      if (p === tag) return true;
+      const cleanClient = p.replace(/^W\//, "").replace(/^"|"$/g, "");
+      return cleanClient === cleanServer;
+    });
+    if (match) {
+      return c.body(null, 304, {
+        ETag: tag,
+        "Cache-Control": "no-cache",
+      });
+    }
+  }
+  c.header("ETag", tag);
+  c.header("Cache-Control", "no-cache");
   return c.json({ runs });
 });
 

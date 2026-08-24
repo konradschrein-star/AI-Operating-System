@@ -18,8 +18,11 @@
  *     - Simulates realistic manager thread (576 entries & 103 entries with ~10 KB prompt).
  *     - Measures uncompressed & compressed byte reductions (~86% reduction in steady-state delta payload by omitting prompt).
  *  4. Chat Surface Poll Budget Calculations:
- *     - Healthy steady state (SSE live): 23 req/min (≤ 40 req/min ceiling).
- *     - Degraded fallback state (SSE down): 36 req/min (≤ 40 req/min ceiling).
+ *     - Healthy steady state (SSE live): 19 req/min (≤ 40 req/min ceiling).
+ *     - Degraded fallback state (SSE down): 32 req/min (≤ 40 req/min ceiling).
+ *  5. Team Tree Settled Backoff & Uploads Index ETag Support:
+ *     - isTreeSettled: backs off when all tree nodes (manager, workers, subagents) are settled.
+ *     - Uploads Index: supports ETag caching tag computation for conditional polling.
  *
  * Run:
  *   cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-chat-delta.ts
@@ -30,6 +33,9 @@ import { gzipSync } from "node:zlib";
 import { parseSinceParam, chatDeltaResponse } from "../../forge-control/src/routes/chat.ts";
 import type { RunDelta } from "../../forge-control/src/routes/chat.ts";
 import type { RunDetail, ThreadEntry } from "../../forge-control/src/db/runs.ts";
+import { getUploadsCacheTag, listAllRuns } from "../../forge-control/src/lib/uploads-index.ts";
+import { isTreeSettled } from "../../forge-control-web/app/desktop/team/ChatTeamPanel.tsx";
+import type { TeamNode, TeamResponse } from "../../forge-control-web/app/desktop/team/teamApi.ts";
 /* THE REAL CONSTANTS THE SURFACE POLLS AT — imported, never copied. Round 3 of
  * this project hand-copied them into local `const`s here, which made section 5
  * an assertion that arithmetic is arithmetic: `TEAM_POLL_MS` could have gone to
@@ -443,7 +449,7 @@ console.log("\n── 5a. The poll constants themselves, against their own liter
 check("CHAT_LIST_POLL_MS is 10s", CHAT_LIST_POLL_MS, 10_000);
 check("CHAT_DETAIL_LIVE_POLL_MS is 20s", CHAT_DETAIL_LIVE_POLL_MS, 20_000);
 check("CHAT_DETAIL_FALLBACK_POLL_MS is 4s", CHAT_DETAIL_FALLBACK_POLL_MS, 4_000);
-check("TEAM_POLL_MS is 6s", TEAM_POLL_MS, 6_000);
+check("TEAM_POLL_MS is 10s", TEAM_POLL_MS, 10_000);
 check("PLAN_POLL_MS is 30s", PLAN_POLL_MS, 30_000);
 check("SHOTS_INDEX_POLL_MS is 30s", SHOTS_INDEX_POLL_MS, 30_000);
 check("SECRETS_FALLBACK_POLL_MS is 60s", SECRETS_FALLBACK_POLL_MS, 60_000);
@@ -456,7 +462,7 @@ console.log("\n── 5b. Chat surface poll budget (from the real constants) ─
 const perMin = (intervalMs: number): number => 60_000 / intervalMs;
 
 const runListReqPerMin = perMin(CHAT_LIST_POLL_MS);       // 6 req/min
-const teamPanelReqPerMin = perMin(TEAM_POLL_MS);          // 10 req/min
+const teamPanelReqPerMin = perMin(TEAM_POLL_MS);          // 6 req/min (was 10 req/min at 6s)
 const shotsReqPerMin = perMin(SHOTS_INDEX_POLL_MS);       // 2 req/min
 const planKanbanReqPerMin = perMin(PLAN_POLL_MS);         // 2 req/min
 const secretsReqPerMin = perMin(SECRETS_FALLBACK_POLL_MS); // 1 req/min
@@ -464,18 +470,18 @@ const secretsReqPerMin = perMin(SECRETS_FALLBACK_POLL_MS); // 1 req/min
 /** Everything on the surface except the open transcript, which is the only
  *  poll whose period depends on the stream. */
 const panelsReqPerMin =
-  runListReqPerMin + teamPanelReqPerMin + shotsReqPerMin + planKanbanReqPerMin;
+  runListReqPerMin + teamPanelReqPerMin + shotsReqPerMin + planKanbanReqPerMin; // 16 req/min
 
 // Healthy steady state (SSE live): the transcript idles at CHAT_DETAIL_LIVE_POLL_MS
 // and the secrets query costs nothing at all (server push, round 808).
 const healthyDetailReqPerMin = perMin(CHAT_DETAIL_LIVE_POLL_MS); // 3 req/min
-const totalHealthyReqPerMin = panelsReqPerMin + healthyDetailReqPerMin;
+const totalHealthyReqPerMin = panelsReqPerMin + healthyDetailReqPerMin; // 19 req/min
 
 // Degraded fallback state (SSE down): transcript at CHAT_DETAIL_FALLBACK_POLL_MS,
 // and the secrets query degrades to its 60s poll.
 const degradedDetailReqPerMin = perMin(CHAT_DETAIL_FALLBACK_POLL_MS); // 15 req/min
 const totalDegradedReqPerMin =
-  panelsReqPerMin + degradedDetailReqPerMin + secretsReqPerMin;
+  panelsReqPerMin + degradedDetailReqPerMin + secretsReqPerMin; // 32 req/min
 
 /* DRILLED (depth 1), degraded. ChatSurface disables its own detail query while
  * `navStack` is non-empty and AgentChatView runs one in its place — so the
@@ -488,11 +494,13 @@ const totalDrilledDegradedReqPerMin =
   panelsReqPerMin + drilledDetailReqPerMin + secretsReqPerMin;
 
 /* The counterexample, and the one number here that is deliberately a LITERAL:
- * 3s is history, not a live value, and importing anything for it would make it
- * move when the build moves. */
+ * 3s detail + 6s team is history (41 req/min), not live values. */
 const PREV_DEGRADED_DETAIL_POLL_MS = 3_000;
+const PREV_TEAM_POLL_MS = 6_000;
+const prevPanelsReqPerMin =
+  runListReqPerMin + perMin(PREV_TEAM_POLL_MS) + shotsReqPerMin + planKanbanReqPerMin;
 const prevTotalDegradedReqPerMin =
-  panelsReqPerMin + perMin(PREV_DEGRADED_DETAIL_POLL_MS) + secretsReqPerMin;
+  prevPanelsReqPerMin + perMin(PREV_DEGRADED_DETAIL_POLL_MS) + secretsReqPerMin;
 
 console.log(`Committed Chat Surface Ceiling: ≤ ${CHAT_SURFACE_REQ_PER_MIN_CEILING} req/min`);
 console.log(`Healthy steady-state rate:      ${totalHealthyReqPerMin} req/min (List ${runListReqPerMin} + Detail ${healthyDetailReqPerMin} + Team ${teamPanelReqPerMin} + Shots ${shotsReqPerMin} + Plan ${planKanbanReqPerMin})`);
@@ -500,19 +508,19 @@ console.log(`Degraded fallback rate (4s):    ${totalDegradedReqPerMin} req/min (
 console.log(`Degraded, drilled to depth 1:   ${totalDrilledDegradedReqPerMin} req/min (AgentChatView's transcript in place of ChatSurface's)`);
 console.log(`Previous degraded rate (3s):    ${prevTotalDegradedReqPerMin} req/min (Violated ceiling: ${prevTotalDegradedReqPerMin} > ${CHAT_SURFACE_REQ_PER_MIN_CEILING})`);
 
-check("healthy poll rate equals 23 req/min", totalHealthyReqPerMin, 23);
+check("healthy poll rate equals 19 req/min", totalHealthyReqPerMin, 19);
 checkTrue(
   "healthy poll rate is under the committed ceiling",
   totalHealthyReqPerMin <= CHAT_SURFACE_REQ_PER_MIN_CEILING,
 );
 
-check("degraded fallback poll rate equals 36 req/min", totalDegradedReqPerMin, 36);
+check("degraded fallback poll rate equals 32 req/min", totalDegradedReqPerMin, 32);
 checkTrue(
   "degraded fallback poll rate is under the committed ceiling",
   totalDegradedReqPerMin <= CHAT_SURFACE_REQ_PER_MIN_CEILING,
 );
 
-check("drilled degraded poll rate equals 36 req/min", totalDrilledDegradedReqPerMin, 36);
+check("drilled degraded poll rate equals 32 req/min", totalDrilledDegradedReqPerMin, 32);
 check(
   "drilling in does not change the surface's request rate",
   totalDrilledDegradedReqPerMin,
@@ -521,20 +529,87 @@ check(
 
 checkTrue("previous 3s fallback violated ceiling (> 40 req/min)", prevTotalDegradedReqPerMin > 40);
 
-/* The measured counterpart to all of the above. Arithmetic cannot see a poll
- * that keeps running when its panel is hidden, a retry storm, or a request
- * nobody counted — a browser can, and this project's numbers were taken by one:
- * `docs/plan/aios-console-responsiveness/browser-measurement.md` records
- * `docs/plan/aios-console-responsiveness/depth-poll-r4.cjs` (three 60s windows
- * — at rest, depth 1, depth 2 — on a build of this branch AND on a build of
- * main, in the same browser) and `docs/plan/artifacts/phase700/network-700.cjs`
- * (NFU3, unmodified, ALL PASS). Measured: 39 → 35 req/min at rest, 40 → 35
- * drilled, and 48,036,978 → 65,670 transcript body bytes per minute. This check
- * is the drift guard between those runs; it is not a substitute for them. */
-
 /* ════════════════════════════════════════════════════════════════════════════
- * SUMMARY
+ * SECTION 5: Team Tree Settled Backoff & Uploads Index Caching
  * ══════════════════════════════════════════════════════════════════════════ */
 
-console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — check-chat-delta suite`);
-process.exit(failures === 0 ? 0 : 1);
+console.log("\n── 6. Team tree settled backoff (isTreeSettled) ──────────────────────");
+
+function makeTestTeamNode(overrides: Partial<TeamNode> = {}): TeamNode {
+  return {
+    id: "test-node",
+    kind: "worker",
+    role: "builder",
+    model: "claude-sonnet",
+    status: "completed",
+    tokens: { input: 100, output: 50, cache_read: 0, cache_creation: 0, total: 150 },
+    tokens_measured: true,
+    working_ms: 1000,
+    working_ms_source: "thread",
+    started_at: "2026-08-24T00:00:00.000Z",
+    settled: true,
+    description: "Test node",
+    parent_id: null,
+    dismissed_at: null,
+    subagents: [],
+    task: null,
+    ...overrides,
+  };
+}
+
+function makeTestTeamResponse(overrides: Partial<TeamResponse> = {}): TeamResponse {
+  return {
+    chat_id: "2ef126b7-d6d9-4a55-a8e7-d9acf0508645",
+    now: "2026-08-24T00:00:00.000Z",
+    project: { id: "proj-1", status: "completed" },
+    link_source: "metadata",
+    link_ambiguous: false,
+    manager: makeTestTeamNode({ id: "mgr-1", kind: "operator", role: "manager" }),
+    workers: [],
+    complete: true,
+    errors: [],
+    ...overrides,
+  };
+}
+
+check("undefined response is not settled", isTreeSettled(undefined), false);
+check("running manager is not settled", isTreeSettled(makeTestTeamResponse({ manager: makeTestTeamNode({ settled: false }) })), false);
+check("manager with running subagent is not settled", isTreeSettled(makeTestTeamResponse({
+  manager: makeTestTeamNode({ settled: true, subagents: [makeTestTeamNode({ settled: false })] }),
+})), false);
+check("settled manager with running worker is not settled", isTreeSettled(makeTestTeamResponse({
+  manager: makeTestTeamNode({ settled: true }),
+  workers: [makeTestTeamNode({ settled: false })],
+})), false);
+check("settled worker with running subagent is not settled", isTreeSettled(makeTestTeamResponse({
+  manager: makeTestTeamNode({ settled: true }),
+  workers: [makeTestTeamNode({ settled: true, subagents: [makeTestTeamNode({ settled: false })] })],
+})), false);
+check("all nodes settled -> tree is settled", isTreeSettled(makeTestTeamResponse({
+  manager: makeTestTeamNode({ settled: true, subagents: [makeTestTeamNode({ settled: true })] }),
+  workers: [makeTestTeamNode({ settled: true, subagents: [makeTestTeamNode({ settled: true })] })],
+})), true);
+
+console.log("\n── 7. Uploads index ETag & cache tag verification ──────────────────");
+
+async function runAsyncChecks(): Promise<void> {
+  const tagInitial = getUploadsCacheTag();
+  checkTrue("uploads index cache tag is non-empty quoted string", typeof tagInitial === "string" && tagInitial.startsWith('"') && tagInitial.endsWith('"'));
+
+  await listAllRuns();
+  const tagComputed = getUploadsCacheTag();
+  checkTrue("uploads index computed tag is valid quoted string", typeof tagComputed === "string" && tagComputed.startsWith('"') && tagComputed.endsWith('"'));
+  check("subsequent getUploadsCacheTag returns stable cached tag", getUploadsCacheTag(), tagComputed);
+
+  /* ════════════════════════════════════════════════════════════════════════════
+   * SUMMARY
+   * ══════════════════════════════════════════════════════════════════════════ */
+
+  console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — check-chat-delta suite`);
+  process.exit(failures === 0 ? 0 : 1);
+}
+
+runAsyncChecks().catch((err) => {
+  console.error("Unhandled error in check-chat-delta:", err);
+  process.exit(1);
+});

@@ -208,6 +208,26 @@ function payloadDismissedIds(res: TeamResponse | undefined): readonly string[] {
   return ids.length > 0 ? ids : NO_PAYLOAD_DISMISSALS;
 }
 
+/**
+ * True when every node in the tree is settled (nothing left running or queued).
+ * Settled nodes never tick or change state (U16), so polling can back off.
+ */
+export function isTreeSettled(res: TeamResponse | undefined): boolean {
+  if (!res || !res.manager) return false;
+  const walk = (node: TeamNode): boolean => {
+    if (!node.settled) return false;
+    for (const sub of node.subagents ?? []) {
+      if (!walk(sub)) return false;
+    }
+    return true;
+  };
+  if (!walk(res.manager)) return false;
+  for (const worker of res.workers ?? []) {
+    if (!walk(worker)) return false;
+  }
+  return true;
+}
+
 /** The footer controls — the peek toggle and, beside it, restore-all. Shared so
  *  the two read as one row of quiet text rather than as a button and a link,
  *  and so `color` is the only thing either of them varies. `nowrap` because
@@ -372,7 +392,7 @@ export function ChatTeamPanel({
   const team = useQuery<TeamResponse, Error>({
     queryKey: ["chat-team", chatId],
     queryFn: () => fetchChatTeam(chatId, projectOverrideRef.current),
-    refetchInterval: TEAM_POLL_MS,
+    refetchInterval: (query) => (isTreeSettled(query.state.data) ? false : TEAM_POLL_MS),
     enabled,
     refetchOnWindowFocus: false,
     // NFU6, and round 505 finding #2. The app-wide default is `retry: 2` with
