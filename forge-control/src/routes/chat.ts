@@ -35,6 +35,7 @@ import {
   searchRuns,
   deleteRun,
   planRunDeletion,
+  trimRailMetadata,
   RunStillRunningError,
   type RunDetail,
   type RunStatus,
@@ -1606,6 +1607,8 @@ export function chatDeltaResponse(
   const { prompt: _omitted, ...runWithoutPrompt } = run;
   return { run: { ...runWithoutPrompt, thread: run.thread.slice(since) }, from: since, total };
 }
+
+export { trimRailMetadata };
 
 
 /* Full thread detail, or a delta since `?since=<n>` thread entries already

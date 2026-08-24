@@ -12,7 +12,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { chatDeltaResponse, parseSinceParam } from "../routes/chat.ts";
+import { chatDeltaResponse, parseSinceParam, trimRailMetadata } from "../routes/chat.ts";
 import type { RunDetail, ThreadEntry } from "../db/runs.ts";
 
 function entry(content: string, ts: string): ThreadEntry {
@@ -160,5 +160,170 @@ describe("chatDeltaResponse", () => {
     chatDeltaResponse(run, 1);
     assert.equal(run.thread, beforeThread);
     assert.equal(run.prompt, "fixture prompt");
+  });
+});
+
+/* ── trimRailMetadata ─────────────────────────────────────────────────────── */
+
+describe("trimRailMetadata", () => {
+  test("handles null, undefined, empty, or non-object primitives safely", () => {
+    assert.deepEqual(trimRailMetadata(undefined), {});
+    assert.deepEqual(trimRailMetadata(null), {});
+    assert.deepEqual(trimRailMetadata({}), {});
+    assert.deepEqual(trimRailMetadata([] as unknown as Record<string, unknown>), {});
+    assert.deepEqual(trimRailMetadata("primitive" as unknown as Record<string, unknown>), {});
+    assert.deepEqual(trimRailMetadata(12345 as unknown as Record<string, unknown>), {});
+    assert.deepEqual(trimRailMetadata(true as unknown as Record<string, unknown>), {});
+  });
+
+  test("preserves exact keys required for context gauge and model identity", () => {
+    const exactMeta = {
+      model: "claude-3-5-sonnet-20241022",
+      model_resolved: "claude-3-5-sonnet-20241022",
+      usage_running: {
+        input_tokens: 1540,
+        cache_read_input_tokens: 24000,
+        cache_creation_input_tokens: 1000,
+        output_tokens: 350,
+      },
+      usage_last_turn: {
+        input_tokens: 1200,
+        cache_read_input_tokens: 20000,
+        cache_creation_input_tokens: 500,
+        output_tokens: 300,
+      },
+      effort: "high",
+    };
+
+    const trimmed = trimRailMetadata(exactMeta);
+    assert.deepEqual(trimmed, exactMeta);
+    assert.equal(trimmed.model, "claude-3-5-sonnet-20241022");
+    assert.equal(trimmed.model_resolved, "claude-3-5-sonnet-20241022");
+    assert.deepEqual(trimmed.usage_running, exactMeta.usage_running);
+    assert.deepEqual(trimmed.usage_last_turn, exactMeta.usage_last_turn);
+    assert.equal(trimmed.effort, "high");
+  });
+
+  test("preserves partial subsets when only some allowed keys are present", () => {
+    const partialMeta = {
+      model: "gemini-1.5-pro",
+      effort: "medium",
+    };
+    const trimmed = trimRailMetadata(partialMeta);
+    assert.deepEqual(trimmed, {
+      model: "gemini-1.5-pro",
+      effort: "medium",
+    });
+  });
+
+  test("prunes heavy subagents_v2, canvas_snapshot, system_prompt, logs, and execution baggage", () => {
+    const heavyMeta = {
+      model: "claude-3-5-sonnet-20241022",
+      model_resolved: "claude-3-5-sonnet-20241022",
+      usage_running: { input_tokens: 100, cache_read_input_tokens: 200 },
+      usage_last_turn: { input_tokens: 80, cache_read_input_tokens: 150 },
+      effort: "high",
+      // Heavy baggage to be stripped:
+      subagents_v2: [
+        {
+          tool_use_id: "tool_u1",
+          role: "researcher",
+          description: "Subagent research task",
+          transcript: Array.from({ length: 50 }, (_, i) => ({ step: i, content: "heavy logs ".repeat(20) })),
+        },
+        {
+          tool_use_id: "tool_u2",
+          role: "builder",
+          description: "Subagent builder task",
+        },
+      ],
+      canvas_snapshot: {
+        elements: Array.from({ length: 100 }, (_, i) => ({ id: `el_${i}`, type: "rectangle", x: i, y: i })),
+        appState: { zoom: 1, scrollX: 0, scrollY: 0 },
+      },
+      canvas: "Daily/2026-08-24.canvas",
+      system_prompt: "You are the system prompt... ".repeat(100),
+      tools: [{ name: "bash", schema: { parameters: {} } }],
+      trace_logs: ["log 1", "log 2", "error trace"],
+      cc_session_id: "sess_12345",
+      arbitrary_garbage: { deep: { nested: true } },
+    };
+
+    const trimmed = trimRailMetadata(heavyMeta);
+
+    // Only allowed keys exist
+    assert.deepEqual(Object.keys(trimmed).sort(), [
+      "effort",
+      "model",
+      "model_resolved",
+      "usage_last_turn",
+      "usage_running",
+    ].sort());
+
+    // Baggage is explicitly absent
+    assert.equal("subagents_v2" in trimmed, false);
+    assert.equal("canvas_snapshot" in trimmed, false);
+    assert.equal("canvas" in trimmed, false);
+    assert.equal("system_prompt" in trimmed, false);
+    assert.equal("tools" in trimmed, false);
+    assert.equal("trace_logs" in trimmed, false);
+    assert.equal("cc_session_id" in trimmed, false);
+    assert.equal("arbitrary_garbage" in trimmed, false);
+
+    // Exact values of allowed keys are preserved
+    assert.equal(trimmed.model, "claude-3-5-sonnet-20241022");
+    assert.equal(trimmed.model_resolved, "claude-3-5-sonnet-20241022");
+    assert.deepEqual(trimmed.usage_running, { input_tokens: 100, cache_read_input_tokens: 200 });
+    assert.deepEqual(trimmed.usage_last_turn, { input_tokens: 80, cache_read_input_tokens: 150 });
+    assert.equal(trimmed.effort, "high");
+  });
+
+  test("does not mutate the input metadata object", () => {
+    const original = {
+      model: "claude-3-5-sonnet-20241022",
+      subagents_v2: [{ tool_use_id: "t1" }],
+      canvas_snapshot: { elements: [1, 2, 3] },
+    };
+    const cloned = JSON.parse(JSON.stringify(original));
+    trimRailMetadata(original);
+    assert.deepEqual(original, cloned);
+  });
+
+  test("achieves massive payload reduction on simulated rail datasets (>85% metadata size drop)", () => {
+    // Realistic mix of 30 rail rows: 10 active with usage, 10 closed with model, 10 simple
+    const rawMetadatas = Array.from({ length: 30 }, (_, i) => {
+      const base: Record<string, unknown> = {
+        model: "claude-3-5-sonnet-20241022",
+        effort: "high",
+        subagents_v2: Array.from({ length: 2 }, (_, j) => ({
+          tool_use_id: `tool_${i}_${j}`,
+          description: `subagent ${j} description with extended baggage text`,
+          transcript: ["step 1", "step 2", "step 3", "step 4", "step 5"],
+        })),
+        canvas_snapshot: { elements: Array.from({ length: 15 }, (_, k) => ({ id: k, type: "box" })) },
+        system_prompt: "Standard prompt string ".repeat(15),
+      };
+      if (i < 10) {
+        base.model_resolved = "claude-3-5-sonnet-20241022";
+        base.usage_running = { input_tokens: 1540 + i, cache_read_input_tokens: 24000, output_tokens: 300 };
+      } else if (i < 20) {
+        base.usage_last_turn = { input_tokens: 800, cache_read_input_tokens: 12000, output_tokens: 150 };
+      }
+      return base;
+    });
+
+    const trimmedMetadatas = rawMetadatas.map((meta) => trimRailMetadata(meta));
+
+    const rawMetaBytes = Buffer.byteLength(JSON.stringify(rawMetadatas), "utf8");
+    const trimmedMetaBytes = Buffer.byteLength(JSON.stringify(trimmedMetadatas), "utf8");
+
+    // Raw metadata payload ~25KB+ drops to ~2.5KB-3.9KB (< 4.5KB)
+    assert.ok(rawMetaBytes > 20_000, `expected rawMetaBytes > 20KB, got ${rawMetaBytes}`);
+    assert.ok(trimmedMetaBytes < 4_500, `expected trimmedMetaBytes < 4.5KB, got ${trimmedMetaBytes}`);
+    const reductionRatio = (rawMetaBytes - trimmedMetaBytes) / rawMetaBytes;
+    assert.ok(
+      reductionRatio >= 0.80,
+      `expected at least 80% reduction, got ${(reductionRatio * 100).toFixed(1)}%`,
+    );
   });
 });

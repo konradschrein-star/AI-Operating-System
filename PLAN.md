@@ -1,238 +1,179 @@
-# PLAN — aios-console-responsiveness (Desktop Console Responsiveness & Thread Delta Sync)
+# PLAN — aios-chat-list-payload (Chat Rail & Console Payload Optimization)
 
-Project f248f9e3 · branch project/f248f9e3 · architect round 0 · 2026-08-24
+Project `dbd45b44-57a8-46ff-b4ab-0628fdd580ca` · branch `project/dbd45b44` · architect round 0 · 2026-08-24
 
 ## 0. Recommendation, in one paragraph
 
-Fix the primary source of console lagginess by replacing full-thread re-downloads on every poll with **delta polling (`GET /api/chat/:id?since=<n>`)** across `forge-control` and `forge-control-web`. Currently, an open chat re-downloads the entire thread payload (measured **542.7 KB uncompressed / 114.1 KB gzipped** on manager chat `2ef126b7` with 576 entries) every 3–20s, burning ~16 MB to ~100 MB of JSON transfers and heavy main-thread JSON parsing every 10 minutes. Implementing `since` delta queries reduces steady-state poll payload size from **542.7 KB to ~1.2 KB (99.7% reduction)** and preserves thread array identity so React reconciles zero unnecessary DOM updates. Additionally, tuning degraded fallback polling from 3s to 4s guarantees the chat surface poll budget stays under the committed **≤ 40 req/min** ceiling (23 req/min healthy, 36 req/min degraded) even if SSE drops.
+Cut the chat rail and secondary console polling bandwidth by **~78% overall (from 254.2 KB/min down to ~55 KB/min)** across three targeted, zero-visual-regression optimizations:
+1. **`/api/proxy/chat` (49% of traffic, ~125 KB/min at 7 req/min / 18 KB per response)**: Prune unrendered execution baggage (`subagents_v2`, system prompts, raw tool schemas, logs) from `runs.metadata` in `listRuns` / `searchRuns` (`forge-control/src/db/runs.ts`), shipping only the essential context gauge and model keys (`usage_running`, `usage_last_turn`, `model`, `model_resolved`, `effort`). This cuts the rail list payload from ~18 KB to ~2.5 KB per response (an **~84% reduction**, saving ~105 KB/min) while preserving 100% identical UI rendering, status indicators, preview text, task progress pills, and context occupancy gauge/popover behavior.
+2. **`/api/proxy/chat/<chat>/team` (33% of traffic, ~82.6 KB/min at 10 req/min / 8 KB per response)**: Tune `TEAM_POLL_MS` in `pollBudget.ts` from 6s (10 req/min) to 10s (6 req/min) and pause/back off polling when all nodes in the tree are settled, cutting team bandwidth by **~50–70%** (saving ~45–55 KB/min) while staying comfortably within the committed ≤ 40 req/min ceiling.
+3. **`/api/proxy/uploads/index` (13% of traffic, ~32.1 KB/min at 2 req/min / 16 KB per response)**: Implement lightweight conditional caching (ETag / `If-None-Match` or versioned 304 Not Modified) in `forge-control/src/routes/uploads.ts` backed by `uploads-index.ts`'s existing in-memory cache invalidation, cutting index polling bandwidth by **>95%** (saving ~30 KB/min).
 
 Rejected alternatives (one line each):
-- Increasing poll intervals globally: hurts responsiveness and freshness for active worker runs.
-- Relying exclusively on SSE without polling fallback: fragile when network drops or reverse proxy reconnects fail.
-- Virtualizing thread messages with variable row heights: fights scroll anchoring and causes layout jitter.
-- Compacting active manager threads aggressively: discards valuable conversation context and agent tool history.
+- Completely removing `metadata` from `RunSummary`: breaks the context occupancy bar and popover on the chat rail.
+- Global client-side pagination with limit=5: breaks scroll discovery and forces jarring "load more" clicks.
+- Client-side polling suppression without server ETag: risks stale screenshot indicators when agents capture new browser shots.
+- Merging team tree updates into the transcript SSE stream: tightly couples unrelated domain models and breaks independent panel lifecycle.
 
 ---
 
-## 1. What Exists (Measured & Read, Not Remembered)
+## 1. Measured Baseline & Root Cause Analysis
 
-- `GET /api/chat/:id` (`forge-control/src/routes/chat.ts:1563`): Reads the full `runs.thread` jsonb array via `getRun(id)` and returns `{ run }` with no `since` or pagination support.
-- Live Deployed App Measurement (`https://os.schreinercontentsystems.com/api/proxy/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645`):
-  - **Thread entries**: 576 entries.
-  - **Uncompressed JSON size**: **542,683 bytes (530.0 KB)**.
-  - **Transferred wire bytes (gzipped)**: **116,833 bytes (114.1 KB)**.
-- `forge-control-web/app/desktop/ChatSurface.tsx:777-787`: `detailQ` polls `fetchChat(selId)` with `refetchInterval: live ? 20000 : 3000`.
-  - Every 20s (live SSE) or every 3s (disconnected SSE), it re-downloads and parses the entire 542.7 KB JSON thread.
-- `forge-control-web/app/desktop/chat/AssistantThread.tsx:945-968`: Windowing (`WINDOW_STEP = 60`) is in place so only the newest 60 messages mount in the DOM. However, full thread re-fetching on every poll creates new array references and unnecessary garbage collection overhead.
-- Poll Budget on Chat Surface (`ChatTeamPanel.tsx:154-164` committed ceiling ≤ 40 req/min):
-  - Healthy steady state (SSE live): 6 (`list`) + 3 (`detail`) + 10 (`team`) + 2 (`shots`) + 2 (`plan`) = **23 req/min** (Well below 40 req/min ceiling).
-  - Degraded fallback state (SSE down): 6 (`list`) + 20 (`detail` at 3s) + 10 (`team`) + 2 (`shots`) + 2 (`plan`) + 1 (`secrets`) = **41 req/min** (Slightly over 40 req/min).
+Measured in production at rest, 60s window, 2026-08-24 06:05Z:
+
+```
+TOTAL 254,171 bytes/min
+
+bytes/min  req/min  share  endpoint
+   125288        7    49%  /api/proxy/chat                  <- SCOPE ITEM 1
+    82638       10    33%  /api/proxy/chat/<chat>/team      <- SCOPE ITEM 2
+    32125        2    13%  /api/proxy/uploads/index         <- SCOPE ITEM 3
+     7972        2     3%  /api/proxy/chat/<chat>/plan
+     4938        3     2%  /api/proxy/chat/<chat>            <- already fixed via prompt delta
+     1210        1     0%  /api/proxy/usage/quota
+```
+
+### Root Cause Breakdown:
+1. **`GET /chat` (~18 KB / response, 7 req/min)**:
+   - `listRuns(limit=30, offset)` in `forge-control/src/db/runs.ts:120-172` executes `SELECT ... metadata FROM runs`.
+   - `metadata` in `content_forge.runs` contains full agent state (e.g. `subagents_v2` trees, transcripts, prompt copies, system configuration). For 30 runs, metadata averages 400B–2KB+ per row.
+   - Consumer audit (`ChatListItem` in `ChatSurface.tsx:1507-1748`): The rail renders:
+     - `run.id`, `run.title`, `run.status`, `run.updated_at` (human age), `run.last_role`, `run.last_message_preview`, `run.archived`.
+     - `run.tasks_done`, `run.tasks_total`, `run.project_status`, `run.project_id` (from `rollupChatProjects`).
+     - `contextOccupancy(run.metadata)` & `ChatContextPopover`: reads `meta.usage_running ?? meta.usage_last_turn` (`input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens`) and `meta.model_resolved ?? meta.model`.
+   - No other fields from `metadata` are rendered on the rail.
+2. **`GET /chat/<chat>/team` (~8 KB / response, 10 req/min)**:
+   - `TEAM_POLL_MS = 6_000` (10 req/min) in `pollBudget.ts:51`.
+   - Re-transmits the complete tree of 20–40 nodes every 6s, even when the project is finished or workers are idle/settled.
+3. **`GET /uploads/index` (~16 KB / response, 2 req/min)**:
+   - Every 30s (`SHOTS_INDEX_POLL_MS`), `BrowserShots.tsx` queries `/uploads/index`.
+   - Returns all 133 directory entries on every request, with no conditional HTTP caching (304) despite `uploads-index.ts` maintaining an in-process cache with explicit invalidation.
 
 ---
 
-## 2. Architecture & State Ownership
-
-### State Ownership & Data Flow
+## 2. Architecture & Detailed Design
 
 ```mermaid
 sequenceDiagram
-    participant Browser as Client (ChatSurface / detailQ)
-    participant Proxy as Next.js Web Proxy
-    participant Server as forge-control (/api/chat/:id)
+    participant Browser as Desktop Web Client
+    participant Proxy as Next.js Proxy (/api/proxy)
+    participant Server as forge-control (:7700)
     participant DB as Postgres (content_forge)
 
-    Note over Browser,Server: Initial Load (since omitted)
-    Browser->>Server: GET /api/chat/:id
-    Server->>DB: SELECT ... thread FROM runs WHERE id = $1
-    Server-->>Browser: 200 OK { run: fullThread, from: 0, total: 576 } (542 KB)
+    Note over Browser,Server: 1. Chat Rail List (GET /api/proxy/chat)
+    Browser->>Server: GET /api/chat?limit=30
+    Server->>DB: SELECT id, title, status, updated_at, thread, metadata... FROM runs
+    Server->>Server: Prune metadata to { model, model_resolved, usage_running, usage_last_turn, effort }
+    Server-->>Browser: 200 OK (2.5 KB vs 18 KB baseline) — 84% reduction
 
-    Note over Browser,Server: Steady-State Polling (since=576)
-    Browser->>Server: GET /api/chat/:id?since=576
-    Server->>DB: SELECT ... thread FROM runs WHERE id = $1
-    Server-->>Browser: 200 OK { run: { ...meta, thread: [] }, from: 576, total: 576 } (~1.2 KB)
-    Browser->>Browser: Array identity preserved (0 re-renders, 0 DOM thrash)
+    Note over Browser,Server: 2. Team Tree Polling (GET /api/proxy/chat/:id/team)
+    Browser->>Server: GET /api/chat/:id/team (polled every 10s vs 6s)
+    Server-->>Browser: 200 OK TeamResponse (6 req/min vs 10 req/min) — 40% reduction
 
-    Note over Browser,Server: Incremental Update (2 new messages, total 578)
-    Browser->>Server: GET /api/chat/:id?since=576
-    Server-->>Browser: 200 OK { run: { ...meta, thread: [msg576, msg577] }, from: 576, total: 578 } (~2 KB)
-    Browser->>Browser: Splice [prev.slice(0, 576), msg576, msg577]
+    Note over Browser,Server: 3. Uploads Index Polling (GET /api/proxy/uploads/index)
+    Browser->>Server: GET /api/uploads/index (If-None-Match: "v12")
+    Server->>Server: Check cache version/mtime
+    Server-->>Browser: 304 Not Modified (0 bytes vs 16 KB) — 99% steady-state reduction
 ```
 
-### Backend (`forge-control/src/routes/chat.ts`)
-- Support optional `since` query parameter in `GET /api/chat/:id?since=<n>`.
-- When `since` is provided:
-  - Parse as non-negative integer.
-  - If `since <= run.thread.length`: return `{ run: { ...run, thread: run.thread.slice(since) }, from: since, total: run.thread.length }`.
-  - If `since > run.thread.length` (stale/compacted client state): return full snapshot `{ run, from: 0, total: run.thread.length }`.
-- When `since` is omitted:
-  - Return `{ run, from: 0, total: run.thread.length }` (maintaining 100% backward compatibility).
+### Component Details:
 
-### Frontend Web API (`forge-control-web/app/api.ts` & Surfaces)
-- Update `fetchChat(id: string, since?: number)` to accept optional `since`.
-- In `ChatSurface.tsx` `detailQ`:
-  - Read cached `RunDetail` from React Query: `prev = qc.getQueryData<RunDetail>(["chat", "run", selId])`.
-  - Pass `prev?.thread?.length` to `fetchChat`.
-  - On response:
-    - If `res.from > 0 && prev?.thread && res.from <= prev.thread.length`:
-      - If `res.run.thread.length === 0 && res.from === prev.thread.length`, retain `prev.thread` identity.
-      - Else splice: `[...prev.thread.slice(0, res.from), ...res.run.thread]`.
-    - Else use full `res.run`.
-- Apply delta query support to `AgentChatView.tsx` and `ProjectsSurface.tsx` (`FloorCard` / `TaskDetail`).
-- Adjust fallback poll interval in `ChatSurface.tsx:786` from `3000` to `4000` to guarantee degraded poll budget stays ≤ 36 req/min (well below 40 ceiling).
+#### A. Backend Rail Optimization (`forge-control/src/db/runs.ts` & `src/routes/chat.ts`)
+- Add helper `trimRailMetadata(meta: Record<string, unknown> | null | undefined): Record<string, unknown>`:
+  - Extracts only: `model`, `model_resolved`, `usage_running`, `usage_last_turn`, `effort`.
+  - Drops heavy subagent trees (`subagents_v2`), tool configs, system prompts, error stack traces, etc.
+- In `listRuns()` and `searchRuns()`:
+  - Apply `trimRailMetadata` when constructing `RunSummary.metadata`.
+- Verify that `RunSummary` wire type is preserved, all context gauge popovers open with exact token figures, and no TypeScript types are violated.
 
----
+#### B. Team Polling & Settlement Optimization (`forge-control-web/app/desktop/chat/pollBudget.ts` & `ChatTeamPanel.tsx`)
+- In `pollBudget.ts`:
+  - Update `TEAM_POLL_MS` from `6_000` to `10_000` (6 req/min).
+  - Update poll budget arithmetic in `scripts/checks/check-chat-delta.ts` to reflect the updated constant and verify that total degraded rate is well below the 40 req/min ceiling (e.g. 32 req/min degraded, 19 req/min healthy).
+- In `ChatTeamPanel.tsx`:
+  - Maintain active polling while runs are live; if all nodes in `team.data` are `settled: true` and the project status is terminal (`completed`, `failed`, `cancelled`), adjust polling to idle/stale.
 
-## 3. Failure Modes & Observability
-
-- **What owns state**: `content_forge.runs` in PostgreSQL owns the authoritative thread. React Query cache `["chat", "run", id]` holds client state.
-- **What happens on cache mismatch or thread truncation / compaction**:
-  - If the server detects `since > run.thread.length`, it returns `from: 0` with the complete thread snapshot.
-  - If client receives `from === 0`, it replaces its cache unconditionally, self-healing instantly.
-- **What happens on network failure / disconnection**:
-  - Standard React Query exponential backoff and retry policy kicks in.
-  - Toast error notifications on failed mutations; query retains last good data with stale indicator.
-- **How does Konrad see it broke**:
-  - Visible error banners/toasts, console warnings on invalid frames, and clean status indicators.
+#### C. Uploads Index Conditional Caching (`forge-control/src/routes/uploads.ts` & `src/lib/uploads-index.ts`)
+- In `uploads-index.ts`:
+  - Export `getUploadsCacheTag(): string` that returns a deterministic ETag based on directory mtime / generation version.
+- In `routes/uploads.ts` `GET /index`:
+  - Read `If-None-Match` request header.
+  - If matches current tag, return `c.body(null, 304, { "ETag": tag, "Cache-Control": "no-cache" })`.
+  - Otherwise return `200` with `{ runs }` and `ETag` header.
 
 ---
 
-## 4. Work Breakdown & Dependency Graph
+## 3. State Ownership, Failure Modes & Observability
+
+- **State Ownership**:
+  - `content_forge.runs` owns run state and full metadata.
+  - `forge-control` owns shaping and pruning of `RunSummary` for rail consumption.
+  - React Query `["chat", "list", visibleCount]` owns client rail state.
+- **Failure Modes & Defenses**:
+  - *Missing pruned metadata field*: Fallback in `context-window.ts` gracefully returns `null` or assumed window; test suite verifies exact parity.
+  - *Stale 304 on fresh upload*: `invalidateRunsCache()` is invoked on every upload POST in `routes/uploads.ts:114`, immediately updating the cache tag and forcing 200 on next poll.
+  - *Database query timeout*: `listRuns` and `teamPool` continue using bounded pools with connection timeouts; errors return structured 500 without crashing the server.
+- **Observability**:
+  - Measurement script `scripts/checks/check-chat-rail-payload.ts` computes and verifies byte sizes and reductions.
+  - Universal test gate `scripts/checks/gates-808.sh` and typechecks verify clean compilation and zero regressions.
+
+---
+
+## 4. Work Breakdown & Task Dependency Graph
+
+All tasks belong to workstream `main` with disjoint write sets.
 
 ```mermaid
 graph TD
-    T1[Task 1: Backend Delta API - Junior<br/>GET /api/chat/:id?since=N in forge-control] --> T2[Task 2: Web Client Delta Sync - Junior<br/>fetchChat with delta merging in ChatSurface, AgentChatView, ProjectsSurface]
-    T2 --> T3[Task 3: Verification & Measurement - Junior<br/>Verify payload reduction, poll budget, tsc, gates-808]
-    T3 --> T4[Task 4: Gating Review - Standard<br/>Adversarial review against brief & constraints]
+    T1["Task 1: builder (standard)<br/>Backend Rail Metadata Pruning<br/>runs.ts, routes/chat.ts, chat-delta.test.ts"]
+    T2["Task 2: builder (standard)<br/>Team & Uploads Caching & Polling<br/>routes/uploads.ts, uploads-index.ts, pollBudget.ts, ChatTeamPanel.tsx, check-chat-delta.ts"]
+    T3["Task 3: builder (junior)<br/>Harness & Evidence<br/>check-chat-rail-payload.ts, README.md"]
+    T4["Task 4: reviewer (standard)<br/>Full Diff & Regression Review<br/>(join on T1, T2, T3)"]
+
+    T1 --> T3
+    T2 --> T3
+    T1 --> T4
+    T2 --> T4
+    T3 --> T4
 ```
 
-### Task 1: Backend Delta API (`forge-control`)
-- **Role**: `builder` | **Tier**: `junior` | **Workstream**: `main`
-- **Write Set**:
-  - `forge-control/src/routes/chat.ts`
-  - `forge-control/src/lib/chat-delta.test.ts`
-- **Brief**:
-  1. In `forge-control/src/routes/chat.ts`: update `r.get("/:id")` to parse optional query parameter `since`. If `since` is a valid non-negative integer `<= run.thread.length`, slice `run.thread.slice(since)` and return `{ run: { ...run, thread: threadSlice }, from: since, total: run.thread.length }`. If `since` is omitted, return `{ run, from: 0, total: run.thread.length }`. If `since > run.thread.length`, return `{ run, from: 0, total: run.thread.length }`.
-  2. Add unit test `forge-control/src/lib/chat-delta.test.ts` verifying full response, empty delta response, incremental append response, and recovery snapshot on out-of-bounds `since`.
+### Tasks:
 
-### Task 2: Web Client Delta Sync & Poll Budget Tuning (`forge-control-web`)
-- **Role**: `builder` | **Tier**: `junior` | **Workstream**: `main`
-- **Depends on**: `[Task 1]`
-- **Write Set**:
-  - `forge-control-web/app/api.ts`
-  - `forge-control-web/app/desktop/ChatSurface.tsx`
-  - `forge-control-web/app/desktop/chat/AgentChatView.tsx`
-  - `forge-control-web/app/desktop/ProjectsSurface.tsx`
-- **Brief**:
-  1. In `forge-control-web/app/api.ts`: update `fetchChat(id: string, since?: number)` to append `?since=${since}` when `since !== undefined`.
-  2. In `forge-control-web/app/desktop/ChatSurface.tsx`: in `detailQ`, retrieve previous query data from `qc.getQueryData(["chat", "run", selId])`, pass `prev?.thread?.length` to `fetchChat`, and merge returned thread slice while preserving array reference identity when `entries.length === 0`. Update fallback `refetchInterval` from `3000` to `4000`.
-  3. In `AgentChatView.tsx` and `ProjectsSurface.tsx`: apply the same delta query pattern to `runQ` queries.
+1. **Task 1: Backend Chat Rail Metadata Pruning**
+   - **Role**: `builder`
+   - **Tier**: `standard`
+   - **Workstream**: `main`
+   - **Write Set**: `["forge-control/src/db/runs.ts", "forge-control/src/routes/chat.ts", "forge-control/src/lib/chat-delta.test.ts"]`
+   - **Brief**: Implement `trimRailMetadata` in `forge-control/src/db/runs.ts` and apply to `listRuns` / `searchRuns`. Prune heavy subagent trees and raw logs from `metadata` while retaining `model`, `model_resolved`, `usage_running`, `usage_last_turn`, and `effort`. Ensure `GET /api/chat` response size drops from ~18 KB to ~2.5 KB with zero visible UI change and full context gauge compatibility. Add unit test assertions in `chat-delta.test.ts`.
 
-### Task 3: Verification, Measurement Harness & Gate Suite
-- **Role**: `builder` | **Tier**: `junior` | **Workstream**: `main`
-- **Depends on**: `[Task 2]`
-- **Write Set**:
-  - `scripts/checks/check-chat-delta.ts`
-- **Brief**:
-  1. Create `scripts/checks/check-chat-delta.ts` verifying delta query behavior, payload size reductions, and cache merging.
-  2. Run `npx tsc --noEmit` in both `forge-control` and `forge-control-web` and verify 0 errors.
-  3. Run `bash scripts/checks/gates-808.sh` and verify Gate 5 (`no-raw-colours.cjs`) and Gate 8 (`dollar-sweep.sh`) pass cleanly.
-  4. Record before and after payload measurements (e.g. 542.7 KB before vs ~1.2 KB after).
+2. **Task 2: Team Polling & Uploads Caching Optimization**
+   - **Role**: `builder`
+   - **Tier**: `standard`
+   - **Workstream**: `main`
+   - **Write Set**: `["forge-control/src/routes/uploads.ts", "forge-control/src/lib/uploads-index.ts", "forge-control-web/app/desktop/chat/pollBudget.ts", "forge-control-web/app/desktop/team/ChatTeamPanel.tsx", "scripts/checks/check-chat-delta.ts"]`
+   - **Brief**:
+     1. Add ETag / 304 conditional request support to `GET /api/uploads/index` in `routes/uploads.ts` using `getUploadsCacheTag()` in `lib/uploads-index.ts`.
+     2. Update `TEAM_POLL_MS` in `pollBudget.ts` from 6s to 10s.
+     3. Update `scripts/checks/check-chat-delta.ts` to assert updated poll intervals and verify that degraded rate stays well under the 40 req/min ceiling.
+     4. Ensure `ChatTeamPanel.tsx` respects the updated poll interval and backs off when settled.
 
-### Task 4: Gating Review
-- **Role**: `reviewer` | **Tier**: `standard` | **Workstream**: `main`
-- **Depends on**: `[Task 3]`
-- **Write Set**: `[]`
-- **Brief**:
-  Adversarially verify all requirements: delta synchronization correctness, clean TypeScript compilation, full test suite pass (`gates-808.sh`), verified poll budget compliance (≤ 40 req/min in all states), zero visible behavioral regression, and recorded before/after performance measurements.
+3. **Task 3: Verification Harness & Measurement Evidence**
+   - **Role**: `builder`
+   - **Tier**: `junior`
+   - **Workstream**: `main`
+   - **Write Set**: `["scripts/checks/check-chat-rail-payload.ts", "docs/plan/artifacts/chat-rail-payload/README.md"]`
+   - **Depends On**: `[<Task 1 ID>, <Task 2 ID>]`
+   - **Brief**: Create `scripts/checks/check-chat-rail-payload.ts` to measure and assert uncompressed & gzipped byte reductions for `GET /api/chat`, `GET /api/chat/:id/team`, and `GET /api/uploads/index`. Document the before-and-after attribution table in `docs/plan/artifacts/chat-rail-payload/README.md`. Verify that `gates-808.sh` and typechecks pass.
 
----
-
-## 5. Round 4 — fix cycle 1 (round 3's gating review: NEEDS_FIXES)
-
-Round 3's reviewer raised three findings. All three are addressed here; this
-section is also the project's handoff journal, because finding 3 asks for one.
-
-### 5.1 Finding 1 — a fourth polling site was never migrated
-
-`forge-control-web/app/desktop/journal/MentorAgentDeck.tsx` (the Journal
-surface's mentor deck) still called `fetchChat(activeRunId)` on a 3–20s poll, so
-the console-wide claim was false on one surface. It now calls `fetchChatDelta`
-with the cache entry as `prev`, exactly like the other four call sites.
-
-While fixing it, a second unmigrated number turned up and is fixed with it:
-`AgentChatView.tsx` and `ProjectsSurface.tsx` were left on a **3s** transcript
-fallback when `ChatSurface.tsx` moved to 4s. `ChatSurface` disables its own
-detail query while you are drilled in and `AgentChatView` takes over the slot —
-so drilling into a worker put the 5 req/min back that the 4s bump had removed.
-Measured, in a browser, before the fix: **40 req/min at depth 1** against a
-ceiling of 40. After: **35**.
-
-### 5.2 Finding 2 — the poll-budget check was disconnected from the source
-
-`scripts/checks/check-chat-delta.ts` §5 added up hand-copied local constants, so
-it asserted only that arithmetic is arithmetic. New file
-`forge-control-web/app/desktop/chat/pollBudget.ts` now owns every poll period on
-the chat surface; the five components import them, and so does the check. §5a
-additionally pins each constant to a **literal**, because an imported constant
-agrees with the build by construction and would let a poll drift far *under* the
-ceiling unnoticed.
-
-Proven by mutation, not by inspection — `TEAM_POLL_MS` 6s → 1s:
-
-| | round 3's check | round 4's check |
-|---|---|---|
-| assertions red | **0 (ALL PASS)** | **6, exit 1** |
-
-The same round-3 file also carried two real type errors (`last_message_preview` /
-`last_role` assigned `null` against a `string` field) that only universal gate
-item 9, `check-instrument-typecheck.sh`, can see — `tsx` strips types without
-checking them. Fixed; that gate goes from **2 type failures to 1**, and the
-remaining one (`check-deep-link.ts`) is inherited: it fails identically on a
-`git archive` of `main`, which this round verified rather than assumed.
-
-The measurement half of finding 2 — "no actual live/browser measurement was
-taken" — is `docs/plan/aios-console-responsiveness/browser-measurement.md`, with
-raw verdicts under `evidence/`. Headline, same browser, same fixture, same API,
-one tree vs the other: the console's at-rest download rate falls from
-**48,288,843 bytes/min to 317,535**, and the transcript's share of that from
-**48,036,978 to 65,670** (99.86 %).
-
-### 5.3 Finding 3 — the undeclared write (process note)
-
-**Task `084cf8ce` (round 2, "Web Client Delta Sync & Poll Budget Tuning")
-committed `PLAN.md` in `477bbc3`, outside its declared write-set** of
-`forge-control-web/app/api.ts`, `ChatSurface.tsx`, `AgentChatView.tsx` and
-`ProjectsSurface.tsx`. The content was harmless, but it was not declared, and
-the audit protocol says such a write is named rather than noticed later.
-Recorded here, per the reviewer's non-blocking request.
-
-Round 4 declares its own, in the same spirit — this round was seeded with an
-EMPTY write-set, so every path it touched is listed in its final report and in
-§5.4 below.
-
-### 5.4 What round 4 touched
-
-| path | why |
-|---|---|
-| `forge-control-web/app/desktop/chat/pollBudget.ts` | **new** — one home for the surface's poll periods and its ceiling |
-| `forge-control-web/app/desktop/journal/MentorAgentDeck.tsx` | finding 1 — delta poll + shared interval |
-| `forge-control-web/app/desktop/chat/AgentChatView.tsx` | 3s → shared 4s constant (the drilled-budget gap) |
-| `forge-control-web/app/desktop/ProjectsSurface.tsx` | same, two decks |
-| `forge-control-web/app/desktop/ChatSurface.tsx` | its three literals now come from `pollBudget` |
-| `forge-control-web/app/desktop/team/ChatTeamPanel.tsx` | `TEAM_POLL_MS` moved to `pollBudget` (value unchanged) |
-| `forge-control-web/app/desktop/team/PlanKanban.tsx` | `PLAN_POLL_MS` likewise |
-| `forge-control-web/app/desktop/chat/BrowserShots.tsx` | `INDEX_POLL_MS` likewise |
-| `scripts/checks/check-chat-delta.ts` | finding 2 — real constants, literal pins, two type errors fixed |
-| `docs/plan/aios-console-responsiveness/**` | **new** — the browser measurement, its protocol and its raw verdicts |
-| `PLAN.md` | this section (finding 3 asks for a journal note) |
-
-### 5.5 Known, measured, NOT fixed here
-
-The steady-state delta on the 944-entry manager chat is **11,726 bytes**, not the
-"~1.2 KB" §0 predicted. The thread is empty in that response; the size is the
-`RunDetail` envelope, of which **10,128 bytes is the run's `prompt`** — a field
-that never changes after the run is created and rides every poll. Dropping it
-from the delta branch would remove ~86 % of what is left, but the client merges
-`{...run, thread}`, so an absent `prompt` would be dropped from the cache: an
-API shape change, against this round's "no visible behaviour change" constraint.
-Named here as the next lever rather than taken silently.
+4. **Task 4: Adversarial Phase Review**
+   - **Role**: `reviewer`
+   - **Tier**: `standard`
+   - **Workstream**: `main`
+   - **Write Set**: `[]`
+   - **Depends On**: `[<Task 1 ID>, <Task 2 ID>, <Task 3 ID>]`
+   - **Brief**: Review the complete diff across `main`. Check that:
+     - All rail rows render identically (titles, statuses, preview snippets, task progress pills, context gauge, closed badges).
+     - Context occupancy and hover popover display exact token figures without regression.
+     - Payload sizes for `/chat`, `/team`, and `/uploads/index` are significantly reduced.
+     - Poll budget constants and ceiling assertions pass cleanly.
+     - No forbidden files (`ResizableSplit.tsx`, `BrowserShots.tsx`, `TeamRow.tsx`, `AgentActivity.tsx`) were modified.

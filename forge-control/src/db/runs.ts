@@ -96,6 +96,31 @@ function previewOf(thread: ThreadEntry[]): {
   return { text, role: last.role ?? "" };
 }
 
+/**
+ * Trim heavy execution state (subagent trees, canvas snapshots, logs, system prompts)
+ * from a run's metadata for rail list and search responses.
+ *
+ * Preserves ONLY the keys necessary for:
+ *   - Model identity & settings: `model`, `model_resolved`, `effort`
+ *   - Context occupancy gauge & popover: `usage_running`, `usage_last_turn`
+ *
+ * Drops execution baggage like `subagents_v2`, `canvas_snapshot`, `system_prompt`, etc.
+ */
+export function trimRailMetadata(
+  meta: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+    return {};
+  }
+  const out: Record<string, unknown> = {};
+  if (meta.model !== undefined) out.model = meta.model;
+  if (meta.model_resolved !== undefined) out.model_resolved = meta.model_resolved;
+  if (meta.usage_running !== undefined) out.usage_running = meta.usage_running;
+  if (meta.usage_last_turn !== undefined) out.usage_last_turn = meta.usage_last_turn;
+  if (meta.effort !== undefined) out.effort = meta.effort;
+  return out;
+}
+
 export interface RunListPage {
   runs: RunSummary[];
   hasMore: boolean;
@@ -165,7 +190,7 @@ export async function listRuns(
       last_message_preview: pv.text,
       last_role: pv.role,
       archived: row.archived,
-      metadata: row.metadata ?? {},
+      metadata: trimRailMetadata(row.metadata),
     };
   });
   return { runs, hasMore };
@@ -248,7 +273,7 @@ export async function searchRuns(
       last_message_preview: pv.text,
       last_role: pv.role,
       archived: row.archived,
-      metadata: row.metadata ?? {},
+      metadata: trimRailMetadata(row.metadata),
     };
   });
 }
