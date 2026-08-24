@@ -234,12 +234,17 @@ console.log("\n── 3. vncProxyUrl: authenticated loopback proxy URL construct
 check(
   "constructs default loopback vnc.html proxy URL",
   vncProxyUrl(TEST_DIR_ID),
-  `/api/proxy/uploads/${TEST_DIR_ID}/vnc/vnc.html?autoconnect=1&resize=scale`,
+  `/api/proxy/uploads/${TEST_DIR_ID}/vnc/vnc.html?autoconnect=1&resize=scale&path=api/proxy/uploads/${TEST_DIR_ID}/vnc/websockify`,
 );
 check(
   "constructs custom subpath vnc proxy URL",
   vncProxyUrl(TEST_DIR_ID, "vnc_lite.html"),
-  `/api/proxy/uploads/${TEST_DIR_ID}/vnc/vnc_lite.html`,
+  `/api/proxy/uploads/${TEST_DIR_ID}/vnc/vnc_lite.html?path=api/proxy/uploads/${TEST_DIR_ID}/vnc/websockify`,
+);
+check(
+  "path= query param routes the WebSocket canvas back through this proxy, not the origin root",
+  vncProxyUrl(TEST_DIR_ID)?.includes(`path=api/proxy/uploads/${TEST_DIR_ID}/vnc/websockify`),
+  true,
 );
 check("rejects invalid non-12-hex dirId (security boundary)", vncProxyUrl("short"), null);
 check("rejects traversal dirId (security boundary)", vncProxyUrl("../../../etc"), null);

@@ -420,10 +420,23 @@ export function resolveStreamWarning(
 /**
  * Build the authenticated loopback noVNC proxy URL for a run directory.
  * Security boundary: validates dirId against DIR_ID_RE before constructing.
+ *
+ * Appends a `path=` query param noVNC's own UI/vnc_lite.js read via
+ * `WebUtil.getConfigVar('path', 'websockify')` (see /usr/share/novnc/app/ui.js
+ * and vnc_lite.html) to pick the WebSocket URL it opens for the RFB canvas.
+ * Left at its default, that setting builds `ws://<host>/websockify` — the
+ * BARE root path on this origin, which never touches `/api/proxy/...` and so
+ * never reaches this proxy at all. Overriding it to the SAME nested path this
+ * vnc.html document was itself loaded from (with `vnc.html`/`vnc_lite.html`
+ * swapped for `websockify`) is what makes the canvas's WebSocket route back
+ * through the Next.js rewrite and forge-control's upgrade proxy instead of
+ * connecting to nothing at the origin root.
  */
 export function vncProxyUrl(dirId: string, subpath = "vnc.html?autoconnect=1&resize=scale"): string | null {
   if (!DIR_ID_RE.test(dirId)) return null;
   const cleanSub = subpath.replace(/^\/+/, "");
-  return `${PROXY_ROOT}/uploads/${dirId}/vnc/${cleanSub}`;
+  const wsPath = `${PROXY_ROOT.slice(1)}/uploads/${dirId}/vnc/websockify`;
+  const sep = cleanSub.includes("?") ? "&" : "?";
+  return `${PROXY_ROOT}/uploads/${dirId}/vnc/${cleanSub}${sep}path=${wsPath}`;
 }
 

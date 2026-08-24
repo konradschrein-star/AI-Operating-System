@@ -7,7 +7,9 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, WebSocket, type Server } from "node:http";
+import { createHash } from "node:crypto";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -27,6 +29,9 @@ import {
   resolveBrowserState,
   inspectTakeover,
   proxyTakeoverHttp,
+  matchTakeoverUpgradePath,
+  resolveTakeoverUpgradeTarget,
+  handleBrowserTakeoverUpgrade,
   PROFILE_RE,
 } from "./browser-takeover.ts";
 
@@ -384,5 +389,209 @@ describe("proxyTakeoverHttp", () => {
     assert.equal(res.status, 503);
     const body = (await res.json()) as { error?: string; code?: string };
     assert.equal(body.code, "TAKEOVER_UNREACHABLE");
+  });
+});
+
+describe("matchTakeoverUpgradePath", () => {
+  test("matches /api/uploads/browser/:profile/vnc and /vnc/*", () => {
+    assert.deepEqual(matchTakeoverUpgradePath("/api/uploads/browser/perplexity/vnc"), {
+      kind: "profile",
+      id: "perplexity",
+      subpath: "",
+    });
+    assert.deepEqual(matchTakeoverUpgradePath("/api/uploads/browser/perplexity/vnc/websockify"), {
+      kind: "profile",
+      id: "perplexity",
+      subpath: "websockify",
+    });
+  });
+
+  test("matches /api/uploads/:id/vnc and /vnc/* as a run id, not the 'browser' literal", () => {
+    assert.deepEqual(matchTakeoverUpgradePath("/api/uploads/7a0c6432cde4/vnc/websockify"), {
+      kind: "run",
+      id: "7a0c6432cde4",
+      subpath: "websockify",
+    });
+  });
+
+  test("returns null for unrelated paths", () => {
+    assert.equal(matchTakeoverUpgradePath("/api/uploads/7a0c6432cde4/shots"), null);
+    assert.equal(matchTakeoverUpgradePath("/api/health"), null);
+    assert.equal(matchTakeoverUpgradePath("/"), null);
+  });
+});
+
+describe("resolveTakeoverUpgradeTarget", () => {
+  test("rejects an invalid profile name", async () => {
+    const target = await resolveTakeoverUpgradeTarget({ kind: "profile", id: "../bad", subpath: "" });
+    assert.ok("error" in target);
+  });
+
+  test("rejects an out-of-range port even with a valid profile", async () => {
+    const target = await resolveTakeoverUpgradeTarget(
+      { kind: "profile", id: "test", subpath: "" },
+      { targetPort: 8080 },
+    );
+    assert.ok("error" in target);
+  });
+
+  test("accepts a valid profile with an explicit in-range targetPort override", async () => {
+    const target = await resolveTakeoverUpgradeTarget(
+      { kind: "profile", id: "test", subpath: "" },
+      { targetPort: 6943 },
+    );
+    assert.deepEqual(target, { profile: "test", targetPort: 6943 });
+  });
+});
+
+describe("WebSocket-upgrade proxy — real socket, full chain (round 5 fix)", () => {
+  // Round 4's proxyTakeoverHttp only ever proved plain HTTP GET/POST. noVNC's
+  // canvas needs a 101 Switching Protocols handshake, which fetch() cannot
+  // complete. This describe block proves the actual missing piece: a real
+  // WebSocket client opens a connection through an http.Server wired EXACTLY
+  // like index.ts (`server.on("upgrade", (req, socket, head) =>
+  // handleBrowserTakeoverUpgrade(...))`), which must reach a minimal hand-rolled
+  // "fake websockify" server and round-trip an application-level message.
+
+  function decodeClientFrame(buf: Buffer): { opcode: number; payload: Buffer } {
+    const opcode = buf[0] & 0x0f;
+    const second = buf[1];
+    const masked = (second & 0x80) !== 0;
+    let len = second & 0x7f;
+    let offset = 2;
+    if (len === 126) {
+      len = buf.readUInt16BE(2);
+      offset = 4;
+    } else if (len === 127) {
+      len = Number(buf.readBigUInt64BE(2));
+      offset = 10;
+    }
+    let maskKey: Buffer | null = null;
+    if (masked) {
+      maskKey = buf.subarray(offset, offset + 4);
+      offset += 4;
+    }
+    let payload = buf.subarray(offset, offset + len);
+    if (maskKey) {
+      const unmasked = Buffer.alloc(len);
+      for (let i = 0; i < len; i++) unmasked[i] = payload[i] ^ maskKey[i % 4];
+      payload = unmasked;
+    }
+    return { opcode, payload };
+  }
+
+  function encodeServerFrame(opcode: number, payload: Buffer): Buffer {
+    const len = payload.length;
+    let header: Buffer;
+    if (len < 126) {
+      header = Buffer.from([0x80 | opcode, len]);
+    } else if (len < 65536) {
+      header = Buffer.alloc(4);
+      header[0] = 0x80 | opcode;
+      header[1] = 126;
+      header.writeUInt16BE(len, 2);
+    } else {
+      header = Buffer.alloc(10);
+      header[0] = 0x80 | opcode;
+      header[1] = 127;
+      header.writeBigUInt64BE(BigInt(len), 2);
+    }
+    return Buffer.concat([header, payload]);
+  }
+
+  let fakeWebsockify: Server;
+  let proxyServer: Server;
+  const fakePort = 6943; // inside NOVNC_PORT_BASE..+DISPLAY_SPAN, distinct from the HTTP mock's 6942
+  let proxyPort: number;
+
+  before(async () => {
+    // Minimal raw WS echo server standing in for websockify — proves this
+    // repo's OWN chain (index.ts wiring -> browser-takeover.ts), not a real
+    // websockify install, which is not guaranteed present on every dev box.
+    fakeWebsockify = createServer((_req, res) => {
+      res.writeHead(404);
+      res.end();
+    });
+    fakeWebsockify.on("upgrade", (req, socket) => {
+      const key = req.headers["sec-websocket-key"] as string;
+      const accept = createHash("sha1")
+        .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+        .digest("base64");
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      );
+      socket.on("data", (buf: Buffer) => {
+        const frame = decodeClientFrame(buf);
+        if (frame.opcode === 0x8) {
+          socket.end();
+          return;
+        }
+        socket.write(encodeServerFrame(frame.opcode || 0x1, frame.payload));
+      });
+    });
+    await new Promise<void>((resolve) => fakeWebsockify.listen(fakePort, "127.0.0.1", () => resolve()));
+
+    // Wired identically to index.ts's `server.on("upgrade", ...)` — the exact
+    // fix this round adds. `{ targetPort: fakePort }` stands in for what
+    // production gets from inspectTakeover(profile).novnc_port.
+    proxyServer = createServer((_req, res) => {
+      res.writeHead(404);
+      res.end();
+    });
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleBrowserTakeoverUpgrade(req, socket, head, { targetPort: fakePort })
+        .then((handled) => {
+          if (!handled) socket.destroy();
+        })
+        .catch(() => socket.destroy());
+    });
+    await new Promise<void>((resolve) => proxyServer.listen(0, "127.0.0.1", () => resolve()));
+    proxyPort = (proxyServer.address() as AddressInfo).port;
+  });
+
+  after(async () => {
+    await Promise.all([
+      new Promise<void>((resolve) => fakeWebsockify.close(() => resolve())),
+      new Promise<void>((resolve) => proxyServer.close(() => resolve())),
+    ]);
+  });
+
+  test("a real WebSocket client connects through the proxy and round-trips a message", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${proxyPort}/api/uploads/browser/wstest/vnc/websockify`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.addEventListener("open", () => resolve());
+        ws.addEventListener("error", () => reject(new Error("ws error opening connection")));
+      });
+
+      const received = new Promise<string>((resolve, reject) => {
+        ws.addEventListener("message", (ev) => resolve(String(ev.data)));
+        ws.addEventListener("error", () => reject(new Error("ws error awaiting message")));
+      });
+      ws.send("hello-through-the-upgrade-proxy");
+      assert.equal(await received, "hello-through-the-upgrade-proxy");
+    } finally {
+      ws.close();
+    }
+  });
+
+  test("an invalid profile name is rejected before any socket reaches the loopback target", async () => {
+    // "Not_Valid" fails PROFILE_RE (uppercase + underscore) but, unlike "..",
+    // survives WHATWG URL path normalization intact, so this actually
+    // exercises resolveTakeoverUpgradeTarget's rejection rather than a
+    // route mismatch caused by the client normalizing ".." away first.
+    const ws = new WebSocket(`ws://127.0.0.1:${proxyPort}/api/uploads/browser/Not_Valid/vnc/websockify`);
+    await new Promise<void>((resolve) => {
+      ws.addEventListener("error", () => resolve());
+      ws.addEventListener("close", () => resolve());
+      ws.addEventListener("open", () => {
+        ws.close();
+        resolve();
+        assert.fail("connection should not have opened for an invalid profile");
+      });
+    });
   });
 });

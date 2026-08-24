@@ -396,12 +396,12 @@ console.log("\n── vncProxyUrl ───────────────�
 check(
   "valid 12-hex dirId builds authenticated vnc proxy URL",
   vncProxyUrl("7a0c6432cde4"),
-  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc.html?autoconnect=1&resize=scale",
+  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc.html?autoconnect=1&resize=scale&path=api/proxy/uploads/7a0c6432cde4/vnc/websockify",
 );
 check(
   "custom subpath is routed correctly",
   vncProxyUrl("7a0c6432cde4", "vnc_lite.html"),
-  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc_lite.html",
+  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc_lite.html?path=api/proxy/uploads/7a0c6432cde4/vnc/websockify",
 );
 check("invalid dirId yields null (security gate)", vncProxyUrl("invalid-id"), null);
 check("traversal in dirId yields null", vncProxyUrl("../../../etc/passwd"), null);

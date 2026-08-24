@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
+import { handleBrowserTakeoverUpgrade } from "./lib/browser-takeover.ts";
 import { startProbeLoop } from "./lib/accounts.ts";
 import health from "./routes/health.ts";
 import hermes from "./routes/hermes.ts";
@@ -234,7 +235,25 @@ app.route("/webhooks", webhookIn);
 app.route("/api/runs", runControl);
 
 const port = Number(process.env.PORT ?? 7700);
-serve({ fetch: app.fetch, port, hostname: "127.0.0.1" });
+const server = serve({ fetch: app.fetch, port, hostname: "127.0.0.1" });
+
+// Manual browser takeover (round 4/5): @hono/node-server's serve() never
+// registers a Node 'upgrade' listener, so a noVNC WebSocket handshake to
+// /api/uploads/(browser/:profile|:id)/vnc/* would otherwise be silently
+// destroyed by Node's default upgrade handling. handleBrowserTakeoverUpgrade
+// applies the same profile/port security checks as the HTTP proxy and, once
+// they pass, raw-pipes the socket to the loopback websockify instance.
+server.on("upgrade", (req, socket, head) => {
+  handleBrowserTakeoverUpgrade(req, socket, head)
+    .then((handled) => {
+      if (!handled) socket.destroy();
+    })
+    .catch((err: unknown) => {
+      console.error("[browser-takeover] upgrade handling error:", err);
+      socket.destroy();
+    });
+});
+
 console.log(`forge-control listening on 127.0.0.1:${port}`);
 
 // v1.6 Tier-2 phase 4: cron scheduler tick. Single in-process scheduler is

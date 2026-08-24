@@ -13,6 +13,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createConnection } from "node:net";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import type { Duplex } from "node:stream";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -571,4 +573,177 @@ export async function proxyTakeoverHttp(
       { status: 503, headers: { "content-type": "application/json" } },
     );
   }
+}
+
+/**
+ * Round-5 fix: WebSocket-upgrade proxying for the noVNC takeover session.
+ *
+ * `proxyTakeoverHttp` above forwards plain HTTP via `fetch()`, which cannot
+ * complete a `101 Switching Protocols` handshake — noVNC's RFB-over-websockify
+ * canvas connection needs a real WebSocket. `@hono/node-server`'s bare
+ * `serve()` never registers a Node `'upgrade'` listener either, so an
+ * unhandled upgrade socket is destroyed by Node's default behaviour. This
+ * section wires the missing hop: `index.ts` attaches `handleBrowserTakeoverUpgrade`
+ * to the underlying `http.Server`'s `'upgrade'` event, and this function
+ * raw-pipes the socket to the loopback websockify port after applying the
+ * SAME security checks as `proxyTakeoverHttp` (profile regex, loopback-only,
+ * verified noVNC port range).
+ */
+
+export interface TakeoverUpgradeMatch {
+  kind: "profile" | "run";
+  /** Profile name (kind "profile") or run/dir id (kind "run") from the URL. */
+  id: string;
+  /** Path segment(s) after `.../vnc/`, no leading slash. Empty means "websockify". */
+  subpath: string;
+}
+
+// Mirrors the HTTP routes registered in routes/uploads.ts:
+//   ALL /api/uploads/browser/:profile/vnc(/*)?
+//   ALL /api/uploads/:id/vnc(/*)?
+// "browser" is checked first — it is more specific and would otherwise be
+// swallowed by the run-id pattern's `[^/]+` capture.
+const BROWSER_VNC_UPGRADE_RE = /^\/api\/uploads\/browser\/([^/]+)\/vnc\/?(.*)$/;
+const RUN_VNC_UPGRADE_RE = /^\/api\/uploads\/([^/]+)\/vnc\/?(.*)$/;
+
+export function matchTakeoverUpgradePath(pathname: string): TakeoverUpgradeMatch | null {
+  const browserMatch = BROWSER_VNC_UPGRADE_RE.exec(pathname);
+  if (browserMatch) {
+    return { kind: "profile", id: decodeURIComponent(browserMatch[1]), subpath: browserMatch[2] ?? "" };
+  }
+  const runMatch = RUN_VNC_UPGRADE_RE.exec(pathname);
+  if (runMatch) {
+    return { kind: "run", id: decodeURIComponent(runMatch[1]), subpath: runMatch[2] ?? "" };
+  }
+  return null;
+}
+
+export interface TakeoverUpgradeTarget {
+  profile: string;
+  targetPort: number;
+}
+
+export async function resolveTakeoverUpgradeTarget(
+  match: TakeoverUpgradeMatch,
+  options: ProxyTakeoverOptions = {},
+): Promise<TakeoverUpgradeTarget | { error: string }> {
+  let profile: string | null;
+  if (match.kind === "profile") {
+    profile = match.id;
+  } else {
+    profile = await resolveProfileForRun(match.id);
+  }
+
+  if (!profile || !PROFILE_RE.test(profile)) {
+    return { error: `No browser profile found for "${match.id}"` };
+  }
+
+  let targetPort = options.targetPort;
+  if (!targetPort) {
+    const inspection = await inspectTakeover(profile, options.stateRoot);
+    targetPort = inspection.novnc_port;
+  }
+
+  if (
+    !Number.isInteger(targetPort) ||
+    targetPort < NOVNC_PORT_BASE ||
+    targetPort >= NOVNC_PORT_BASE + DISPLAY_SPAN
+  ) {
+    return {
+      error: `Target port ${targetPort} is outside allowed loopback range ${NOVNC_PORT_BASE}-${NOVNC_PORT_BASE + DISPLAY_SPAN - 1}`,
+    };
+  }
+
+  return { profile, targetPort };
+}
+
+/**
+ * Raw-pipes an already-validated WebSocket upgrade to the loopback websockify
+ * instance on `127.0.0.1:${targetPort}`. Node's client-side `http.request`
+ * exposes the outbound handshake as an `'upgrade'` event with the raw duplex
+ * socket, which is the piece `fetch()` cannot do — this mirrors exactly what
+ * `http-proxy`'s `.ws()` does internally (Next.js uses that same library to
+ * proxy `/api/proxy/*` upgrades to this process; see `next.config.mjs`).
+ */
+export function proxyTakeoverUpgrade(
+  req: IncomingMessage,
+  clientSocket: Duplex,
+  head: Buffer,
+  targetPort: number,
+  subpath: string,
+): void {
+  const cleanSubpath = subpath.replace(/^\/+/, "") || "websockify";
+  const rawUrl = req.url ?? "/";
+  const qIndex = rawUrl.indexOf("?");
+  const query = qIndex >= 0 ? rawUrl.slice(qIndex) : "";
+  const targetPath = `/${cleanSubpath}${query}`;
+
+  const outHeaders: Record<string, string | string[]> = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value === undefined || key.toLowerCase() === "host") continue;
+    outHeaders[key] = value;
+  }
+  outHeaders.host = `127.0.0.1:${targetPort}`;
+
+  const proxyReq = httpRequest({
+    host: "127.0.0.1",
+    port: targetPort,
+    method: req.method,
+    path: targetPath,
+    headers: outHeaders,
+  });
+
+  proxyReq.on("upgrade", (proxyRes, proxySocket, proxyHead) => {
+    const headerLines = Object.entries(proxyRes.headers)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}\r\n`)
+      .join("");
+    clientSocket.write(
+      `HTTP/1.1 ${proxyRes.statusCode ?? 101} ${proxyRes.statusMessage ?? "Switching Protocols"}\r\n${headerLines}\r\n`,
+    );
+    if (proxyHead && proxyHead.length > 0) clientSocket.write(proxyHead);
+    if (head && head.length > 0) proxySocket.write(head);
+
+    proxySocket.on("error", () => clientSocket.destroy());
+    clientSocket.on("error", () => proxySocket.destroy());
+    proxySocket.pipe(clientSocket);
+    clientSocket.pipe(proxySocket);
+  });
+
+  proxyReq.on("error", (err: unknown) => {
+    console.error(
+      `[browser-takeover] upgrade proxy to 127.0.0.1:${targetPort} failed:`,
+      (err as Error).message ?? err,
+    );
+    clientSocket.destroy();
+  });
+
+  proxyReq.end();
+}
+
+/**
+ * Entry point wired to the Node `http.Server`'s `'upgrade'` event in
+ * `index.ts`. Returns `false` when the path is not a takeover upgrade at all
+ * (caller should destroy the socket — no other route in this process expects
+ * a raw upgrade), `true` once this function has taken ownership of the
+ * socket (either proxying it or rejecting it with an HTTP status line).
+ */
+export async function handleBrowserTakeoverUpgrade(
+  req: IncomingMessage,
+  socket: Duplex,
+  head: Buffer,
+  options: ProxyTakeoverOptions = {},
+): Promise<boolean> {
+  const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+  const match = matchTakeoverUpgradePath(pathname);
+  if (!match) return false;
+
+  const target = await resolveTakeoverUpgradeTarget(match, options);
+  if ("error" in target) {
+    socket.end(`HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${target.error}`);
+    return true;
+  }
+
+  proxyTakeoverUpgrade(req, socket, head, target.targetPort, match.subpath);
+  return true;
 }
