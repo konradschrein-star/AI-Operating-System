@@ -1,0 +1,757 @@
+{
+  "base": "http://127.0.0.1:7810",
+  "chat": {
+    "id": "2ef126b7-d6d9-4a55-a8e7-d9acf0508645",
+    "title": "okay this is a gigantic task that you'll be running over the night where you'll be finishing up the "
+  },
+  "sse": "aborted (detail query on its 3s fallback)",
+  "window_seconds": 60,
+  "har": {
+    "path": "network-700.har",
+    "entries": 194
+  },
+  "caps": {
+    "/chat/:id/team": 11,
+    "/chat/:id/plan": 3
+  },
+  "panel_visible": {
+    "label": "panel visible, Team tab, both zones",
+    "requests": [
+      {
+        "ms": 10280,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      },
+      {
+        "ms": 11683,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 13527,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 15716,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 16326,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      },
+      {
+        "ms": 19743,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 22391,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      },
+      {
+        "ms": 23675,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 23793,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 27830,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 28442,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      },
+      {
+        "ms": 31880,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 33832,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 34374,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/plan?project_id=f248f9e3-3b40-4470-84b1-39ab518c9496",
+        "endpoint": "/chat/:id/plan"
+      },
+      {
+        "ms": 34385,
+        "method": "GET",
+        "url": "/uploads/index",
+        "endpoint": "/uploads/index"
+      },
+      {
+        "ms": 34499,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      },
+      {
+        "ms": 35912,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 39939,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 40547,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      },
+      {
+        "ms": 43981,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 43997,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 46620,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      },
+      {
+        "ms": 48014,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 52045,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 52682,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      },
+      {
+        "ms": 54177,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 56092,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 58743,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      },
+      {
+        "ms": 60127,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 64168,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 64281,
+        "method": "GET",
+        "url": "/secrets",
+        "endpoint": "/secrets"
+      },
+      {
+        "ms": 64339,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 64394,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/plan?project_id=f248f9e3-3b40-4470-84b1-39ab518c9496",
+        "endpoint": "/chat/:id/plan"
+      },
+      {
+        "ms": 64432,
+        "method": "GET",
+        "url": "/uploads/index",
+        "endpoint": "/uploads/index"
+      },
+      {
+        "ms": 64807,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645/team",
+        "endpoint": "/chat/:id/team"
+      }
+    ],
+    "window_ms": 60002,
+    "total_requests": 35,
+    "total_per_minute": 35,
+    "counts": {
+      "/chat/:id/team": 10,
+      "/chat/:id": 14,
+      "/chat": 6,
+      "/chat/:id/plan": 2,
+      "/uploads/index": 2,
+      "/secrets": 1
+    },
+    "per_minute": {
+      "/chat/:id/team": 10,
+      "/chat/:id": 14,
+      "/chat": 6,
+      "/chat/:id/plan": 2,
+      "/uploads/index": 2,
+      "/secrets": 1
+    }
+  },
+  "panel_collapsed": {
+    "label": "panel collapsed",
+    "requests": [
+      {
+        "ms": 72230,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 74502,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 76260,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 80303,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 84327,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 84651,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 88358,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 92387,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 94818,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 96415,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 100448,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 104488,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 105000,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 108516,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 112544,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 115171,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 116588,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 120613,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 120767,
+        "method": "GET",
+        "url": "/usage/quota",
+        "endpoint": "/usage/quota"
+      },
+      {
+        "ms": 124292,
+        "method": "GET",
+        "url": "/secrets",
+        "endpoint": "/secrets"
+      },
+      {
+        "ms": 124642,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 125344,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 128677,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      }
+    ],
+    "window_ms": 60001,
+    "total_requests": 23,
+    "total_per_minute": 23,
+    "counts": {
+      "/chat/:id": 15,
+      "/chat": 6,
+      "/usage/quota": 1,
+      "/secrets": 1
+    },
+    "per_minute": {
+      "/chat/:id": 15,
+      "/chat": 6,
+      "/usage/quota": 1,
+      "/secrets": 1
+    }
+  },
+  "files_tab": {
+    "label": "Files tab open",
+    "requests": [
+      {
+        "ms": 132702,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 135520,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 136727,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 140763,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 144792,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 145705,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 148817,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 152845,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 155866,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 156882,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 160906,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 164932,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 166019,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 168968,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 173002,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 176190,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 177030,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 181060,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 184301,
+        "method": "GET",
+        "url": "/secrets",
+        "endpoint": "/secrets"
+      },
+      {
+        "ms": 185096,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      },
+      {
+        "ms": 186361,
+        "method": "GET",
+        "url": "/chat?limit=30",
+        "endpoint": "/chat"
+      },
+      {
+        "ms": 189126,
+        "method": "GET",
+        "url": "/chat/2ef126b7-d6d9-4a55-a8e7-d9acf0508645?since=979",
+        "endpoint": "/chat/:id"
+      }
+    ],
+    "window_ms": 60001,
+    "total_requests": 22,
+    "total_per_minute": 22,
+    "counts": {
+      "/chat/:id": 15,
+      "/chat": 6,
+      "/secrets": 1
+    },
+    "per_minute": {
+      "/chat/:id": 15,
+      "/chat": 6,
+      "/secrets": 1
+    }
+  },
+  "zone_slot": {
+    "phase700": {
+      "team": 10,
+      "plan": 2,
+      "sum": 12
+    },
+    "pre_v3": {
+      "file": "managers-network-baseline.json",
+      "sum": 24.8
+    },
+    "phase500": {
+      "file": "team-network-after.json",
+      "team": 12
+    }
+  },
+  "results": [
+    {
+      "name": "chat",
+      "note": {
+        "id": "2ef126b7-d6d9-4a55-a8e7-d9acf0508645",
+        "title": "okay this is a gigantic task that you'll be running over the night where you'll be finishing up the "
+      }
+    },
+    {
+      "name": "with the Files tab open, the Team zones are",
+      "note": {
+        "team_panel": false,
+        "plan_zone": false
+      }
+    },
+    {
+      "name": "the team zone is unmounted on the Files tab",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "the plan zone is unmounted on the Files tab",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "window 1 — panel visible",
+      "note": {
+        "total_per_minute": 35,
+        "per_minute": {
+          "/chat/:id/team": 10,
+          "/chat/:id": 14,
+          "/chat": 6,
+          "/chat/:id/plan": 2,
+          "/uploads/index": 2,
+          "/secrets": 1
+        }
+      }
+    },
+    {
+      "name": "window 2 — panel collapsed",
+      "note": {
+        "total_per_minute": 23,
+        "per_minute": {
+          "/chat/:id": 15,
+          "/chat": 6,
+          "/usage/quota": 1,
+          "/secrets": 1
+        }
+      }
+    },
+    {
+      "name": "window 3 — Files tab",
+      "note": {
+        "total_per_minute": 22,
+        "per_minute": {
+          "/chat/:id": 15,
+          "/chat": 6,
+          "/secrets": 1
+        }
+      }
+    },
+    {
+      "name": "the two zone polls",
+      "note": {
+        "team": 10,
+        "plan": 2,
+        "sum": 12
+      }
+    },
+    {
+      "name": "/chat/:id/team <= 11/min (6s poll)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "/chat/:id/plan <= 3/min (30s poll)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the pre-v3 baseline file is readable",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "pre-v3 panel slot (/agents 4s + /projects/board 6s)",
+      "note": {
+        "file": "/opt/ai-os/workspace/projects/f248f9e3-3b40-4470-84b1-39ab518c9496/docs/plan/artifacts/phase400/managers-network-baseline.json",
+        "per_minute": {
+          "agents": 15.2,
+          "board": 9.6
+        },
+        "sum": 24.8
+      }
+    },
+    {
+      "name": "the v3 panel slot costs less than the pre-v3 slot it replaced",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the phase 500 baseline file is readable",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "phase 500 (one zone, same slot)",
+      "note": {
+        "file": "/opt/ai-os/workspace/projects/f248f9e3-3b40-4470-84b1-39ab518c9496/docs/plan/artifacts/phase500/team-network-after.json",
+        "team_per_minute": 12,
+        "total_per_minute": 40
+      }
+    },
+    {
+      "name": "phase 500 recorded a whole-surface total to compare against",
+      "ok": true,
+      "actual": "number",
+      "expected": "number"
+    },
+    {
+      "name": "whole-surface total, this build vs phase 500",
+      "note": {
+        "phase700": 35,
+        "phase500_recorded": 40,
+        "delta": -5
+      }
+    },
+    {
+      "name": "whole-surface total <= phase 500's recorded total (40/min) — same ceiling as nav-walk.cjs P3",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "zone requests while collapsed",
+      "note": []
+    },
+    {
+      "name": "zone requests on the Files tab",
+      "note": []
+    },
+    {
+      "name": "ZERO zone polls while the panel is collapsed",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "ZERO zone polls while the Files tab is open",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "HAR",
+      "note": {
+        "path": "/tmp/r4-net700/network-700.har",
+        "entries": 194,
+        "bytes": 554814
+      }
+    },
+    {
+      "name": "the HAR was written",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the HAR has entries",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    }
+  ],
+  "verdict": "PASS"
+}

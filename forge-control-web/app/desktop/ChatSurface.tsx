@@ -46,6 +46,11 @@ import {
 } from "../api";
 import { useAttachments, AttachmentChips, HiddenFileInput } from "./chat/useAttachments";
 import { useAutogrow } from "./chat/useAutogrow";
+import {
+  CHAT_DETAIL_FALLBACK_POLL_MS,
+  CHAT_DETAIL_LIVE_POLL_MS,
+  CHAT_LIST_POLL_MS,
+} from "./chat/pollBudget";
 import { effortRamp } from "./chat/effort-ramp";
 import { FileExplorerPanel } from "./chat/FileExplorerPanel";
 import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
@@ -426,7 +431,7 @@ export function ChatSurface({
     // sideways, not down, and back to the 7.5 that prints as 7 or 8 and made
     // the last two rounds argue about a rounded integer. A poll nobody needs
     // faster is not worth 1.5 req/min of the ceiling.
-    refetchInterval: 10_000,
+    refetchInterval: CHAT_LIST_POLL_MS,
   });
   /* ── selId and navStack: two different questions (U21, 13 §2) ───────────
    *
@@ -789,7 +794,12 @@ export function ChatSurface({
     enabled: !!selId && !composing && navStack.length === 0,
     // 4000ms fallback (was 3000ms) keeps the degraded (stream-down) budget
     // at <= 36 req/min against the 40 req/min ceiling ChatTeamPanel documents.
-    refetchInterval: live ? 20000 : 4000,
+    // Both periods come from ./chat/pollBudget, which every other transcript
+    // on every other surface reads too — a drilled view swaps its query for
+    // this one, so they may not disagree.
+    refetchInterval: live
+      ? CHAT_DETAIL_LIVE_POLL_MS
+      : CHAT_DETAIL_FALLBACK_POLL_MS,
   });
 
   const createM = useMutation({

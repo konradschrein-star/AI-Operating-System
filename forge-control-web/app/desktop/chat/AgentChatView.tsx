@@ -50,6 +50,10 @@ import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import { fetchChatDelta, type RunDetail, type RunStatus, type ThreadEntry } from "../../api";
+import {
+  CHAT_DETAIL_FALLBACK_POLL_MS,
+  CHAT_DETAIL_LIVE_POLL_MS,
+} from "./pollBudget";
 import { AssistantThread } from "./AssistantThread";
 import { OrientationStrip } from "./OrientationStrip";
 import { StorySoFar } from "./StorySoFar";
@@ -419,7 +423,15 @@ export function AgentChatView({
         frame.runId,
         qc.getQueryData<RunDetail>(["chat", "run", frame.runId]),
       ),
-    refetchInterval: live ? 20000 : 3000,
+    /* The same two periods ChatSurface's own detail query runs at, from
+     * ./pollBudget. They have to BE the same: ChatSurface disables its query
+     * while you are drilled in and this one takes over the slot, so a 3s here
+     * against a 4s there meant the surface's degraded rate rose by 5 req/min
+     * the moment you clicked a worker — the drilled budget was 40/min while
+     * the number everyone quoted was 36. */
+    refetchInterval: live
+      ? CHAT_DETAIL_LIVE_POLL_MS
+      : CHAT_DETAIL_FALLBACK_POLL_MS,
   });
 
   const run = detailQ.data ?? null;

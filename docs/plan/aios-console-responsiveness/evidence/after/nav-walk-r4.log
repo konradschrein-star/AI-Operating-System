@@ -1,0 +1,30 @@
+PASS  L0 no drilled view is open
+PASS  L0 the team tree is ready
+      L0 team rows: 20
+      target worker / sub-agent: {"worker":"58096061-803e-43c5-827a-e618d2a9c33e","sub":"toolu_01KAFV63fapZ6DXAAU2adfww"}
+PASS  L1 the drilled view is the clicked worker
+PASS  L1 depth is 1
+PASS  L1 it is classified as a whole session
+PASS  L1 header role == the API's metadata.role, rendered
+PASS  L1 header model == the API's model_resolved, rendered
+PASS  L1 back points at the manager chat
+PASS  L1a the team panel still shows the MANAGER's tree (selId did not move)
+PASS  L1a the panel's state did not change either
+      L1 raw wire identity: {"role":"architect","model":"claude-sonnet-4-6","status":"completed","title":"canvas-ux · Plan: canvas-ux"}
+      L1 crumbs: "manager chat › Plan: canvas-ux"
+PASS  L2 depth is 2
+PASS  L2 the frame carries the sub-agent's tool_use_id
+PASS  L2 the frame still FETCHES the parent worker
+PASS  L2 it is classified as an in-process sub-agent
+PASS  L2 header role == the sub-agent's own, rendered
+PASS  L2 header model == the sub-agent's own, rendered
+PASS  L2a the team panel STILL shows the MANAGER's tree
+PASS  L2 back no longer points at the manager
+      L2 raw wire identity: {"role":"scout","model":"claude-sonnet-4-6","source":"spawn_call","description":"Scout canvas-ux existing code"}
+      L2 crumbs: "manager chat › Plan: canvas-ux › Scout canvas-ux existing code"
+PASS  L1/L2 identity is NOT inherited — the two levels differ in role or model
+FAIL: page.reload: Timeout 60000ms exceeded.
+Call log:
+  - waiting for navigation until "networkidle"
+    - navigated to "http://127.0.0.1:7810/desktop"
+

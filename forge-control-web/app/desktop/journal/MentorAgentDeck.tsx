@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import {
   fetchChatList,
-  fetchChat,
+  fetchChatDelta,
   createChat,
   sendChatMessage,
   type RunDetail,
@@ -14,6 +14,10 @@ import {
 import { AssistantThread } from "../chat/AssistantThread";
 import { useRunEvents } from "../chat/useRunEvents";
 import { useAutogrow } from "../chat/useAutogrow";
+import {
+  CHAT_DETAIL_FALLBACK_POLL_MS,
+  CHAT_DETAIL_LIVE_POLL_MS,
+} from "../chat/pollBudget";
 
 const COMPOSER_ROWS = { minRows: 2, maxRows: 6 };
 
@@ -110,9 +114,19 @@ export function MentorAgentDeck({
     refetch: refetchDetail,
   } = useQuery<RunDetail, Error>({
     queryKey: ["chat", "run", activeRunId],
-    queryFn: () => fetchChat(activeRunId!),
+    /* Delta poll, same key namespace and same merge rules as ChatSurface's
+     * detailQ (see fetchChatDelta's own doc). A mentor debrief grows into the
+     * hundreds of entries like any other thread, and this deck was the one
+     * transcript in the codebase still re-downloading all of it every tick. */
+    queryFn: () =>
+      fetchChatDelta(
+        activeRunId!,
+        queryClient.getQueryData<RunDetail>(["chat", "run", activeRunId]),
+      ),
     enabled: !!activeRunId,
-    refetchInterval: live ? 20_000 : 3_000,
+    refetchInterval: live
+      ? CHAT_DETAIL_LIVE_POLL_MS
+      : CHAT_DETAIL_FALLBACK_POLL_MS,
   });
 
   // Mutations

@@ -27,6 +27,24 @@
 import { gzipSync } from "node:zlib";
 import { parseSinceParam, chatDeltaResponse } from "../../forge-control/src/routes/chat.ts";
 import type { RunDetail, ThreadEntry } from "../../forge-control/src/db/runs.ts";
+/* THE REAL CONSTANTS THE SURFACE POLLS AT — imported, never copied. Round 3 of
+ * this project hand-copied them into local `const`s here, which made section 5
+ * an assertion that arithmetic is arithmetic: `TEAM_POLL_MS` could have gone to
+ * 1s and every line below would still have printed PASS. See §5's own header
+ * for why each one is ALSO asserted against a literal. */
+import {
+  CHAT_DETAIL_FALLBACK_POLL_MS,
+  CHAT_DETAIL_LIVE_POLL_MS,
+  CHAT_LIST_POLL_MS,
+  CHAT_SURFACE_REQ_PER_MIN_CEILING,
+  PLAN_POLL_MS,
+  SHOTS_INDEX_POLL_MS,
+  TEAM_POLL_MS,
+} from "../../forge-control-web/app/desktop/chat/pollBudget.ts";
+import {
+  SECRETS_FALLBACK_POLL_MS,
+  secretsPollInterval,
+} from "../../forge-control-web/app/desktop/chat/secretLive.ts";
 
 let failures = 0;
 
@@ -77,8 +95,13 @@ function makeFixtureRun(threadLength = 3): RunDetail {
     updated_at: "2026-08-24T00:10:00.000Z",
     last_heartbeat_at: "2026-08-24T00:10:00.000Z",
     message_count: threadLength,
-    last_message_preview: threadLength > 0 ? thread[threadLength - 1].content.slice(0, 50) : null,
-    last_role: threadLength > 0 ? thread[threadLength - 1].role : null,
+    /* `""`, not `null`: `RunDetail` declares both as `string`
+     * (forge-control/src/db/runs.ts:68-69), and `makeFixtureRun(0)` — which
+     * §4's `largeRun` calls — took the empty branch. `tsx` strips types without
+     * checking them, so round 3 shipped two real type errors that only
+     * `check-instrument-typecheck.sh` (universal gate item 9) could see. */
+    last_message_preview: threadLength > 0 ? thread[threadLength - 1].content.slice(0, 50) : "",
+    last_role: threadLength > 0 ? thread[threadLength - 1].role : "",
     archived: false,
     metadata: { manager: true, channel: "desktop" },
     prompt: "Coordinate system updates and manage tasks",
@@ -264,51 +287,113 @@ checkTrue("gzipped payload reduction exceeds 95%", parseFloat(gzippedReductionPc
  * SECTION 4: Chat Surface Poll Budget Verification
  * ══════════════════════════════════════════════════════════════════════════ */
 
-console.log("\n── 5. Chat surface poll budget verification (≤ 40 req/min ceiling) ────");
+console.log("\n── 5a. The poll constants themselves, against their own literals ──────");
 
-// Breakdown of request poll rates per minute on the full desktop chat surface
-const RUN_LIST_POLL_INTERVAL_S = 10;
-const TEAM_PANEL_POLL_INTERVAL_S = 6;
-const SHOTS_POLL_INTERVAL_S = 30;
-const PLAN_KANBAN_POLL_INTERVAL_S = 30;
-const SECRETS_POLL_INTERVAL_S = 60;
+/* WHY THESE NINE LINES EXIST, and why they are not the same assertion twice.
+ *
+ * Section 5b adds up the REAL constants, imported from
+ * `forge-control-web/app/desktop/chat/pollBudget.ts` — so a poll that gets
+ * faster raises the totals below and breaks the ceiling assertion. That is the
+ * regression the round-3 version could not see, because it added up local
+ * copies.
+ *
+ * But an imported constant makes the arithmetic agree with the code by
+ * construction, and a build could still drift a long way UNDER the ceiling —
+ * team 6s → 20s halves the surface's freshness and every total below just gets
+ * smaller and passes. So each constant is ALSO pinned to a LITERAL here. The
+ * literal is the committed decision; the import is the live value; a round that
+ * moves one has to come and move the other, in this file, deliberately. */
+check("CHAT_LIST_POLL_MS is 10s", CHAT_LIST_POLL_MS, 10_000);
+check("CHAT_DETAIL_LIVE_POLL_MS is 20s", CHAT_DETAIL_LIVE_POLL_MS, 20_000);
+check("CHAT_DETAIL_FALLBACK_POLL_MS is 4s", CHAT_DETAIL_FALLBACK_POLL_MS, 4_000);
+check("TEAM_POLL_MS is 6s", TEAM_POLL_MS, 6_000);
+check("PLAN_POLL_MS is 30s", PLAN_POLL_MS, 30_000);
+check("SHOTS_INDEX_POLL_MS is 30s", SHOTS_INDEX_POLL_MS, 30_000);
+check("SECRETS_FALLBACK_POLL_MS is 60s", SECRETS_FALLBACK_POLL_MS, 60_000);
+check("committed ceiling is 40 req/min", CHAT_SURFACE_REQ_PER_MIN_CEILING, 40);
+check("secrets poll costs nothing while its stream is up", secretsPollInterval(true), false);
+check("secrets poll falls back to 60s with the stream down", secretsPollInterval(false), 60_000);
 
-const runListReqPerMin = 60 / RUN_LIST_POLL_INTERVAL_S;       // 6 req/min
-const teamPanelReqPerMin = 60 / TEAM_PANEL_POLL_INTERVAL_S;   // 10 req/min
-const shotsReqPerMin = 60 / SHOTS_POLL_INTERVAL_S;           // 2 req/min
-const planKanbanReqPerMin = 60 / PLAN_KANBAN_POLL_INTERVAL_S; // 2 req/min
-const secretsReqPerMin = 60 / SECRETS_POLL_INTERVAL_S;       // 1 req/min
+console.log("\n── 5b. Chat surface poll budget (from the real constants) ─────────────");
 
-// Healthy steady state (SSE live): detailQ refetchInterval is 20,000ms (20s)
-const HEALTHY_DETAIL_POLL_INTERVAL_S = 20;
-const healthyDetailReqPerMin = 60 / HEALTHY_DETAIL_POLL_INTERVAL_S; // 3 req/min
-const totalHealthyReqPerMin =
-  runListReqPerMin + healthyDetailReqPerMin + teamPanelReqPerMin + shotsReqPerMin + planKanbanReqPerMin;
+const perMin = (intervalMs: number): number => 60_000 / intervalMs;
 
-// Degraded fallback state (SSE down): detailQ refetchInterval tuned to 4,000ms (4s)
-const DEGRADED_DETAIL_POLL_INTERVAL_S = 4;
-const degradedDetailReqPerMin = 60 / DEGRADED_DETAIL_POLL_INTERVAL_S; // 15 req/min
+const runListReqPerMin = perMin(CHAT_LIST_POLL_MS);       // 6 req/min
+const teamPanelReqPerMin = perMin(TEAM_POLL_MS);          // 10 req/min
+const shotsReqPerMin = perMin(SHOTS_INDEX_POLL_MS);       // 2 req/min
+const planKanbanReqPerMin = perMin(PLAN_POLL_MS);         // 2 req/min
+const secretsReqPerMin = perMin(SECRETS_FALLBACK_POLL_MS); // 1 req/min
+
+/** Everything on the surface except the open transcript, which is the only
+ *  poll whose period depends on the stream. */
+const panelsReqPerMin =
+  runListReqPerMin + teamPanelReqPerMin + shotsReqPerMin + planKanbanReqPerMin;
+
+// Healthy steady state (SSE live): the transcript idles at CHAT_DETAIL_LIVE_POLL_MS
+// and the secrets query costs nothing at all (server push, round 808).
+const healthyDetailReqPerMin = perMin(CHAT_DETAIL_LIVE_POLL_MS); // 3 req/min
+const totalHealthyReqPerMin = panelsReqPerMin + healthyDetailReqPerMin;
+
+// Degraded fallback state (SSE down): transcript at CHAT_DETAIL_FALLBACK_POLL_MS,
+// and the secrets query degrades to its 60s poll.
+const degradedDetailReqPerMin = perMin(CHAT_DETAIL_FALLBACK_POLL_MS); // 15 req/min
 const totalDegradedReqPerMin =
-  runListReqPerMin + degradedDetailReqPerMin + teamPanelReqPerMin + shotsReqPerMin + planKanbanReqPerMin + secretsReqPerMin;
+  panelsReqPerMin + degradedDetailReqPerMin + secretsReqPerMin;
 
-// Previous degraded fallback state (refetchInterval was 3,000ms = 3s)
-const PREV_DEGRADED_DETAIL_POLL_INTERVAL_S = 3;
-const prevDegradedDetailReqPerMin = 60 / PREV_DEGRADED_DETAIL_POLL_INTERVAL_S; // 20 req/min
+/* DRILLED (depth 1), degraded. ChatSurface disables its own detail query while
+ * `navStack` is non-empty and AgentChatView runs one in its place — so the
+ * drilled total is the depth-0 total ONLY IF both read the same constant. They
+ * did not until round 4: AgentChatView was left on a 3s literal while
+ * ChatSurface moved to 4s, so clicking a worker quietly cost 5 req/min more
+ * than the number this section reported. One constant, one total, asserted. */
+const drilledDetailReqPerMin = perMin(CHAT_DETAIL_FALLBACK_POLL_MS);
+const totalDrilledDegradedReqPerMin =
+  panelsReqPerMin + drilledDetailReqPerMin + secretsReqPerMin;
+
+/* The counterexample, and the one number here that is deliberately a LITERAL:
+ * 3s is history, not a live value, and importing anything for it would make it
+ * move when the build moves. */
+const PREV_DEGRADED_DETAIL_POLL_MS = 3_000;
 const prevTotalDegradedReqPerMin =
-  runListReqPerMin + prevDegradedDetailReqPerMin + teamPanelReqPerMin + shotsReqPerMin + planKanbanReqPerMin + secretsReqPerMin;
+  panelsReqPerMin + perMin(PREV_DEGRADED_DETAIL_POLL_MS) + secretsReqPerMin;
 
-console.log(`Committed Chat Surface Ceiling: ≤ 40 req/min`);
-console.log(`Healthy steady-state rate:      ${totalHealthyReqPerMin} req/min (List 6 + Detail 3 + Team 10 + Shots 2 + Plan 2)`);
-console.log(`Degraded fallback rate (4s):    ${totalDegradedReqPerMin} req/min (List 6 + Detail 15 + Team 10 + Shots 2 + Plan 2 + Secrets 1)`);
-console.log(`Previous degraded rate (3s):    ${prevTotalDegradedReqPerMin} req/min (Violated ceiling: ${prevTotalDegradedReqPerMin} > 40)`);
+console.log(`Committed Chat Surface Ceiling: ≤ ${CHAT_SURFACE_REQ_PER_MIN_CEILING} req/min`);
+console.log(`Healthy steady-state rate:      ${totalHealthyReqPerMin} req/min (List ${runListReqPerMin} + Detail ${healthyDetailReqPerMin} + Team ${teamPanelReqPerMin} + Shots ${shotsReqPerMin} + Plan ${planKanbanReqPerMin})`);
+console.log(`Degraded fallback rate (4s):    ${totalDegradedReqPerMin} req/min (List ${runListReqPerMin} + Detail ${degradedDetailReqPerMin} + Team ${teamPanelReqPerMin} + Shots ${shotsReqPerMin} + Plan ${planKanbanReqPerMin} + Secrets ${secretsReqPerMin})`);
+console.log(`Degraded, drilled to depth 1:   ${totalDrilledDegradedReqPerMin} req/min (AgentChatView's transcript in place of ChatSurface's)`);
+console.log(`Previous degraded rate (3s):    ${prevTotalDegradedReqPerMin} req/min (Violated ceiling: ${prevTotalDegradedReqPerMin} > ${CHAT_SURFACE_REQ_PER_MIN_CEILING})`);
 
 check("healthy poll rate equals 23 req/min", totalHealthyReqPerMin, 23);
-checkTrue("healthy poll rate is under 40 req/min ceiling", totalHealthyReqPerMin <= 40);
+checkTrue(
+  "healthy poll rate is under the committed ceiling",
+  totalHealthyReqPerMin <= CHAT_SURFACE_REQ_PER_MIN_CEILING,
+);
 
 check("degraded fallback poll rate equals 36 req/min", totalDegradedReqPerMin, 36);
-checkTrue("degraded fallback poll rate is under 40 req/min ceiling", totalDegradedReqPerMin <= 40);
+checkTrue(
+  "degraded fallback poll rate is under the committed ceiling",
+  totalDegradedReqPerMin <= CHAT_SURFACE_REQ_PER_MIN_CEILING,
+);
+
+check("drilled degraded poll rate equals 36 req/min", totalDrilledDegradedReqPerMin, 36);
+check(
+  "drilling in does not change the surface's request rate",
+  totalDrilledDegradedReqPerMin,
+  totalDegradedReqPerMin,
+);
 
 checkTrue("previous 3s fallback violated ceiling (> 40 req/min)", prevTotalDegradedReqPerMin > 40);
+
+/* The measured counterpart to all of the above. Arithmetic cannot see a poll
+ * that keeps running when its panel is hidden, a retry storm, or a request
+ * nobody counted — a browser can, and this project's numbers were taken by one:
+ * `docs/plan/aios-console-responsiveness/browser-measurement.md` records
+ * `docs/plan/aios-console-responsiveness/depth-poll-r4.cjs` (three 60s windows
+ * — at rest, depth 1, depth 2 — on a build of this branch AND on a build of
+ * main, in the same browser) and `docs/plan/artifacts/phase700/network-700.cjs`
+ * (NFU3, unmodified, ALL PASS). Measured: 39 → 35 req/min at rest, 40 → 35
+ * drilled, and 48,036,978 → 65,670 transcript body bytes per minute. This check
+ * is the drift guard between those runs; it is not a substitute for them. */
 
 /* ════════════════════════════════════════════════════════════════════════════
  * SUMMARY

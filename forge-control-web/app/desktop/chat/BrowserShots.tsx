@@ -316,8 +316,10 @@ async function fetchRunShots(dirId: string): Promise<UploadsShot[]> {
   return body.shots;
 }
 
-/** 30s, as briefed. One key, therefore one poll for the whole page. */
-const INDEX_POLL_MS = 30_000;
+/** 30s, as briefed. One key, therefore one poll for the whole page. The
+ *  number itself lives in ./pollBudget with the surface's other polls, so the
+ *  budget check can add up the real ones. */
+import { SHOTS_INDEX_POLL_MS as INDEX_POLL_MS } from "./pollBudget";
 
 /**
  * The shared index: `12-hex dir id → how many images it holds`.

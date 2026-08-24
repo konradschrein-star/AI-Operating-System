@@ -150,7 +150,6 @@ import {
   PLAN_FRACTION_MAX,
   PLAN_FRACTION_MIN,
 } from "./plan-split";
-
 /** NFU3: one poll, 6s, paused whenever the panel is not visible.
  *
  *  ROUND 705 moved this out from 5s. Not because 5s was wrong on its own —
@@ -160,8 +159,12 @@ import {
  *  in ./PlanKanban.tsx puts the total back on exactly 40 while the panel's own
  *  slot drops from 16 to 12 req/min. A team tree that refreshes every 6s
  *  instead of every 5s is not a legibility loss; a surface that quietly
- *  outgrows its own committed poll ceiling is. */
-const TEAM_POLL_MS = 6_000;
+ *  outgrows its own committed poll ceiling is.
+ *
+ *  The number itself moved to `../chat/pollBudget` in round 4 of
+ *  aios-console-responsiveness — unchanged, but somewhere the poll-budget
+ *  check can import instead of hand-copying. */
+import { TEAM_POLL_MS } from "../chat/pollBudget";
 
 /** Capabilities are a session-lifetime constant — the flags only move when the
  *  engine lane deploys, which reloads the page anyway. */

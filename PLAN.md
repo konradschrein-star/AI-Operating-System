@@ -144,3 +144,95 @@ graph TD
 - **Write Set**: `[]`
 - **Brief**:
   Adversarially verify all requirements: delta synchronization correctness, clean TypeScript compilation, full test suite pass (`gates-808.sh`), verified poll budget compliance (≤ 40 req/min in all states), zero visible behavioral regression, and recorded before/after performance measurements.
+
+---
+
+## 5. Round 4 — fix cycle 1 (round 3's gating review: NEEDS_FIXES)
+
+Round 3's reviewer raised three findings. All three are addressed here; this
+section is also the project's handoff journal, because finding 3 asks for one.
+
+### 5.1 Finding 1 — a fourth polling site was never migrated
+
+`forge-control-web/app/desktop/journal/MentorAgentDeck.tsx` (the Journal
+surface's mentor deck) still called `fetchChat(activeRunId)` on a 3–20s poll, so
+the console-wide claim was false on one surface. It now calls `fetchChatDelta`
+with the cache entry as `prev`, exactly like the other four call sites.
+
+While fixing it, a second unmigrated number turned up and is fixed with it:
+`AgentChatView.tsx` and `ProjectsSurface.tsx` were left on a **3s** transcript
+fallback when `ChatSurface.tsx` moved to 4s. `ChatSurface` disables its own
+detail query while you are drilled in and `AgentChatView` takes over the slot —
+so drilling into a worker put the 5 req/min back that the 4s bump had removed.
+Measured, in a browser, before the fix: **40 req/min at depth 1** against a
+ceiling of 40. After: **35**.
+
+### 5.2 Finding 2 — the poll-budget check was disconnected from the source
+
+`scripts/checks/check-chat-delta.ts` §5 added up hand-copied local constants, so
+it asserted only that arithmetic is arithmetic. New file
+`forge-control-web/app/desktop/chat/pollBudget.ts` now owns every poll period on
+the chat surface; the five components import them, and so does the check. §5a
+additionally pins each constant to a **literal**, because an imported constant
+agrees with the build by construction and would let a poll drift far *under* the
+ceiling unnoticed.
+
+Proven by mutation, not by inspection — `TEAM_POLL_MS` 6s → 1s:
+
+| | round 3's check | round 4's check |
+|---|---|---|
+| assertions red | **0 (ALL PASS)** | **6, exit 1** |
+
+The same round-3 file also carried two real type errors (`last_message_preview` /
+`last_role` assigned `null` against a `string` field) that only universal gate
+item 9, `check-instrument-typecheck.sh`, can see — `tsx` strips types without
+checking them. Fixed; that gate goes from **2 type failures to 1**, and the
+remaining one (`check-deep-link.ts`) is inherited: it fails identically on a
+`git archive` of `main`, which this round verified rather than assumed.
+
+The measurement half of finding 2 — "no actual live/browser measurement was
+taken" — is `docs/plan/aios-console-responsiveness/browser-measurement.md`, with
+raw verdicts under `evidence/`. Headline, same browser, same fixture, same API,
+one tree vs the other: the console's at-rest download rate falls from
+**48,288,843 bytes/min to 317,535**, and the transcript's share of that from
+**48,036,978 to 65,670** (99.86 %).
+
+### 5.3 Finding 3 — the undeclared write (process note)
+
+**Task `084cf8ce` (round 2, "Web Client Delta Sync & Poll Budget Tuning")
+committed `PLAN.md` in `477bbc3`, outside its declared write-set** of
+`forge-control-web/app/api.ts`, `ChatSurface.tsx`, `AgentChatView.tsx` and
+`ProjectsSurface.tsx`. The content was harmless, but it was not declared, and
+the audit protocol says such a write is named rather than noticed later.
+Recorded here, per the reviewer's non-blocking request.
+
+Round 4 declares its own, in the same spirit — this round was seeded with an
+EMPTY write-set, so every path it touched is listed in its final report and in
+§5.4 below.
+
+### 5.4 What round 4 touched
+
+| path | why |
+|---|---|
+| `forge-control-web/app/desktop/chat/pollBudget.ts` | **new** — one home for the surface's poll periods and its ceiling |
+| `forge-control-web/app/desktop/journal/MentorAgentDeck.tsx` | finding 1 — delta poll + shared interval |
+| `forge-control-web/app/desktop/chat/AgentChatView.tsx` | 3s → shared 4s constant (the drilled-budget gap) |
+| `forge-control-web/app/desktop/ProjectsSurface.tsx` | same, two decks |
+| `forge-control-web/app/desktop/ChatSurface.tsx` | its three literals now come from `pollBudget` |
+| `forge-control-web/app/desktop/team/ChatTeamPanel.tsx` | `TEAM_POLL_MS` moved to `pollBudget` (value unchanged) |
+| `forge-control-web/app/desktop/team/PlanKanban.tsx` | `PLAN_POLL_MS` likewise |
+| `forge-control-web/app/desktop/chat/BrowserShots.tsx` | `INDEX_POLL_MS` likewise |
+| `scripts/checks/check-chat-delta.ts` | finding 2 — real constants, literal pins, two type errors fixed |
+| `docs/plan/aios-console-responsiveness/**` | **new** — the browser measurement, its protocol and its raw verdicts |
+| `PLAN.md` | this section (finding 3 asks for a journal note) |
+
+### 5.5 Known, measured, NOT fixed here
+
+The steady-state delta on the 944-entry manager chat is **11,726 bytes**, not the
+"~1.2 KB" §0 predicted. The thread is empty in that response; the size is the
+`RunDetail` envelope, of which **10,128 bytes is the run's `prompt`** — a field
+that never changes after the run is created and rides every poll. Dropping it
+from the delta branch would remove ~86 % of what is left, but the client merges
+`{...run, thread}`, so an absent `prompt` would be dropped from the cache: an
+API shape change, against this round's "no visible behaviour change" constraint.
+Named here as the next lever rather than taken silently.

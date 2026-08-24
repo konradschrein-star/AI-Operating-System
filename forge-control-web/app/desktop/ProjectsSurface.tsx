@@ -36,6 +36,10 @@ import {
 } from "../api-perf";
 import { useRunEvents } from "./chat/useRunEvents";
 import { AssistantThread } from "./chat/AssistantThread";
+import {
+  CHAT_DETAIL_FALLBACK_POLL_MS,
+  CHAT_DETAIL_LIVE_POLL_MS,
+} from "./chat/pollBudget";
 /* Opening a card's chat on the CHAT surface goes through the shared helper
  * rather than a second copy of the same three localStorage writes — see the
  * note above `navigateToChat`. It arrived on main in the autonomy lane and
@@ -1393,7 +1397,12 @@ function FloorTile({
     queryKey: ["chat", "run", runId],
     queryFn: () =>
       fetchChatDelta(runId, qc.getQueryData<RunDetail>(["chat", "run", runId])),
-    refetchInterval: live ? 20_000 : 3_000,
+    // ./chat/pollBudget, same two periods every chat transcript in this
+    // codebase polls at — see CHAT_DETAIL_FALLBACK_POLL_MS for why they
+    // may not drift apart.
+    refetchInterval: live
+      ? CHAT_DETAIL_LIVE_POLL_MS
+      : CHAT_DETAIL_FALLBACK_POLL_MS,
   });
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const thread = runQ.data?.thread ?? [];
@@ -1503,7 +1512,12 @@ function TaskDetail({
     queryFn: () =>
       fetchChatDelta(runId!, qc.getQueryData<RunDetail>(["chat", "run", runId])),
     enabled: !!runId,
-    refetchInterval: live ? 20_000 : 3_000,
+    // ./chat/pollBudget, same two periods every chat transcript in this
+    // codebase polls at — see CHAT_DETAIL_FALLBACK_POLL_MS for why they
+    // may not drift apart.
+    refetchInterval: live
+      ? CHAT_DETAIL_LIVE_POLL_MS
+      : CHAT_DETAIL_FALLBACK_POLL_MS,
   });
   /* The brief is fetched on demand for the selected task when it has no run yet. */
   const briefQ = useQuery({

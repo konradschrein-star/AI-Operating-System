@@ -81,8 +81,9 @@ import {
 
 /** NFU3: one poll, 30s, paused whenever the zone is not visible. See the
  *  header comment for why this is slower than the team tree's 6s, and for why
- *  round 705 moved it out from 15s. */
-const PLAN_POLL_MS = 30_000;
+ *  round 705 moved it out from 15s. The number lives in
+ *  `../chat/pollBudget` so the poll-budget check reads the real one. */
+import { PLAN_POLL_MS } from "../chat/pollBudget";
 
 /** The "no response yet" projections. Module-level singletons so the memos
  *  below return stable identities while loading and nothing re-renders for it.

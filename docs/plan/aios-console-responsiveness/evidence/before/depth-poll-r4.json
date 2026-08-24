@@ -1,0 +1,210 @@
+{
+  "protocol": "depth-poll-r4.cjs",
+  "project": "aios-console-responsiveness",
+  "base": "http://127.0.0.1:7811",
+  "chat": "Okay this session is very important",
+  "sse": "aborted (transcript query on its 4s fallback)",
+  "ceiling_per_minute": 40,
+  "windows": {
+    "at_rest": {
+      "label": "at rest (manager chat)",
+      "window_seconds": 60,
+      "requests": 39,
+      "total_per_minute": 39,
+      "per_minute": {
+        "/chat/:id": 19,
+        "/chat/:id/team": 9,
+        "/chat": 6,
+        "/uploads/index": 2,
+        "/chat/:id/plan": 2,
+        "/secrets": 1
+      },
+      "body_bytes_per_minute": 48288843,
+      "chat_detail_body_bytes_per_minute": 48036978,
+      "responses_not_measured": 0
+    },
+    "depth_1": {
+      "label": "drilled, depth 1 (worker)",
+      "window_seconds": 60,
+      "requests": 40,
+      "total_per_minute": 40,
+      "per_minute": {
+        "/chat/:id": 20,
+        "/chat": 6,
+        "/chat/:id/team": 9,
+        "/uploads/index": 2,
+        "/chat/:id/plan": 2,
+        "/usage/quota": 1
+      },
+      "body_bytes_per_minute": 2443419,
+      "chat_detail_body_bytes_per_minute": 2190360,
+      "responses_not_measured": 0
+    },
+    "depth_2": {
+      "label": "drilled, depth 2 (sub-agent)",
+      "window_seconds": 60,
+      "requests": 40,
+      "total_per_minute": 40,
+      "per_minute": {
+        "/chat/:id/team": 10,
+        "/chat/:id": 20,
+        "/chat": 6,
+        "/uploads/index": 2,
+        "/chat/:id/plan": 2
+      },
+      "body_bytes_per_minute": 2453488,
+      "chat_detail_body_bytes_per_minute": 2190360,
+      "responses_not_measured": 0
+    }
+  },
+  "checks": [
+    {
+      "name": "the team tree is ready",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "nothing is drilled yet",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "team rows",
+      "note": 20
+    },
+    {
+      "name": "target worker / sub-agent",
+      "note": {
+        "worker": "58096061-803e-43c5-827a-e618d2a9c33e",
+        "sub": "toolu_01KAFV63fapZ6DXAAU2adfww"
+      }
+    },
+    {
+      "name": "at rest (manager chat): requests/min",
+      "note": {
+        "/chat/:id": 19,
+        "/chat/:id/team": 9,
+        "/chat": 6,
+        "/uploads/index": 2,
+        "/chat/:id/plan": 2,
+        "/secrets": 1,
+        "TOTAL": 39
+      }
+    },
+    {
+      "name": "at rest (manager chat): body bytes/min",
+      "note": {
+        "total": 48288843,
+        "chat_detail": 48036978,
+        "responses_not_measured": 0
+      }
+    },
+    {
+      "name": "depth 1 is open",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "drilled, depth 1 (worker): requests/min",
+      "note": {
+        "/chat/:id": 20,
+        "/chat": 6,
+        "/chat/:id/team": 9,
+        "/uploads/index": 2,
+        "/chat/:id/plan": 2,
+        "/usage/quota": 1,
+        "TOTAL": 40
+      }
+    },
+    {
+      "name": "drilled, depth 1 (worker): body bytes/min",
+      "note": {
+        "total": 2443419,
+        "chat_detail": 2190360,
+        "responses_not_measured": 0
+      }
+    },
+    {
+      "name": "depth 2 is open",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "drilled, depth 2 (sub-agent): requests/min",
+      "note": {
+        "/chat/:id/team": 10,
+        "/chat/:id": 20,
+        "/chat": 6,
+        "/uploads/index": 2,
+        "/chat/:id/plan": 2,
+        "TOTAL": 40
+      }
+    },
+    {
+      "name": "drilled, depth 2 (sub-agent): body bytes/min",
+      "note": {
+        "total": 2453488,
+        "chat_detail": 2190360,
+        "responses_not_measured": 0
+      }
+    },
+    {
+      "name": "P3 at rest (manager chat): total <= 40/min",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "P3 drilled, depth 1 (worker): total <= 40/min",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "P3 drilled, depth 2 (sub-agent): total <= 40/min",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the byte instrument measured something at rest",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "at rest (manager chat): every response was measured",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "drilled, depth 1 (worker): every response was measured",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "drilled, depth 2 (sub-agent): every response was measured",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "P1 drilling to depth 1 does not raise the request total",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "P2 drilling to depth 2 does not raise it either",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    }
+  ]
+}
