@@ -184,6 +184,43 @@ out=$(Q "select p.name, t.round, left(t.title,44)
          order by p.name, t.round")
 [ -n "$out" ] && { echo "$out"; found=1; } || echo "none"
 
+section "CLOSED PROJECT STILL HOLDING OPEN WORK — the status is a claim, not a fact"
+# Added 2026-08-25. Every check above asks about projects that are still open
+# ('active', 'blocked', 'paused'). Nothing has ever asked the reverse question:
+# a project marked DONE whose task rows are not.
+#
+# db/projects.ts reconcileProjectStatuses() has the same blind spot by
+# construction — its WHERE clause is `p.status IN ('active','blocked','paused')`
+# — so no code path in the engine can see this state either. It closes projects
+# whose tasks are all finished; it never checks that a closed project's tasks
+# are.
+#
+# Why this is not a tidiness complaint: `done` is what the Kanban, the Today
+# chips and every summary read. A project reporting done while five builder
+# lanes sit blocked is reporting work that was never carried — and those rows
+# are unreachable, because promoteReadyTasks() will not advance a project that
+# is not active. They wait forever without ever appearing in a stall report.
+#
+# `cancelled` is EXCLUDED here for the same reason it is excluded above: a
+# cancelled project's leftovers are the residue of a decision. `done` is not a
+# decision about the tasks — it is an assertion about them.
+#
+# CONTROLLED ON LIVE DATA, the strong kind, at the moment it was written:
+#   POSITIVE — aios-goals-day-system | blocked | 5 (4 builders + 1 reviewer,
+#              blocked since 2026-08-23 01:26; the project was closed anyway).
+#   NEGATIVE — inverting the row filter to `t.status in ('done')` returns the
+#              finished rows of every closed project, which proves the join and
+#              the grouping are live rather than the filter being empty for a
+#              structural reason.
+out=$(Q "select p.name, t.status, count(*),
+                round(extract(epoch from (now()-max(t.updated_at)))/3600) || 'h since last change'
+         from projects p join project_tasks t on t.project_id = p.id
+         where p.status = 'done'
+           and t.status in ('pending','ready','running','blocked','failed')
+         group by p.id, p.name, t.status
+         order by p.name, t.status")
+[ -n "$out" ] && { echo "$out"; found=1; } || echo "none"
+
 section "ACTIVE, work queued, but NOTHING running and nothing started recently"
 out=$(Q "select p.name,
                 count(*) filter (where t.status in ('pending','ready')) as queued,

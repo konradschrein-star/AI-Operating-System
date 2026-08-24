@@ -39,6 +39,7 @@ FILES=(
   pg-backup.sh
   fleet-watchdog.sh
   stalled-projects.sh
+  fleet-pulse.sh
   check-corpus-backup.sh
   check-vps2-backup.sh
   prune-corpus-offbox.sh

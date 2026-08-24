@@ -6,12 +6,25 @@
 # stops being retried after the cap and we notify Konrad exactly once.
 # Interim measure until engine-v2 lands native auto-recovery (task r860);
 # harmless to keep afterwards.
+#
+# LIVENESS, added 2026-08-25. The sentence above says "every 10 min via system
+# cron" and it was false for six days: the crontab entry was lost somewhere in
+# the move of these scripts into git, and $LOG's last line was 2026-08-19
+# 00:20. Nothing noticed, because this script writes to $LOG only when it ACTS
+# — a watchdog that is never invoked and a watchdog with nothing to do produce
+# byte-identical evidence. $STAMP breaks that tie: it is touched on every
+# invocation, before the early exit, so its mtime is invocation age and
+# scripts/ops/fleet-pulse.sh alarms when it goes stale. Do not move this below
+# the `[ -z "$blocked" ] && exit 0` line — that is the exact path that made the
+# silence indistinguishable.
 set -uo pipefail
 export PATH="/usr/bin:/usr/local/bin:$PATH"
 LOG=/var/log/fleet-watchdog.log
 STATE=/var/tmp/fleet-watchdog.state
+STAMP=/var/tmp/fleet-watchdog.stamp
 API=http://127.0.0.1:7700/api
 touch "$STATE"
+touch "$STAMP"
 
 log() { echo "[$(date -Is)] $*" >>"$LOG"; }
 
