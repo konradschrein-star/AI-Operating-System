@@ -569,6 +569,31 @@ describe("claim G — every other thread writer is single-statement or cannot to
     assert.match(body, /AND status = 'failed'/);
   });
 
+  /* The API-overload park (529/503) is the same kind of writer as the
+   * usage-wall park and is held to the same invariant.
+   *
+   * Its slice ENDS at the usage-wall function because it sits immediately
+   * above it — which is also why it sits there. Inserting it between the
+   * usage-wall marker and `runCounts` put two `pool.query` calls inside the
+   * slice above and turned that assertion red. The boundary markers in this
+   * file are load-bearing: a new thread writer goes ABOVE a marker, never
+   * between a marker and its terminator. */
+  test("requeueRunAfterApiOverload is one statement and only ever touches a 'failed' row", () => {
+    const body = sliceBetween(
+      RUNS_DB,
+      "export async function requeueRunAfterApiOverload",
+      "export async function requeueRunAfterUsageWall",
+      "requeueRunAfterApiOverload",
+    );
+    assert.equal((body.match(/pool\.query/g) ?? []).length, 1);
+    assert.match(body, /thread = thread \|\| \$3::jsonb/);
+    assert.match(body, /AND status = 'failed'/);
+    // Its own counter. Sharing `usage_wall_attempts` would let a busy-server
+    // blip spend the retries a real quota wall needs.
+    assert.match(body, /api_overload_attempts/);
+    assert.doesNotMatch(body, /usage_wall_attempts/);
+  });
+
   test("the executor's streamed append never moves status", () => {
     const body = sliceBetween(
       EXECUTOR,
@@ -818,6 +843,22 @@ describe("R40 — the workstream term reaches every site that keys on (project, 
     assert.match(body, /workstream: input\.graph\.builder\.workstream,/);
     assert.match(body, /write_set: input\.graph\.builder\.write_set,/);
     assert.match(body, /depends_on: \[builder\.id\],/);
+    /* BOTH inserts carry the inherited tier. The builder's was changed and the
+     * checker's was left `tier: null`, so every re-check row was born untiered
+     * and ran on the default engine — measured 100% NULL on rows created after
+     * the first half of the fix went live, while the builders beside them
+     * inherited fine. Two occurrences, and no bare `tier: null` left, is the
+     * assertion that would have caught it. */
+    assert.equal(
+      (body.match(/tier: input\.tier \?\? null,/g) ?? []).length,
+      2,
+      "both the fix builder and every re-check row must inherit the chain's tier",
+    );
+    assert.doesNotMatch(
+      body,
+      /^\s*tier: null,\s*$/m,
+      "a hardcoded `tier: null` in createFixChain sends that row to the default engine",
+    );
     // R41: the guard runs inside the transaction, before anything is written.
     assert.ok(
       body.indexOf('await client.query("BEGIN")') < body.indexOf("duplicatesFixChain(candidate,"),

@@ -94,7 +94,15 @@ import { projectSlug } from "./run-control-rules.ts";
 import { provisionWorkstream, liveCheckoutPath } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
 import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
-import { requeueRunAfterUsageWall } from "../db/runs.ts";
+import {
+  requeueRunAfterUsageWall,
+  requeueRunAfterApiOverload,
+} from "../db/runs.ts";
+import {
+  classifyApiOverload,
+  planApiOverloadRetry,
+  API_OVERLOAD_MAX_RETRIES,
+} from "./api-overload.ts";
 import { queueNotification, lastNotificationAt } from "../db/notifications.ts";
 
 const AGENTS_DIR = process.env.AGENTS_DIR ?? "/root/.claude/agents";
@@ -2412,6 +2420,84 @@ export async function deferForUsageWall(
   return true;
 }
 
+/**
+ * A run killed by a transient, server-side API overload (529/503) is parked for
+ * one minute and retried, rather than failing its task and blocking its
+ * project. Mirrors `deferForUsageWall` in shape and in contract: returns true
+ * when the run has been parked and the caller must `continue`, false to fall
+ * through to the ordinary failure path.
+ *
+ * Konrad's instruction, verbatim: "if this error occurs, make sure that you
+ * retry after one minute". Anthropic's own error text agrees — "usually
+ * temporary — try again in a moment".
+ *
+ * Ordered AFTER the usage wall and the engine dropout in the reconcile. The
+ * wall is the narrower and better-informed signature (it knows its reset
+ * time), the dropout has a different remedy (re-queue on another engine), and
+ * neither emits a 529. Being last means this only ever catches failures the
+ * two of them declined, which is exactly the intent.
+ */
+export async function deferForApiOverload(
+  task: SettledRunningTask,
+  project: Project | null,
+): Promise<boolean> {
+  if (task.run_status !== "failed" || !task.run_id) return false;
+  const sig = classifyApiOverload(task.last_error);
+  if (!sig) return false;
+  if (!project || !projectAcceptsWork(project.status)) {
+    console.warn(
+      `[project-tick] task ${task.id} hit a transient API overload but its project is ` +
+        `${project?.status ?? "unreadable"} — failing it rather than parking work on a ` +
+        `project that is not accepting any`,
+    );
+    return false;
+  }
+
+  const plan = planApiOverloadRetry({
+    priorAttempts: task.api_overload_attempts,
+    nowMs: Date.now(),
+  });
+  if (plan.action === "give_up") {
+    console.warn(
+      `[project-tick] task ${task.id} (${task.role} · ${task.title}) hit a transient API ` +
+        `overload again — ${plan.reason}; falling back to the normal failure path`,
+    );
+    return false;
+  }
+
+  const wakeAt = new Date(plan.wakeAtMs);
+  const parked = await requeueRunAfterApiOverload({
+    runId: task.run_id,
+    wakeAt,
+    attempt: plan.attempt,
+    note:
+      `[Fleet notice] This run was interrupted by a transient API overload` +
+      `${sig.status ? ` (HTTP ${sig.status})` : ""} on Anthropic's side, not by anything you ` +
+      `did and not by anything wrong with your task. It was parked automatically and resumed ` +
+      `at ${localLabel(wakeAt)}. Nothing has changed in the worktree since. Pick your task up ` +
+      `where you left off and finish it.`,
+  });
+  if (!parked) {
+    // The row was not 'failed' any more — cancelled, or moved by another path,
+    // between listSettledRunningTasks() and here. Do NOT pretend the park
+    // happened: that would leave the task 'running' behind a run that is never
+    // coming back.
+    console.warn(
+      `[project-tick] task ${task.id}: run ${task.run_id} was no longer 'failed' when the ` +
+        `API-overload park went to write — falling back to the normal failure path`,
+    );
+    return false;
+  }
+
+  console.warn(
+    `[project-tick] transient API overload${sig.status ? ` (${sig.status})` : ""} — parked ` +
+      `${task.role} task ${task.id} (round ${task.round}) for ${formatDelay(plan.delayMs)} ` +
+      `until ${localLabel(wakeAt)} (attempt ${plan.attempt}/${API_OVERLOAD_MAX_RETRIES}) — ` +
+      `task NOT failed, project NOT blocked`,
+  );
+  return true;
+}
+
 /** Notification source for the engine-fallback push, and how long one push
  *  speaks for. Its own source string so `lastNotificationAt` dedups it
  *  against ITSELF and not against the usage-wall pushes — two different
@@ -2592,6 +2678,11 @@ async function reconcileSettledTasks(): Promise<void> {
         // narrower signature and parks the run itself; everything that is
         // neither falls through to the failure path unchanged.
         if (await demoteAfterEngineFailure(task, project)) continue;
+        // A 529/503 from Anthropic is a busy server, not a broken task. Parked
+        // for one minute and retried — the task stays 'running', the project
+        // stays 'active'. Last of the three, because the two above own narrower
+        // signatures with different remedies and neither emits a 529.
+        if (await deferForApiOverload(task, project)) continue;
         await setTaskStatus(task.id, "failed");
         await setProjectStatus(task.project_id, "blocked");
         console.warn(

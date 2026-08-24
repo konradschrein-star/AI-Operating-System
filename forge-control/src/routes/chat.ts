@@ -1577,32 +1577,36 @@ export function parseSinceParam(raw: string | undefined): number | undefined {
   return n;
 }
 
+export type RunDelta = Omit<RunDetail, "prompt"> & { prompt?: string };
+
 /**
  * Shape the GET /:id response body given an already-validated (or absent)
  * `since`.
  *
- * `since` omitted, or `since > total`: the full run, `from: 0`. The second
- * case is the client-recovery path — a bigger cursor than the thread holds
- * means the client's own count cannot be trusted (a compacted/replaced
- * thread, or a stale cache from a different chat entirely), and the honest
- * recovery is the WHOLE thread, not an empty slice that would silently drop
- * everything the client thinks it never saw.
+ * `since` omitted, or `since > total`: the full run (including `prompt`),
+ * `from: 0`. The second case is the client-recovery path — a bigger cursor
+ * than the thread holds means the client's own count cannot be trusted (a
+ * compacted/replaced thread, or a stale cache from a different chat entirely),
+ * and the honest recovery is the WHOLE thread, not an empty slice that would
+ * silently drop everything the client thinks it never saw.
  *
- * `since <= total` otherwise: `run.thread` replaced with the slice from
- * `since` onward — `since === total` yields `[]` (nothing new, not "no
- * thread"), `since === 0` yields the full array. Every other field of `run`
- * is untouched; only `thread` is delta'd.
+ * `since <= total` otherwise: delta response — `run.prompt` is omitted to save
+ * steady-state bandwidth, and `run.thread` is replaced with the slice from
+ * `since` onward (`since === total` yields `[]`, `since === 0` yields the full
+ * array). Every other field of `run` is untouched.
  */
 export function chatDeltaResponse(
   run: RunDetail,
   since: number | undefined,
-): { run: RunDetail; from: number; total: number } {
+): { run: RunDelta; from: number; total: number } {
   const total = run.thread.length;
   if (since === undefined || since > total) {
     return { run, from: 0, total };
   }
-  return { run: { ...run, thread: run.thread.slice(since) }, from: since, total };
+  const { prompt: _omitted, ...runWithoutPrompt } = run;
+  return { run: { ...runWithoutPrompt, thread: run.thread.slice(since) }, from: since, total };
 }
+
 
 /* Full thread detail, or a delta since `?since=<n>` thread entries already
  * held by the caller (round: chat delta API). */

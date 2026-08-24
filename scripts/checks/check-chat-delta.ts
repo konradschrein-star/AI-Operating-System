@@ -1,20 +1,22 @@
 /**
  * check-chat-delta.ts — verification measurement harness for chat delta synchronization.
  *
- * Project: aios-console-responsiveness
+ * Project: aios-chat-delta-prompt (and aios-console-responsiveness)
  *
  * This check verifies:
  *  1. Backend Delta Query Contract (forge-control /api/chat/:id?since=N):
  *     - parseSinceParam: parses non-negative integer strings, rejects invalid/negative/fractional.
- *     - chatDeltaResponse: returns full thread when since is omitted, empty delta when since === total,
- *       incremental slice when since < total, full snapshot recovery when since > total.
+ *     - chatDeltaResponse: returns full thread with prompt when since is omitted or since > total (recovery),
+ *       omits prompt and returns empty delta when since === total,
+ *       omits prompt and returns incremental slice when since < total (including since === 0).
  *  2. Frontend Delta Merging & Reference Identity (forge-control-web fetchChatDelta):
  *     - Retains exact thread array reference on empty delta (0 React re-renders / 0 DOM thrash).
- *     - Appends new entries cleanly when incremental messages arrive.
+ *     - Preserves cached prompt across >= 3 consecutive delta polls when prompt is omitted over the wire.
+ *     - Appends new entries cleanly when incremental messages arrive, preserving prompt.
  *     - Recovers to full replacement snapshot on cursor mismatch (e.g. compacted thread).
  *  3. Payload Reduction Measurements:
- *     - Simulates realistic manager thread (576 entries, ~542.7 KB uncompressed).
- *     - Measures uncompressed & compressed byte reductions (>99% reduction on steady-state poll).
+ *     - Simulates realistic manager thread (576 entries & 103 entries with ~10 KB prompt).
+ *     - Measures uncompressed & compressed byte reductions (~86% reduction in steady-state delta payload by omitting prompt).
  *  4. Chat Surface Poll Budget Calculations:
  *     - Healthy steady state (SSE live): 23 req/min (≤ 40 req/min ceiling).
  *     - Degraded fallback state (SSE down): 36 req/min (≤ 40 req/min ceiling).
@@ -26,6 +28,7 @@
 
 import { gzipSync } from "node:zlib";
 import { parseSinceParam, chatDeltaResponse } from "../../forge-control/src/routes/chat.ts";
+import type { RunDelta } from "../../forge-control/src/routes/chat.ts";
 import type { RunDetail, ThreadEntry } from "../../forge-control/src/db/runs.ts";
 /* THE REAL CONSTANTS THE SURFACE POLLS AT — imported, never copied. Round 3 of
  * this project hand-copied them into local `const`s here, which made section 5
@@ -72,7 +75,7 @@ function makeEntry(role: "user" | "assistant" | "system", content: string, ts: s
   return { role, content, ts };
 }
 
-function makeFixtureRun(threadLength = 3): RunDetail {
+function makeFixtureRun(threadLength = 3, prompt = "Coordinate system updates and manage tasks"): RunDetail {
   const thread: ThreadEntry[] = [];
   for (let i = 0; i < threadLength; i++) {
     thread.push(
@@ -104,7 +107,7 @@ function makeFixtureRun(threadLength = 3): RunDetail {
     last_role: threadLength > 0 ? thread[threadLength - 1].role : "",
     archived: false,
     metadata: { manager: true, channel: "desktop" },
-    prompt: "Coordinate system updates and manage tasks",
+    prompt,
     thread,
     parent_run_id: null,
     stuck_signal: null,
@@ -116,14 +119,16 @@ function makeFixtureRun(threadLength = 3): RunDetail {
 /** Pure merge helper matching fetchChatDelta in forge-control-web/app/api.ts */
 function mergeChatDelta(
   prev: RunDetail | undefined,
-  deltaResponse: { run: RunDetail; from: number; total: number },
+  deltaResponse: { run: RunDelta | RunDetail; from: number; total: number },
 ): RunDetail {
-  if (prev === undefined) return deltaResponse.run;
+  if (prev === undefined) return deltaResponse.run as RunDetail;
   const { run, from } = deltaResponse;
-  if (from !== prev.thread.length) return run;
-  return run.thread.length === 0
-    ? { ...run, thread: prev.thread }
-    : { ...run, thread: [...prev.thread, ...run.thread] };
+  if (from !== prev.thread.length) return run as RunDetail;
+  const prompt =
+    "prompt" in run && run.prompt !== undefined ? run.prompt : prev.prompt;
+  const thread =
+    run.thread.length === 0 ? prev.thread : [...prev.thread, ...run.thread];
+  return { ...prev, ...run, prompt, thread };
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -146,57 +151,133 @@ console.log("\n── 2. chatDeltaResponse: server delta slicing & recovery ─�
 
 const runFixture = makeFixtureRun(5);
 
+// 1. since omitted: full fetch (from === 0, returns all items, prompt present)
 const fullResp = chatDeltaResponse(runFixture, undefined);
 check("since omitted: from === 0", fullResp.from, 0);
 check("since omitted: total === 5", fullResp.total, 5);
 check("since omitted: thread length === 5", fullResp.run.thread.length, 5);
+checkTrue("since omitted: prompt is present in full fetch", "prompt" in fullResp.run);
+check("since omitted: prompt value matches", (fullResp.run as RunDetail).prompt, runFixture.prompt);
 
+// 2. since === total: steady-state empty delta (from === 5, empty thread, prompt omitted)
 const emptyDeltaResp = chatDeltaResponse(runFixture, 5);
 check("since === total: from === 5", emptyDeltaResp.from, 5);
 check("since === total: total === 5", emptyDeltaResp.total, 5);
 check("since === total: returns empty thread array", emptyDeltaResp.run.thread, []);
+checkTrue("since === total (empty delta): prompt is omitted", !("prompt" in emptyDeltaResp.run));
+check("since === total (empty delta): prompt is undefined", emptyDeltaResp.run.prompt, undefined);
 
+// 3. since < total: append delta (from === 3, returns 2 new items, prompt omitted)
 const appendDeltaResp = chatDeltaResponse(runFixture, 3);
 check("since < total: from === 3", appendDeltaResp.from, 3);
 check("since < total: total === 5", appendDeltaResp.total, 5);
 check("since < total: returns slice of 2 new items", appendDeltaResp.run.thread.length, 2);
 check("since < total: first item is index 3", appendDeltaResp.run.thread[0].content, runFixture.thread[3].content);
 check("since < total: second item is index 4", appendDeltaResp.run.thread[1].content, runFixture.thread[4].content);
+checkTrue("since < total (append delta): prompt is omitted", !("prompt" in appendDeltaResp.run));
+check("since < total (append delta): prompt is undefined", appendDeltaResp.run.prompt, undefined);
 
+// 4. since === 0: delta fetch over whole thread (from === 0, returns 5 items, prompt omitted)
 const zeroSinceResp = chatDeltaResponse(runFixture, 0);
 check("since === 0: from === 0", zeroSinceResp.from, 0);
 check("since === 0: total === 5", zeroSinceResp.total, 5);
 check("since === 0: returns all 5 items", zeroSinceResp.run.thread.length, 5);
+checkTrue("since === 0 (zero delta): prompt is omitted", !("prompt" in zeroSinceResp.run));
+check("since === 0 (zero delta): prompt is undefined", zeroSinceResp.run.prompt, undefined);
 
+// 5. since > total: recovery fallback (from === 0, returns full thread snapshot with prompt)
 const staleRecoveryResp = chatDeltaResponse(runFixture, 99);
 check("since > total (stale client): from === 0 (recovery)", staleRecoveryResp.from, 0);
 check("since > total (stale client): total === 5", staleRecoveryResp.total, 5);
 check("since > total (stale client): returns full thread snapshot", staleRecoveryResp.run.thread.length, 5);
+checkTrue("since > total (recovery): prompt is present", "prompt" in staleRecoveryResp.run);
+check("since > total (recovery): prompt value matches", (staleRecoveryResp.run as RunDetail).prompt, runFixture.prompt);
+
+// 6. malformed since parsed via parseSinceParam: recovery fallback with prompt
+const malformedParam = parseSinceParam("not-a-number");
+check("malformed since parsed -> undefined", malformedParam, undefined);
+const malformedRecoveryResp = chatDeltaResponse(runFixture, malformedParam);
+check("malformed since: from === 0", malformedRecoveryResp.from, 0);
+check("malformed since: total === 5", malformedRecoveryResp.total, 5);
+check("malformed since: returns full thread snapshot", malformedRecoveryResp.run.thread.length, 5);
+checkTrue("malformed since: prompt is present", "prompt" in malformedRecoveryResp.run);
+check("malformed since: prompt value matches", (malformedRecoveryResp.run as RunDetail).prompt, runFixture.prompt);
+
+// 7. envelope metadata preserved on delta responses
+const deltaEnvelope = chatDeltaResponse(runFixture, 3).run;
+check("delta response preserves run.id", deltaEnvelope.id, runFixture.id);
+check("delta response preserves run.title", deltaEnvelope.title, runFixture.title);
+check("delta response preserves run.status", deltaEnvelope.status, runFixture.status);
+check("delta response preserves run.worker", deltaEnvelope.worker, runFixture.worker);
+check("delta response preserves run.budget_usd", deltaEnvelope.budget_usd, runFixture.budget_usd);
+check("delta response preserves run.spent_usd", deltaEnvelope.spent_usd, runFixture.spent_usd);
+check("delta response preserves run.message_count", deltaEnvelope.message_count, runFixture.message_count);
+check("delta response preserves run.metadata", deltaEnvelope.metadata, runFixture.metadata);
 
 // Verify immutability
 const beforeThreadRef = runFixture.thread;
+const beforePromptVal = runFixture.prompt;
 chatDeltaResponse(runFixture, 2);
 checkTrue("original run.thread reference is never mutated", runFixture.thread === beforeThreadRef);
+check("original run.prompt is never mutated", runFixture.prompt, beforePromptVal);
 
 /* ════════════════════════════════════════════════════════════════════════════
- * SECTION 2: Frontend Cache Merging & Reference Identity
+ * SECTION 2: Frontend Cache Merging, Reference Identity & Prompt Survival
  * ══════════════════════════════════════════════════════════════════════════ */
 
-console.log("\n── 3. Client cache merging & reference identity ───────────────────────");
+console.log("\n── 3. Client cache merging, reference identity & prompt survival ──────");
 
-// Initial mount: prev is undefined
-const initialRun = makeFixtureRun(576);
+// Initial mount: prev is undefined -> returns full run with prompt
+const initialRun = makeFixtureRun(576, "Initial prompt brief for run 2ef126b7");
 const initialMerged = mergeChatDelta(undefined, { run: initialRun, from: 0, total: 576 });
 check("initial fetch with prev undefined returns full run", initialMerged.thread.length, 576);
+check("initial fetch contains prompt", initialMerged.prompt, initialRun.prompt);
 
-// Steady-state poll: 0 new messages -> array reference identity must be preserved
-const steadyStateDelta = chatDeltaResponse(initialMerged, 576);
-const steadyMerged = mergeChatDelta(initialMerged, steadyStateDelta);
-check("steady-state merge maintains message count", steadyMerged.thread.length, 576);
+// Poll 1 (steady-state empty delta): 0 new messages -> prompt preserved, array ref preserved
+const delta1 = chatDeltaResponse(initialMerged, 576);
+checkTrue("poll 1 delta response omits prompt over wire", !("prompt" in delta1.run));
+const poll1Merged = mergeChatDelta(initialMerged, delta1);
+check("poll 1 maintains message count", poll1Merged.thread.length, 576);
+check("poll 1 preserves prompt in cache", poll1Merged.prompt, initialRun.prompt);
 checkTrue(
-  "steady-state merge preserves EXACT array reference (0 React re-renders)",
-  steadyMerged.thread === initialMerged.thread,
-  "Thread array reference changed despite 0 new messages",
+  "poll 1 preserves EXACT array reference (0 React re-renders)",
+  poll1Merged.thread === initialMerged.thread,
+  "Thread array reference changed on poll 1 despite 0 new messages",
+);
+
+// Poll 2 (steady-state empty delta): 2nd consecutive poll -> prompt survives, array ref preserved
+const delta2 = chatDeltaResponse(poll1Merged, 576);
+checkTrue("poll 2 delta response omits prompt over wire", !("prompt" in delta2.run));
+const poll2Merged = mergeChatDelta(poll1Merged, delta2);
+check("poll 2 maintains message count", poll2Merged.thread.length, 576);
+check("poll 2 preserves prompt in cache", poll2Merged.prompt, initialRun.prompt);
+checkTrue(
+  "poll 2 preserves EXACT array reference (0 React re-renders)",
+  poll2Merged.thread === poll1Merged.thread,
+  "Thread array reference changed on poll 2 despite 0 new messages",
+);
+
+// Poll 3 (steady-state empty delta): 3rd consecutive poll -> prompt survives, array ref preserved
+const delta3 = chatDeltaResponse(poll2Merged, 576);
+checkTrue("poll 3 delta response omits prompt over wire", !("prompt" in delta3.run));
+const poll3Merged = mergeChatDelta(poll2Merged, delta3);
+check("poll 3 maintains message count", poll3Merged.thread.length, 576);
+check("poll 3 preserves prompt in cache", poll3Merged.prompt, initialRun.prompt);
+checkTrue(
+  "poll 3 preserves EXACT array reference (0 React re-renders)",
+  poll3Merged.thread === poll2Merged.thread,
+  "Thread array reference changed on poll 3 despite 0 new messages",
+);
+
+// Poll 4 (steady-state empty delta): 4th consecutive poll -> prompt survives across >= 3 polls
+const delta4 = chatDeltaResponse(poll3Merged, 576);
+checkTrue("poll 4 delta response omits prompt over wire", !("prompt" in delta4.run));
+const poll4Merged = mergeChatDelta(poll3Merged, delta4);
+check("poll 4 maintains message count", poll4Merged.thread.length, 576);
+check("poll 4 preserves prompt in cache across >= 3 consecutive polls", poll4Merged.prompt, initialRun.prompt);
+checkTrue(
+  "prompt survives across >= 3 consecutive delta polls",
+  poll4Merged.prompt === initialRun.prompt,
 );
 
 // Incremental poll: 2 new messages arrive on server
@@ -208,28 +289,83 @@ const expandedServerRun: RunDetail = {
     makeEntry("assistant", "New message 577", "2026-08-24T00:10:02.000Z"),
   ],
   message_count: 578,
+  spent_usd: "1.45",
 };
 const incDelta = chatDeltaResponse(expandedServerRun, 576);
-const incMerged = mergeChatDelta(steadyMerged, incDelta);
+checkTrue("incremental delta omits prompt over wire", !("prompt" in incDelta.run));
+const incMerged = mergeChatDelta(poll4Merged, incDelta);
 check("incremental merge updates length from 576 to 578", incMerged.thread.length, 578);
+check("incremental merge preserves prompt in cache", incMerged.prompt, initialRun.prompt);
 check("incremental merge contains appended message 576", incMerged.thread[576].content, "New message 576");
 check("incremental merge contains appended message 577", incMerged.thread[577].content, "New message 577");
 check("incremental merge preserves previous message prefixes", incMerged.thread[0].content, initialMerged.thread[0].content);
+check("incremental merge updates envelope spent_usd", incMerged.spent_usd, "1.45");
 
 // Compaction recovery: server compacted thread from 578 to 60 messages
-const compactedServerRun = makeFixtureRun(60);
+const compactedServerRun: RunDetail = {
+  ...makeFixtureRun(60),
+  prompt: "Compacted thread replacement prompt",
+};
 const compactedDelta = chatDeltaResponse(compactedServerRun, 578); // Client asks since=578, server returns from=0
 check("compacted delta returns from=0", compactedDelta.from, 0);
+checkTrue("compacted recovery delta carries prompt in full snapshot", "prompt" in compactedDelta.run);
 const compactedMerged = mergeChatDelta(incMerged, compactedDelta);
 check("compacted merge heals client cache to 60 messages", compactedMerged.thread.length, 60);
+check("compacted merge updates prompt from full recovery payload", compactedMerged.prompt, compactedServerRun.prompt);
 
 /* ════════════════════════════════════════════════════════════════════════════
  * SECTION 3: Payload Size Reduction Measurements
  * ══════════════════════════════════════════════════════════════════════════ */
 
-console.log("\n── 4. Payload size measurements (576-entry realistic thread) ─────────");
+console.log("\n── 4. Payload size measurements & prompt reduction validation ─────────");
 
-// Generate realistic 576-message run (matching real manager run 2ef126b7)
+// Production baseline fixture: 103-entry chat with a realistic ~10 KB prompt
+// (matches measured operator starting point: 10,128 byte prompt on chat 2ef126b7)
+const realistic10kPrompt = "You are the executor of Konrad's Personal AI OS (forge-control), running headless on his Hetzner VPS. " +
+  "Environment details: Content Forge monorepo at /opt/content-forge, PostgreSQL content_forge, BullMQ queues, VPS2 at 167.233.145.218. " +
+  "Autonomous execution policies, gate verification rules, token budget tracking, tool usage contracts, and comprehensive project instructions. ".repeat(42);
+const promptBytes = Buffer.byteLength(realistic10kPrompt, "utf8"); // ~10,080 bytes
+
+const productionFixture103: RunDetail = {
+  ...makeFixtureRun(103, realistic10kPrompt),
+  metadata: { manager: true, channel: "desktop", project_id: "e3ec32ed-0f03-48c8-b742-5a770de4a596", tags: ["aios", "chat-delta", "perf"] },
+};
+
+// Full fetch payload (with prompt)
+const prodFullJson = JSON.stringify(chatDeltaResponse(productionFixture103, undefined));
+const prodFullBytes = Buffer.byteLength(prodFullJson, "utf8");
+
+// Steady-state delta payload BEFORE (with prompt included in delta envelope)
+const legacyDeltaWithPrompt = {
+  from: 103,
+  total: 103,
+  run: { ...productionFixture103, thread: [] },
+};
+const beforeSteadyStateJson = JSON.stringify(legacyDeltaWithPrompt);
+const beforeSteadyStateBytes = Buffer.byteLength(beforeSteadyStateJson, "utf8");
+const beforeSteadyStateGzip = gzipSync(Buffer.from(beforeSteadyStateJson)).byteLength;
+
+// Steady-state delta payload AFTER (with prompt omitted in delta envelope)
+const afterSteadyStateResponse = chatDeltaResponse(productionFixture103, 103);
+const afterSteadyStateJson = JSON.stringify(afterSteadyStateResponse);
+const afterSteadyStateBytes = Buffer.byteLength(afterSteadyStateJson, "utf8");
+const afterSteadyStateGzip = gzipSync(Buffer.from(afterSteadyStateJson)).byteLength;
+
+const promptReductionPct = ((1 - afterSteadyStateBytes / beforeSteadyStateBytes) * 100).toFixed(2);
+const promptGzipReductionPct = ((1 - afterSteadyStateGzip / beforeSteadyStateGzip) * 100).toFixed(2);
+
+console.log(`[103-Entry Production Fixture — Prompt Omission Impact]`);
+console.log(`  Full fetch payload:             ${prodFullBytes.toLocaleString()} bytes uncompressed (${(prodFullBytes / 1024).toFixed(1)} KB)`);
+console.log(`  Prompt size:                    ${promptBytes.toLocaleString()} bytes (~${((promptBytes / beforeSteadyStateBytes) * 100).toFixed(1)}% of steady-state delta)`);
+console.log(`  Steady-state BEFORE (w/prompt):  ${beforeSteadyStateBytes.toLocaleString()} bytes uncompressed | ${beforeSteadyStateGzip.toLocaleString()} bytes gzipped`);
+console.log(`  Steady-state AFTER  (no prompt): ${afterSteadyStateBytes.toLocaleString()} bytes uncompressed | ${afterSteadyStateGzip.toLocaleString()} bytes gzipped`);
+console.log(`  Steady-state delta reduction:   ${promptReductionPct}% (uncompressed), ${promptGzipReductionPct}% (gzipped)`);
+
+checkTrue("prompt accounts for > 80% of legacy steady-state payload", (promptBytes / beforeSteadyStateBytes) > 0.80);
+checkTrue("prompt omission achieves ~86% steady-state reduction (> 80%)", parseFloat(promptReductionPct) > 80.0);
+checkTrue("after-steady-state delta payload is < 2 KB uncompressed", afterSteadyStateBytes < 2048);
+
+// 576-message run (matching real manager run 2ef126b7)
 const realisticThread: ThreadEntry[] = [];
 for (let i = 0; i < 576; i++) {
   const role: "user" | "assistant" | "system" = i % 3 === 0 ? "user" : i % 3 === 1 ? "assistant" : "system";
@@ -244,7 +380,7 @@ for (let i = 0; i < 576; i++) {
 }
 
 const largeRun: RunDetail = {
-  ...makeFixtureRun(0),
+  ...makeFixtureRun(0, realistic10kPrompt),
   thread: realisticThread,
   message_count: realisticThread.length,
 };
@@ -273,10 +409,11 @@ const appendDeltaGzip = gzipSync(Buffer.from(appendDeltaJson)).byteLength;
 const uncompressedReductionPct = ((1 - emptyDeltaBytes / fullPayloadBytes) * 100).toFixed(2);
 const gzippedReductionPct = ((1 - emptyDeltaGzip / fullPayloadGzip) * 100).toFixed(2);
 
-console.log(`Full thread payload:       ${fullPayloadBytes.toLocaleString()} bytes uncompressed (${(fullPayloadBytes / 1024).toFixed(1)} KB) | ${fullPayloadGzip.toLocaleString()} bytes gzipped (${(fullPayloadGzip / 1024).toFixed(1)} KB)`);
-console.log(`Steady-state empty delta:  ${emptyDeltaBytes.toLocaleString()} bytes uncompressed (${(emptyDeltaBytes / 1024).toFixed(1)} KB) | ${emptyDeltaGzip.toLocaleString()} bytes gzipped (${(emptyDeltaGzip / 1024).toFixed(1)} KB)`);
-console.log(`2-message append delta:    ${appendDeltaBytes.toLocaleString()} bytes uncompressed (${(appendDeltaBytes / 1024).toFixed(1)} KB) | ${appendDeltaGzip.toLocaleString()} bytes gzipped (${(appendDeltaGzip / 1024).toFixed(1)} KB)`);
-console.log(`Reduction (steady-state):  ${uncompressedReductionPct}% (uncompressed), ${gzippedReductionPct}% (gzipped)`);
+console.log(`\n[576-Entry Thread Measurements]`);
+console.log(`  Full thread payload:       ${fullPayloadBytes.toLocaleString()} bytes uncompressed (${(fullPayloadBytes / 1024).toFixed(1)} KB) | ${fullPayloadGzip.toLocaleString()} bytes gzipped (${(fullPayloadGzip / 1024).toFixed(1)} KB)`);
+console.log(`  Steady-state empty delta:  ${emptyDeltaBytes.toLocaleString()} bytes uncompressed (${(emptyDeltaBytes / 1024).toFixed(1)} KB) | ${emptyDeltaGzip.toLocaleString()} bytes gzipped (${(emptyDeltaGzip / 1024).toFixed(1)} KB)`);
+console.log(`  2-message append delta:    ${appendDeltaBytes.toLocaleString()} bytes uncompressed (${(appendDeltaBytes / 1024).toFixed(1)} KB) | ${appendDeltaGzip.toLocaleString()} bytes gzipped (${(appendDeltaGzip / 1024).toFixed(1)} KB)`);
+console.log(`  Reduction (steady-state vs full): ${uncompressedReductionPct}% (uncompressed), ${gzippedReductionPct}% (gzipped)`);
 
 checkTrue("full payload is substantial (> 50 KB)", fullPayloadBytes > 50_000);
 checkTrue("empty delta payload is minimal (< 2 KB)", emptyDeltaBytes < 2048);
