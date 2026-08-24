@@ -94,6 +94,43 @@ export type TaskStatus =
   | "failed"
   | "blocked"
   | "cancelled";
+
+/**
+ * The statuses that END a task's life. Written once, here, because until
+ * 2026-08-25 it was written six times in SQL and every one of them said only
+ * `'done'`.
+ *
+ * `cancelled` is terminal but is NOT success. The distinction is the whole
+ * point of the status existing: a cancelled row must stop holding the graph
+ * back (that is terminality), and must never be counted as work that happened
+ * (that is not-success). So the two claims of achievement in this file —
+ * closeFinishedProjects() and roundIsComplete() — additionally require that at
+ * least one row actually finished. A project whose every task was cancelled is
+ * abandoned, not done, and saying "🏁 round complete" for a group nobody
+ * carried is the same lie one scope down.
+ *
+ * Before 0046_task_status_cancelled.sql the status was unwritable (the CHECK
+ * constraint predated the type), so operators retired duplicate rows by setting
+ * them `blocked` and renaming the title to `[RETIRED as duplicate] …`. A
+ * `blocked` row is NOT terminal, so each one silently wedged every round above
+ * it — `aios-goals-day-system` and `os-usable-for-work` both died that way.
+ */
+export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = ["done", "cancelled"];
+
+/** SQL predicate for "this row is still open", for one aliased table.
+ *
+ *  A helper rather than a copied literal so the six call sites cannot drift
+ *  apart again. It interpolates a hardcoded alias into SQL and NOTHING from a
+ *  caller's input — every call below passes a literal written in this file. */
+function stillOpen(alias: string): string {
+  return `${alias}.status NOT IN ('done', 'cancelled')`;
+}
+
+/** SQL predicate for "this row reached a terminal state", same contract. */
+function isTerminal(alias: string): string {
+  return `${alias}.status IN ('done', 'cancelled')`;
+}
+
 /** Model/effort tier — see TIER_MODELS in lib/project-tick.ts. NULL = use
  *  the role file's static model:/effort: default. Only architect and
  *  builder tasks are ever assigned one. */
@@ -589,10 +626,17 @@ export async function closeFinishedProjects(): Promise<{
     `UPDATE projects p
         SET status = 'done', updated_at = now()
       WHERE p.status = 'active'
-        AND EXISTS (SELECT 1 FROM project_tasks WHERE project_id = p.id)
+        -- At least one row FINISHED. This was 'EXISTS (... WHERE project_id =
+        -- p.id)' — any row at all — which was the same test for as long as
+        -- 'done' was the only terminal status. It is not any more: a project
+        -- whose every task was cancelled would otherwise close as 'done', which
+        -- is exactly the kind of claim TERMINAL_TASK_STATUSES exists to stop
+        -- the board making.
+        AND EXISTS (SELECT 1 FROM project_tasks
+                     WHERE project_id = p.id AND status = 'done')
         AND NOT EXISTS (
-          SELECT 1 FROM project_tasks
-           WHERE project_id = p.id AND status <> 'done'
+          SELECT 1 FROM project_tasks t
+           WHERE t.project_id = p.id AND ${stillOpen("t")}
         )
         AND NOT EXISTS (
           -- R70. "There is no workstream W <> 'main' of this project for which
@@ -625,10 +669,17 @@ export async function closeFinishedProjects(): Promise<{
   const held = await pool.query<{ id: string; name: string }>(
     `SELECT p.id::text, p.name FROM projects p
       WHERE p.status = 'active'
-        AND EXISTS (SELECT 1 FROM project_tasks WHERE project_id = p.id)
+        -- At least one row FINISHED. This was 'EXISTS (... WHERE project_id =
+        -- p.id)' — any row at all — which was the same test for as long as
+        -- 'done' was the only terminal status. It is not any more: a project
+        -- whose every task was cancelled would otherwise close as 'done', which
+        -- is exactly the kind of claim TERMINAL_TASK_STATUSES exists to stop
+        -- the board making.
+        AND EXISTS (SELECT 1 FROM project_tasks
+                     WHERE project_id = p.id AND status = 'done')
         AND NOT EXISTS (
-          SELECT 1 FROM project_tasks
-           WHERE project_id = p.id AND status <> 'done'
+          SELECT 1 FROM project_tasks t
+           WHERE t.project_id = p.id AND ${stillOpen("t")}
         )
       ORDER BY p.updated_at ASC`,
   );
@@ -648,6 +699,10 @@ export interface ProjectDisagreement {
 export interface ProjectReconciliationResult {
   closed: Array<{ id: string; name: string }>;
   disagreements: ProjectDisagreement[];
+  /** Open task rows retired along with the project that was cancelled under
+   *  them — see sweepClosedProjectTasks(). Optional so every existing caller
+   *  and test that builds this shape by hand still typechecks. */
+  orphansCancelled?: Array<{ projectId: string; projectName: string; tasks: number }>;
 }
 
 /** Pure evaluation of project reconciliation based on task summary counts. */
@@ -810,9 +865,112 @@ export async function reconcileProjectStatuses(): Promise<ProjectReconciliationR
     }
   }
 
-  return { closed, disagreements };
+  const orphans = await sweepClosedProjectTasks();
+  disagreements.push(...orphans.disagreements);
+
+  return { closed, disagreements, orphansCancelled: orphans.cancelled };
 }
 
+/**
+ * The reverse question, added 2026-08-25.
+ *
+ * Everything above asks "is this OPEN project finished?" — its WHERE clause is
+ * `p.status IN ('active','blocked','paused')`. Nothing had ever asked "is this
+ * CLOSED project's work actually finished?", so the state was invisible to the
+ * engine AND to every detector in scripts/ops/stalled-projects.sh, which scope
+ * to open projects for the same reason.
+ *
+ * Live when this was written: `aios-goals-day-system`, status 'done', five task
+ * rows still 'blocked' 45h later. `done` is what the Kanban, the Today chips
+ * and every summary read; a project reporting done with unfinished lanes is
+ * reporting work nobody carried.
+ *
+ * THE TWO CASES ARE NOT SYMMETRIC, and that asymmetry is the whole design:
+ *
+ *  - `cancelled` — the project was called off. Its open rows are residue of a
+ *    decision already taken, so they are cancelled with it. No notification:
+ *    telling Konrad about the consequence of his own cancellation is noise.
+ *  - `done` — somebody asserted the work was finished while rows say otherwise.
+ *    That contradiction is NOT ours to resolve by writing to either side. It is
+ *    reported as a disagreement, exactly like the paused/active cases above.
+ *    Silently cancelling here would launder the lie into a clean board, which
+ *    is the failure mode, not the fix.
+ *
+ * `running` rows are never touched in either case: a live run owns that row,
+ * and a status write behind its back would strand the run and let the tick
+ * reconcile a task that no longer exists as it left it. Stop the run first
+ * (POST /api/runs/:id/stop), then the row is cancellable like any other.
+ */
+export async function sweepClosedProjectTasks(): Promise<{
+  cancelled: Array<{ projectId: string; projectName: string; tasks: number }>;
+  disagreements: ProjectDisagreement[];
+}> {
+  const cancelled: Array<{ projectId: string; projectName: string; tasks: number }> = [];
+
+  const swept = await pool.query<{ id: string; name: string; n: string }>(
+    `WITH victims AS (
+       UPDATE project_tasks t
+          SET status = 'cancelled', updated_at = now()
+         FROM projects p
+        WHERE p.id = t.project_id
+          AND p.status = 'cancelled'
+          AND t.status IN ('pending', 'ready', 'blocked', 'failed')
+        RETURNING t.project_id, p.name
+     )
+     SELECT project_id::text AS id, name, count(*)::text AS n
+       FROM victims GROUP BY 1, 2`,
+  );
+  for (const row of swept.rows) {
+    cancelled.push({
+      projectId: row.id,
+      projectName: row.name,
+      tasks: Number(row.n),
+    });
+    console.log(
+      `[project-tick] project ${row.id} ("${row.name}") is cancelled — retired ${row.n} open task row(s) with it`,
+    );
+  }
+
+  const claims = await pool.query<{
+    id: string;
+    name: string;
+    status: ProjectStatus;
+    tasks_total: string;
+    tasks_done: string;
+    tasks_open: string;
+    open_states: string;
+  }>(
+    `SELECT p.id::text AS id, p.name, p.status,
+            count(*)::text AS tasks_total,
+            count(*) FILTER (WHERE t.status = 'done')::text AS tasks_done,
+            count(*) FILTER (WHERE ${stillOpen("t")})::text AS tasks_open,
+            string_agg(DISTINCT t.status, ', ')
+              FILTER (WHERE ${stillOpen("t")}) AS open_states
+       FROM projects p
+       JOIN project_tasks t ON t.project_id = p.id
+      WHERE p.status = 'done'
+      GROUP BY p.id, p.name, p.status
+     HAVING count(*) FILTER (WHERE ${stillOpen("t")}) > 0
+      ORDER BY p.updated_at DESC`,
+  );
+
+  const disagreements: ProjectDisagreement[] = claims.rows.map((row) => ({
+    projectId: row.id,
+    projectName: row.name,
+    status: row.status,
+    tasksDone: Number(row.tasks_done),
+    tasksCancelled: 0,
+    tasksTotal: Number(row.tasks_total),
+    reason:
+      `closed as done but still holds ${row.tasks_open} open task row(s) ` +
+      `(${row.open_states}) — status and tasks preserved, one of them is wrong`,
+  }));
+  for (const d of disagreements) {
+    console.warn(`[project-tick] project ${d.projectId} ("${d.projectName}"): ${d.reason}`);
+  }
+
+  return { cancelled, disagreements };
+}
 
 /** Shallow-merge a patch into projects.metadata. Used by goal-mode
  *  bookkeeping (last_checkin_at) — deliberately does NOT bump updated_at so
@@ -1272,11 +1430,21 @@ export async function promoteReadyTasks(): Promise<number> {
         AND pt.status = 'pending'
         AND (
           -- GRAPH BRANCH
+          --
+          -- 2026-08-25: all three '<> done' terms below became
+          -- TERMINAL_TASK_STATUSES tests. A CANCELLED dependency is never going
+          -- to become 'done', so reading it as unsatisfied means the dependent
+          -- row waits forever — and cancelling is a deliberate human decision
+          -- that the work will not be carried, not an accident to defend
+          -- against. The straddle and legacy terms are the same argument one
+          -- level up: a retired row in an earlier round used to hold back every
+          -- round above it, which is precisely how aios-goals-day-system and
+          -- os-usable-for-work wedged.
           (pt.depends_on IS NOT NULL
            AND NOT EXISTS (SELECT 1 FROM project_tasks d
                             WHERE d.id = ANY(pt.depends_on)
                               AND d.project_id = pt.project_id   -- R27, round 204
-                              AND d.status <> 'done')
+                              AND ${stillOpen("d")})
            AND (SELECT count(*) FROM project_tasks d
                  WHERE d.id = ANY(pt.depends_on)
                    AND d.project_id = pt.project_id)     -- R27, round 204
@@ -1285,14 +1453,14 @@ export async function promoteReadyTasks(): Promise<number> {
                             WHERE l.project_id = pt.project_id
                               AND (pt.graph_frozen OR l.depends_on IS NULL)  -- R71, E4
                               AND l.round < pt.round
-                              AND l.status <> 'done'))  -- TODO(R12-retire)
+                              AND ${stillOpen("l")}))  -- TODO(R12-retire)
           OR
           -- LEGACY BRANCH  TODO(R12-retire)
           (pt.depends_on IS NULL
            AND NOT EXISTS (SELECT 1 FROM project_tasks earlier
                             WHERE earlier.project_id = pt.project_id
                               AND earlier.round < pt.round
-                              AND earlier.status <> 'done'))
+                              AND ${stillOpen("earlier")}))
         )
       RETURNING pt.id`,
   );
@@ -1803,7 +1971,13 @@ export async function bumpFixCycle(id: string): Promise<number> {
  *  fired by that group's last task, is the same property restated over the new
  *  unit; the notification text itself is
  *  lib/project-reconcile.ts's `groupCompleteNotification`, byte-identical to
- *  the historical string for `main`. */
+ *  the historical string for `main`.
+ *
+ *  2026-08-25: 'cancelled' joins 'done' as terminal here, but the AND term is
+ *  new and load-bearing. "Complete" fires a 🏁 at Konrad — a claim that a group
+ *  was carried — so a group whose every row was cancelled must NOT be complete,
+ *  it must be silent. Without the second term, retiring the last open row of a
+ *  round would ANNOUNCE it. */
 export async function roundIsComplete(
   projectId: string,
   round: number,
@@ -1811,8 +1985,13 @@ export async function roundIsComplete(
 ): Promise<boolean> {
   const r = await pool.query<{ complete: boolean }>(
     `SELECT NOT EXISTS (
-       SELECT 1 FROM project_tasks
-        WHERE project_id = $1 AND round = $2 AND workstream = $3 AND status <> 'done'
+       SELECT 1 FROM project_tasks t
+        WHERE t.project_id = $1 AND t.round = $2 AND t.workstream = $3
+          AND ${stillOpen("t")}
+     ) AND EXISTS (
+       SELECT 1 FROM project_tasks t
+        WHERE t.project_id = $1 AND t.round = $2 AND t.workstream = $3
+          AND t.status = 'done'
      ) AS complete`,
     [projectId, round, workstream],
   );

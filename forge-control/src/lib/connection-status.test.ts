@@ -416,6 +416,33 @@ describe("R52 — agy is invoked by absolute path", () => {
    * `execFile(AGY_BIN, ["models"])` blocks until the timeout kills it, on every
    * settings load and every cron tick. runCommand() passes stdin `"ignore"`.
    * Measured: 20038ms/SIGTERM with a pipe, 372ms with /dev/null.
+   *
+   * ── WHY THE THRESHOLD IS 12s AND NOT 5s (2026-08-25) ────────────────────────
+   * This is the one test in the suite that spawns a LIVE third-party binary, so
+   * it is the one test whose timing is not a property of this tree. At 5s it
+   * went red on nights when Gemini was merely slow, and a gate that reports
+   * "your code is broken" when Google is having a bad minute trains everyone to
+   * ignore it — and worse, opens a fix cycle against a tree that is fine.
+   *
+   * RE-MEASURED both arms on this host, 2026-08-25, spawn() with the stdin fd
+   * as the only variable:
+   *
+   *     stdin = pipe   (the bug)   20040ms  code=null  signal=SIGTERM
+   *     stdin = ignore (healthy)    2170ms  code=0     signal=none
+   *
+   * So the healthy path is 2.2s TODAY, not the 0.372s this comment used to
+   * quote — the old 5s threshold had barely 2x headroom over a live network
+   * call, which is why it flickered. The bug it guards is binary, not gradual:
+   * a pipe means the probe never returns and is SIGTERM'd at the timeout, and
+   * `outcome.signal === null` above already catches that deterministically.
+   * This clause is the belt to that pair of braces, so it belongs just under
+   * the timeout, where only a genuine hang can reach it.
+   *
+   * Do not "tighten" this back down to chase latency, and do not trust the
+   * quoted numbers without re-running the two-arm comparison — note that
+   * execFile() IGNORES a `stdio` option, so a probe written with execFile
+   * measures a pipe on BOTH arms and appears to prove the fix does nothing.
+   * If probe latency is worth tracking, track it as a metric, not a red gate.
    */
   test("the probe ANSWERS rather than hanging — stdin must be /dev/null", async () => {
     const t0 = Date.now();
@@ -427,8 +454,8 @@ describe("R52 — agy is invoked by absolute path", () => {
       `the probe was killed by ${outcome.signal} after ${elapsed}ms instead of answering — stdin is almost certainly a pipe again`,
     );
     assert.ok(
-      elapsed < 5_000,
-      `the probe took ${elapsed}ms; S-A measured agy models at 0.32s, so anything near the timeout means it is blocking on stdin`,
+      elapsed < 12_000,
+      `the probe took ${elapsed}ms against a 15s timeout; the pipe-hang mode measured 20038ms/SIGTERM and a healthy probe 372ms, so this close to the timeout means it is blocking on stdin`,
     );
     assert.notEqual(outcome.code, null);
   });

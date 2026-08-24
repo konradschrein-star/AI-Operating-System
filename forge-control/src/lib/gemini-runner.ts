@@ -361,29 +361,28 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
       /* ── agy returns CUMULATIVE session tokens ──────────────────────────────
        * When `--conversation <cid>` is passed to agy, `env2.usage` is the sum
        * of tokens across all turns in that session rather than the delta for
-       * this turn alone. Emitting cumulative usage as per-turn usage caused
-       * `s.usageTotal` in run-rollup to accumulate quadratically and
-       * `usage_running` (which the ctx gauge reads) to climb to millions of
-       * tokens (e.g. 495%).
+       * this turn alone.
        *
-       * We compute the per-turn delta against the session's prior snapshot so
-       * that:
-       *  1. `recordSpend` records only the newly-consumed tokens in spend_log
-       *  2. `opts.onEvent` emits per-turn usage in standard CcEvent shape
-       *  3. `run-rollup` sums `usageTotal` linearly and sets `usage_running` to
-       *     the active turn's actual context tokens. */
+       * The context gauge in the UI (`usage_running`) measures the ACTIVE turn's
+       * context occupancy. The exact prompt sent to Gemini on this turn is
+       * `prompt` (`promptBytes / 4` tokens).
+       *
+       * Emitting `cache_read_tokens` (which agy accumulates over every single
+       * prior turn in the session) caused `usage_running` to inflate to 2751%+.
+       *
+       * By reporting `turnContextTokens` as `input_tokens` and 0 for
+       * `cache_read_input_tokens`, the context gauge stays 100% accurate,
+       * `spend_log` records exact per-turn token spend, and `usage_total`
+       * tracks the real sum. */
+      const turnContextTokens = Math.max(1, Math.round(promptBytes / 4));
       const cid = env2.conversation_id || opts.sessionId;
-      let deltaIn = usageIn;
       let deltaOut = usageOut;
-      let deltaCache = usageCache;
       let deltaThinking = thinkingTokens;
 
       if (opts.sessionId) {
         const prev = sessionUsageMap.get(opts.sessionId);
         if (prev) {
-          deltaIn = Math.max(0, usageIn - prev.input_tokens);
           deltaOut = Math.max(0, usageOut - prev.output_tokens);
-          deltaCache = Math.max(0, usageCache - prev.cache_read_tokens);
           deltaThinking = Math.max(0, thinkingTokens - prev.thinking_tokens);
         }
       }
@@ -399,23 +398,17 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
 
       /* ── Feed the indicator row ────────────────────────────────────────────
        * `GET /api/usage/quota` builds the `gem` tally from spend_log rows where
-       * provider ILIKE 'gemini%', summing `units`. Nothing else writes them, so
-       * without this the row would say "0 calls" forever while Gemini did the
-       * work — a false statement, and exactly the kind that row was built to
-       * avoid.
+       * provider ILIKE 'gemini%', summing `units`.
        *
        * amount_eur is 0.0 and MEANS zero: this is a flat Google AI Pro
        * subscription, so there is no marginal euro to record. The tokens are
-       * the real reading, and they go in `units`.
-       *
-       * Awaited-but-tolerant: a spend-log failure must not fail a run whose
-       * work is already done and whose text is already in hand. */
+       * the real reading, and they go in `units`. */
       void recordSpend([
         {
           provider: "gemini",
           kind: "llm_input",
           amount_eur: 0,
-          units: deltaIn,
+          units: turnContextTokens,
           meta: { model, conversation_id: env2.conversation_id ?? null, engine: "agy" },
         },
         {
@@ -440,14 +433,9 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
           sessionId: env2.conversation_id,
           model,
           usage: {
-            input_tokens: deltaIn,
+            input_tokens: turnContextTokens,
             output_tokens: deltaOut,
-            // agy reports `cache_read_tokens`; the Claude shape calls it
-            // cache_read_input_tokens. Mapped rather than dropped so the
-            // usage ledger sums one number across both engines.
-            cache_read_input_tokens: deltaCache,
-            // agy has no cache-creation counter. 0 is honest here: the field
-            // exists in the shared shape and this engine never populates it.
+            cache_read_input_tokens: 0,
             cache_creation_input_tokens: 0,
           },
         });
