@@ -913,6 +913,8 @@ export interface RunDetail extends RunSummary {
   stuck_signal: string | null;
   started_at: string | null;
   completed_at: string | null;
+  from?: number;
+  total?: number;
 }
 
 export const fetchChatList = async (
@@ -1035,48 +1037,88 @@ export const archiveAllChats = async (): Promise<number> => {
  *  bare `RunDetail` unchanged. */
 export type RunDelta = Omit<RunDetail, "prompt"> & { prompt?: string };
 
+export interface FetchChatOptions {
+  since?: number;
+  before?: number;
+  limit?: number;
+}
+
 export function fetchChat(id: string): Promise<RunDetail>;
 export function fetchChat(
   id: string,
   since: number,
 ): Promise<{ run: RunDelta; from: number; total: number }>;
-export async function fetchChat(id: string, since?: number) {
-  const suffix = since !== undefined ? `?since=${since}` : "";
+export function fetchChat(
+  id: string,
+  options: FetchChatOptions,
+): Promise<{ run: RunDelta; from: number; total: number }>;
+export async function fetchChat(
+  id: string,
+  optionsOrSince?: number | FetchChatOptions,
+): Promise<RunDetail | { run: RunDelta; from: number; total: number }> {
+  let suffix = "";
+  if (typeof optionsOrSince === "number") {
+    suffix = `?since=${optionsOrSince}`;
+  } else if (optionsOrSince !== undefined) {
+    const params = new URLSearchParams();
+    if (optionsOrSince.since !== undefined)
+      params.set("since", String(optionsOrSince.since));
+    if (optionsOrSince.before !== undefined)
+      params.set("before", String(optionsOrSince.before));
+    if (optionsOrSince.limit !== undefined)
+      params.set("limit", String(optionsOrSince.limit));
+    const qs = params.toString();
+    if (qs) suffix = `?${qs}`;
+  }
   const r = await getJson<{ run: RunDelta; from: number; total: number }>(
     `/chat/${id}${suffix}`,
   );
-  return since === undefined ? (r.run as RunDetail) : r;
+  if (optionsOrSince === undefined) {
+    return { ...(r.run as RunDetail), from: r.from, total: r.total };
+  }
+  return r;
 }
 
 /** Poll a chat's thread incrementally: request only what forge-control
- *  hasn't already shown the cached `prev` (thread.length entries — the
+ *  hasn't already shown the cached `prev` (computed tail cursor `(prev.from ?? 0) + prev.thread.length` — the
  *  KNOWN LEAD in this project's brief: an open long chat was re-shipping its
  *  whole ~2.1 MB thread on every poll), then splice the delta back in.
  *
  *  No `prev` (first mount, or the cache entry was evicted): falls back to a
- *  full fetch. `from !== prev.thread.length`: the server recovered to a full
- *  fetch on its own (`since` didn't match its live total — e.g. `/compact`
+ *  full fetch. `from !== tail`: the server recovered to a fresh bounded
+ *  snapshot on its own (`since` didn't match its live total — e.g. `/compact`
  *  shortened the thread between polls) — trusting the stale local count and
  *  appending anyway would duplicate every entry the cache still holds, so
  *  the full replacement thread wins outright.
  *
- *  Delta responses (`from === prev.thread.length`) omit the static `prompt`
- *  field to save steady-state bandwidth (~86% savings). The client preserves
- *  `prev.prompt` across delta merges. If an empty delta arrives, `prev.thread`'s
- *  array reference is kept (no new render for a thread that didn't change); a
+ *  Delta responses (`from === tail`) omit the static `prompt` field to save
+ *  steady-state bandwidth (~86% savings). The client preserves `prev.prompt`
+ *  across delta merges. If an empty delta arrives, `prev.thread`'s array
+ *  reference is kept (no new render for a thread that didn't change); a
  *  non-empty one is appended. */
 export async function fetchChatDelta(
   id: string,
   prev: RunDetail | undefined,
 ): Promise<RunDetail> {
   if (prev === undefined) return fetchChat(id);
-  const { run, from } = await fetchChat(id, prev.thread.length);
-  if (from !== prev.thread.length) return run as RunDetail;
+  const tail = (prev.from ?? 0) + prev.thread.length;
+  const { run, from, total } = await fetchChat(id, { since: tail });
+  if (from !== tail) return { ...(run as RunDetail), from, total };
   const prompt =
     "prompt" in run && run.prompt !== undefined ? run.prompt : prev.prompt;
   const thread =
     run.thread.length === 0 ? prev.thread : [...prev.thread, ...run.thread];
-  return { ...prev, ...run, prompt, thread };
+  return { ...prev, ...run, prompt, thread, from: prev.from ?? 0, total };
+}
+
+/** Fetch older historical turns before index `before` (default limit: 60 turns).
+ *  Used for backward pagination when scrolling up or clicking "show older". */
+export async function fetchChatOlder(
+  id: string,
+  before: number,
+  limit = 60,
+): Promise<{ run: RunDelta; from: number; total: number }> {
+  return fetchChat(id, { before, limit });
 }
 
 /** Which project — if any — this chat started. Shape of
