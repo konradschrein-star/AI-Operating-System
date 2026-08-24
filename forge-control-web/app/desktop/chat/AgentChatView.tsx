@@ -47,9 +47,9 @@
  */
 
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
-import { fetchChat, type RunDetail, type RunStatus, type ThreadEntry } from "../../api";
+import { fetchChatDelta, type RunDetail, type RunStatus, type ThreadEntry } from "../../api";
 import { AssistantThread } from "./AssistantThread";
 import { OrientationStrip } from "./OrientationStrip";
 import { StorySoFar } from "./StorySoFar";
@@ -409,10 +409,16 @@ export function AgentChatView({
 }: AgentChatViewProps) {
   /* The one query. Same key namespace as ChatSurface's manager query, so
    * drilling into a run you have already opened reads from the same cache
-   * entry instead of opening a second one. */
+   * entry instead of opening a second one — and the delta poll below picks
+   * up right where that query (or this one, on a prior tick) left off. */
+  const qc = useQueryClient();
   const detailQ = useQuery({
     queryKey: ["chat", "run", frame.runId],
-    queryFn: () => fetchChat(frame.runId),
+    queryFn: () =>
+      fetchChatDelta(
+        frame.runId,
+        qc.getQueryData<RunDetail>(["chat", "run", frame.runId]),
+      ),
     refetchInterval: live ? 20000 : 3000,
   });
 

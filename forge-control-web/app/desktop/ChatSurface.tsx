@@ -12,7 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot } from "../tokens";
 import {
   fetchChatList,
-  fetchChat,
+  fetchChatDelta,
   fetchChatLinkage,
   createChat,
   sendChatMessage,
@@ -776,14 +776,20 @@ export function ChatSurface({
   const { live } = useRunEvents(selId, !composing);
   const detailQ = useQuery({
     queryKey: ["chat", "run", selId],
-    queryFn: () => fetchChat(selId!),
+    // Delta poll (NFU3 KNOWN LEAD): request only what's new past the cached
+    // thread instead of re-shipping the whole ~2.1 MB run every tick. See
+    // fetchChatDelta's own doc for the recovery/merge rules.
+    queryFn: () =>
+      fetchChatDelta(selId!, qc.getQueryData<RunDetail>(["chat", "run", selId])),
     // `navStack.length === 0` is the poll-budget half of the drill-in (NFU3).
     // A drilled view runs its own detail query at the same intervals; leaving
     // this one enabled underneath it would DOUBLE the surface's request rate
     // for a thread nobody is currently reading. The cache entry survives, so
     // coming back renders instantly and then refreshes.
     enabled: !!selId && !composing && navStack.length === 0,
-    refetchInterval: live ? 20000 : 3000,
+    // 4000ms fallback (was 3000ms) keeps the degraded (stream-down) budget
+    // at <= 36 req/min against the 40 req/min ceiling ChatTeamPanel documents.
+    refetchInterval: live ? 20000 : 4000,
   });
 
   const createM = useMutation({

@@ -1025,10 +1025,51 @@ export const archiveAllChats = async (): Promise<number> => {
   return r.archived;
 };
 
-export const fetchChat = async (id: string) => {
-  const r = await getJson<{ run: RunDetail }>(`/chat/${id}`);
-  return r.run;
-};
+/** GET /api/chat/:id — full thread when `since` is omitted, or (per
+ *  forge-control's `chatDeltaResponse`) only the entries past `since` plus
+ *  the cursor the caller asked for, `from` — echoed back so a caller merging
+ *  a delta into a cached thread can tell a real append (`from === since`)
+ *  apart from the server's own recovery-to-full-fetch (`from === 0`, thread
+ *  replaced in full) when `since` no longer lines up with the live total.
+ *  Overloaded so the many existing `fetchChat(id)` call sites keep getting a
+ *  bare `RunDetail` unchanged. */
+export function fetchChat(id: string): Promise<RunDetail>;
+export function fetchChat(
+  id: string,
+  since: number,
+): Promise<{ run: RunDetail; from: number; total: number }>;
+export async function fetchChat(id: string, since?: number) {
+  const suffix = since !== undefined ? `?since=${since}` : "";
+  const r = await getJson<{ run: RunDetail; from: number; total: number }>(
+    `/chat/${id}${suffix}`,
+  );
+  return since === undefined ? r.run : r;
+}
+
+/** Poll a chat's thread incrementally: request only what forge-control
+ *  hasn't already shown the cached `prev` (thread.length entries — the
+ *  KNOWN LEAD in this project's brief: an open long chat was re-shipping its
+ *  whole ~2.1 MB thread on every poll), then splice the delta back in.
+ *
+ *  No `prev` (first mount, or the cache entry was evicted): falls back to a
+ *  full fetch. `from !== prev.thread.length`: the server recovered to a full
+ *  fetch on its own (`since` didn't match its live total — e.g. `/compact`
+ *  shortened the thread between polls) — trusting the stale local count and
+ *  appending anyway would duplicate every entry the cache still holds, so
+ *  the full replacement thread wins outright. Otherwise an empty delta keeps
+ *  `prev.thread`'s array reference (no new render for a thread that didn't
+ *  change); a non-empty one is appended. */
+export async function fetchChatDelta(
+  id: string,
+  prev: RunDetail | undefined,
+): Promise<RunDetail> {
+  if (prev === undefined) return fetchChat(id);
+  const { run, from } = await fetchChat(id, prev.thread.length);
+  if (from !== prev.thread.length) return run;
+  return run.thread.length === 0
+    ? { ...run, thread: prev.thread }
+    : { ...run, thread: [...prev.thread, ...run.thread] };
+}
 
 /** Which project — if any — this chat started. Shape of
  *  `GET /api/chat/:id/linkage` (forge-control routes/chat.ts, phase 300g).

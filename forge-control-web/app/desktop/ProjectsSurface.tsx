@@ -15,7 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot } from "../tokens";
 import {
   fetchProjects,
-  fetchChat,
+  fetchChatDelta,
   createProject,
   setProjectStatus,
   sendChatMessage,
@@ -1387,10 +1387,12 @@ function FloorTile({
   onExpand: () => void;
 }) {
   const runId = task.run_id!;
+  const qc = useQueryClient();
   const { live } = useRunEvents(runId, true);
   const runQ = useQuery({
     queryKey: ["chat", "run", runId],
-    queryFn: () => fetchChat(runId),
+    queryFn: () =>
+      fetchChatDelta(runId, qc.getQueryData<RunDetail>(["chat", "run", runId])),
     refetchInterval: live ? 20_000 : 3_000,
   });
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -1498,7 +1500,8 @@ function TaskDetail({
   const { live } = useRunEvents(runId, !!runId);
   const runQ = useQuery({
     queryKey: ["chat", "run", runId],
-    queryFn: () => fetchChat(runId!),
+    queryFn: () =>
+      fetchChatDelta(runId!, qc.getQueryData<RunDetail>(["chat", "run", runId])),
     enabled: !!runId,
     refetchInterval: live ? 20_000 : 3_000,
   });
