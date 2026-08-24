@@ -74,6 +74,36 @@ export function isEngineDropout(text: string | null | undefined): boolean {
  */
 export const ENGINE_FALLBACK_TIER: TaskTier = "junior";
 
+/**
+ * How many times a dropped task is retried ON ITS OWN ENGINE before it is
+ * handed to the fallback.
+ *
+ * This was 0 implicitly — the first envelope error demoted the task straight to
+ * Claude — and that is the single biggest reason Konrad kept finding Claude
+ * runs on a fleet he had pinned to gemini. Measured over this fleet's whole
+ * history, grouped by task title:
+ *
+ *     succeeded on the 1st gemini attempt        25
+ *     succeeded after 1 retry                    11
+ *     succeeded after 2 retries                   3
+ *     succeeded after 3+ retries                  3
+ *     never succeeded on gemini                  47
+ *       ...of those, given only ONE attempt      26
+ *       ...of those, later run on claude         44
+ *
+ * So 17 of the 42 titles that were ever retried succeeded ONLY because they
+ * were retried, while 26 titles were demoted after a single drop and never got
+ * the second attempt that worked for so many of their neighbours.
+ *
+ * One retry, not unlimited: the worst case is one extra attempt of wall-clock
+ * on a free engine before the paid rescue happens anyway, and the drops are
+ * genuine engine flakiness (agy returns status ERROR with an empty response and
+ * empty stderr; a trivial call succeeds in 3.1s and 6 concurrent calls returned
+ * 6/6 SUCCESS), which is exactly the failure shape a retry is for.
+ */
+export const ENGINE_RETRIES_BEFORE_FALLBACK = 1;
+
+
 /** Which tiers run on an engine that can drop work this way. Only `gemini`
  *  routes to `agy`; every other tier is claude-code, whose failures are real
  *  failures (or usage walls, which R860 already parks).
@@ -84,4 +114,39 @@ export const ENGINE_FALLBACK_TIER: TaskTier = "junior";
  *  where a proof already exists. */
 export function tierCanDropOut(tier: TaskTier | null): tier is "gemini" {
   return tier === "gemini";
+}
+
+/** What should happen to a settled task that the engine may have dropped. */
+export type DropoutAction = "retry-same-tier" | "demote" | "none";
+
+/** The inputs the decision needs — a narrow shape so a test does not have to
+ *  build a whole task row, and so the decision cannot quietly start depending
+ *  on something else. */
+export interface DropoutFacts {
+  tier: TaskTier | null;
+  runStatus: string | null;
+  runId: string | null;
+  lastError: string | null;
+  attempt: number;
+  projectAcceptsWork: boolean;
+}
+
+/**
+ * Pure policy: retry on the same engine, hand to the fallback, or leave alone.
+ *
+ * Separated from the DB write so every branch is reachable in a test. The write
+ * path re-checks the same conditions through its own `WHERE` clause, so this
+ * being wrong cannot corrupt a row — it can only route work to the wrong
+ * engine, which is precisely the bug being fixed.
+ */
+export function decideDropoutAction(f: DropoutFacts): DropoutAction {
+  // Only the free engine drops work this way. A claude failure is a real
+  // failure and must not be laundered into a retry.
+  if (!tierCanDropOut(f.tier)) return "none";
+  if (f.runStatus !== "failed" || !f.runId) return "none";
+  if (!isEngineDropout(f.lastError)) return "none";
+  // Re-queuing onto a blocked or paused project would smuggle work past the
+  // gate — and the fallback tier is PAID, so this term is load-bearing.
+  if (!f.projectAcceptsWork) return "none";
+  return f.attempt < ENGINE_RETRIES_BEFORE_FALLBACK ? "retry-same-tier" : "demote";
 }

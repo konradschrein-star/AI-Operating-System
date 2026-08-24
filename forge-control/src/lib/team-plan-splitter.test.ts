@@ -138,6 +138,22 @@ describe("resize handle — the grab target is bigger than the line", () => {
     assert.ok(pad <= 8, `a ${pad}px pad starts eating the rows either side`);
   });
 
+  test("the hit pad is actually on top — z-index needs a position to mean anything", () => {
+    // z-index does not apply to a statically positioned box. The declaration
+    // was inert from the day it was written; HIT_PAD is what made that matter,
+    // because the pad reaches 5px into each neighbour and a sibling carrying
+    // its own position+z-index (CanvasPane's plan drawer is relative/10) then
+    // paints over half the grab target.
+    assert.match(SPLIT_SRC, /position: "relative"/, "without this the zIndex below is decorative");
+    const posAt = SPLIT_SRC.indexOf('position: "relative"');
+    const zAt = SPLIT_SRC.indexOf("zIndex: 2");
+    assert.ok(posAt !== -1 && zAt !== -1);
+    assert.ok(
+      Math.abs(zAt - posAt) < 400,
+      "the position and the z-index must live in the same style object",
+    );
+  });
+
   test("both axes still declare their cursor and separator role", () => {
     assert.match(SPLIT_SRC, /cursor: "row-resize"/);
     assert.match(SPLIT_SRC, /cursor: "col-resize"/);
