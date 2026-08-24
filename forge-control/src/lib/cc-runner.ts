@@ -414,6 +414,7 @@ export async function runClaudeCode(opts: {
       sessionId: opts.sessionId,
       model: requestedModel,
       timeoutMs: opts.timeoutMs,
+      runId: opts.runId,
       onEvent: opts.onEvent,
       isCancelled: opts.isCancelled,
     });

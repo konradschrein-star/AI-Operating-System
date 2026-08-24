@@ -43,9 +43,13 @@
  * possible.
  */
 
-import { spawn } from "node:child_process";
-
-import { CcResumeError, type CcEvent, type CcResult } from "./cc-runner.ts";
+import { spawn, type ChildProcess } from "node:child_process";
+import {
+  CcResumeError,
+  uploadsRunId,
+  type CcEvent,
+  type CcResult,
+} from "./cc-runner.ts";
 import { recordSpend } from "../db/spend.ts";
 
 /** Absolute. pm2's PATH has no /root/.local/bin — that export lives in
@@ -85,6 +89,32 @@ interface AgyEnvelope {
   };
 }
 
+export interface SessionUsageSnapshot {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  thinking_tokens: number;
+}
+
+const sessionUsageMap = new Map<string, SessionUsageSnapshot>();
+
+export function getSessionUsageSnapshot(
+  sessionId: string,
+): SessionUsageSnapshot | undefined {
+  return sessionUsageMap.get(sessionId);
+}
+
+export function setSessionUsageSnapshot(
+  sessionId: string,
+  snapshot: SessionUsageSnapshot,
+): void {
+  sessionUsageMap.set(sessionId, snapshot);
+}
+
+export function clearSessionUsageSnapshot(sessionId: string): void {
+  sessionUsageMap.delete(sessionId);
+}
+
 function numOr0(v: unknown): number {
   const n = typeof v === "string" ? Number(v) : (v as number);
   return Number.isFinite(n) ? n : 0;
@@ -101,6 +131,8 @@ export interface GeminiRunOptions {
   sessionId?: string | null;
   model?: string | null;
   timeoutMs?: number;
+  /** The `runs.id` this turn belongs to. */
+  runId?: string | null;
   onEvent?: (e: CcEvent) => void;
   isCancelled?: () => Promise<boolean>;
 }
@@ -153,6 +185,14 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
   // metered billing — the failure mode is an invoice, not an error.
   delete env.GEMINI_API_KEY;
   delete env.GOOGLE_API_KEY;
+  if (opts.runId) {
+    try {
+      env.FORGE_RUN_ID = uploadsRunId(opts.runId);
+      env.FORGE_RUN_UUID = opts.runId;
+    } catch {
+      // Non-UUID run id — leave unset
+    }
+  }
 
   /* ── The 128 KiB argv cliff ────────────────────────────────────────────────
    *
@@ -184,7 +224,7 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
   }
 
   return await new Promise<CcResult>((resolve, reject) => {
-    let child;
+    let child: ChildProcess;
     try {
       child = spawn(AGY_BIN, args, {
         cwd: opts.cwd,
@@ -233,10 +273,10 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
         }, 5000)
       : null;
 
-    child.stdout.on("data", (d: Buffer) => {
+    child.stdout?.on("data", (d: Buffer) => {
       stdout += d.toString();
     });
-    child.stderr.on("data", (d: Buffer) => {
+    child.stderr?.on("data", (d: Buffer) => {
       stderr += d.toString();
     });
 
@@ -315,6 +355,47 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
 
       const usageIn = numOr0(env2.usage?.input_tokens);
       const usageOut = numOr0(env2.usage?.output_tokens);
+      const usageCache = numOr0(env2.usage?.cache_read_tokens);
+      const thinkingTokens = numOr0(env2.usage?.thinking_tokens);
+
+      /* ── agy returns CUMULATIVE session tokens ──────────────────────────────
+       * When `--conversation <cid>` is passed to agy, `env2.usage` is the sum
+       * of tokens across all turns in that session rather than the delta for
+       * this turn alone. Emitting cumulative usage as per-turn usage caused
+       * `s.usageTotal` in run-rollup to accumulate quadratically and
+       * `usage_running` (which the ctx gauge reads) to climb to millions of
+       * tokens (e.g. 495%).
+       *
+       * We compute the per-turn delta against the session's prior snapshot so
+       * that:
+       *  1. `recordSpend` records only the newly-consumed tokens in spend_log
+       *  2. `opts.onEvent` emits per-turn usage in standard CcEvent shape
+       *  3. `run-rollup` sums `usageTotal` linearly and sets `usage_running` to
+       *     the active turn's actual context tokens. */
+      const cid = env2.conversation_id || opts.sessionId;
+      let deltaIn = usageIn;
+      let deltaOut = usageOut;
+      let deltaCache = usageCache;
+      let deltaThinking = thinkingTokens;
+
+      if (opts.sessionId) {
+        const prev = sessionUsageMap.get(opts.sessionId);
+        if (prev) {
+          deltaIn = Math.max(0, usageIn - prev.input_tokens);
+          deltaOut = Math.max(0, usageOut - prev.output_tokens);
+          deltaCache = Math.max(0, usageCache - prev.cache_read_tokens);
+          deltaThinking = Math.max(0, thinkingTokens - prev.thinking_tokens);
+        }
+      }
+
+      if (cid) {
+        sessionUsageMap.set(cid, {
+          input_tokens: usageIn,
+          output_tokens: usageOut,
+          cache_read_tokens: usageCache,
+          thinking_tokens: thinkingTokens,
+        });
+      }
 
       /* ── Feed the indicator row ────────────────────────────────────────────
        * `GET /api/usage/quota` builds the `gem` tally from spend_log rows where
@@ -334,19 +415,19 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
           provider: "gemini",
           kind: "llm_input",
           amount_eur: 0,
-          units: usageIn,
+          units: deltaIn,
           meta: { model, conversation_id: env2.conversation_id ?? null, engine: "agy" },
         },
         {
           provider: "gemini",
           kind: "llm_output",
           amount_eur: 0,
-          units: usageOut,
+          units: deltaOut,
           meta: {
             model,
             conversation_id: env2.conversation_id ?? null,
             engine: "agy",
-            thinking_tokens: numOr0(env2.usage?.thinking_tokens),
+            thinking_tokens: deltaThinking,
             status: env2.status ?? null,
           },
         },
@@ -359,12 +440,12 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
           sessionId: env2.conversation_id,
           model,
           usage: {
-            input_tokens: usageIn,
-            output_tokens: usageOut,
+            input_tokens: deltaIn,
+            output_tokens: deltaOut,
             // agy reports `cache_read_tokens`; the Claude shape calls it
             // cache_read_input_tokens. Mapped rather than dropped so the
             // usage ledger sums one number across both engines.
-            cache_read_input_tokens: numOr0(env2.usage?.cache_read_tokens),
+            cache_read_input_tokens: deltaCache,
             // agy has no cache-creation counter. 0 is honest here: the field
             // exists in the shared shape and this engine never populates it.
             cache_creation_input_tokens: 0,

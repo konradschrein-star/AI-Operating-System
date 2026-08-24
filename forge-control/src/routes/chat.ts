@@ -42,6 +42,7 @@ import {
   type ThreadEntry,
 } from "../db/runs.ts";
 import { sanitizeEffort } from "../lib/cc-runner.ts";
+import { clearSessionUsageSnapshot } from "../lib/gemini-runner.ts";
 /* phase 300g (U2/U3) — chat↔project linkage. All SQL lives in chat-linkage.ts;
  * this file only calls it. See that module for the scan bounds and the
  * backfill's idempotence guarantee. */
@@ -1803,6 +1804,10 @@ r.post("/:id/compact", async (c) => {
      * guard never binds. */
     const priorTokens = priorContextTokens(current.metadata);
     const estTokens = Math.max(1, Math.min(Math.round(keptChars / 4), priorTokens));
+    const priorSessionId = (current.metadata as Record<string, unknown> | null)?.cc_session_id;
+    if (typeof priorSessionId === "string") {
+      clearSessionUsageSnapshot(priorSessionId);
+    }
     await teamPool.query(
       `UPDATE runs
           SET metadata = (coalesce(metadata,'{}'::jsonb) - 'cc_session_id')
@@ -1885,6 +1890,11 @@ r.post("/:id/compact", async (c) => {
    * never raise it. */
   const priorRunning = priorContextTokens(current.metadata);
   const estTokens = Math.max(1, Math.min(Math.round(keptChars / 4), priorRunning));
+
+  const priorSessionId = (current.metadata as Record<string, unknown> | null)?.cc_session_id;
+  if (typeof priorSessionId === "string") {
+    clearSessionUsageSnapshot(priorSessionId);
+  }
 
   const { rows } = await teamPool.query(
     `UPDATE runs
