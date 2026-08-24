@@ -20,6 +20,7 @@
  * agent.spawn_cap ceiling, so there's exactly one place that cap lives.
  */
 
+import { inheritTier } from "./tier-inherit";
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +40,7 @@ import {
   setProjectWorkspace,
   demoteTaskTier,
   closeFinishedProjects,
+  reconcileProjectStatuses,
   listTasksForProject,
   getProject,
   managerChatRunId,
@@ -85,6 +87,8 @@ import {
   isEngineDropout,
   tierCanDropOut,
   ENGINE_FALLBACK_TIER,
+  ENGINE_RETRIES_BEFORE_FALLBACK,
+  decideDropoutAction,
 } from "./engine-fallback.ts";
 import { projectSlug } from "./run-control-rules.ts";
 import { provisionWorkstream, liveCheckoutPath } from "./workspace.ts";
@@ -2088,7 +2092,7 @@ async function consolidateVerdictGroup(
        * and a flagship project's stay flagship, without this file knowing which
        * fleet it is serving. `rows` are the REVIEWED tasks — the work being
        * fixed — so their tier is the right one to carry forward. */
-      const inheritedTier = rows.find((r) => r.tier != null)?.tier ?? undefined;
+      const inheritedTier = inheritTier(rows);
       const chain = await createFixChain({
         tier: inheritedTier,
         project_id: projectId,
@@ -2447,16 +2451,65 @@ export async function demoteAfterEngineFailure(
   task: SettledRunningTask,
   project: Project | null,
 ): Promise<boolean> {
-  if (!tierCanDropOut(task.tier)) return false;
-  if (task.run_status !== "failed" || !task.run_id) return false;
-  if (!isEngineDropout(task.last_error)) return false;
-  if (!project || !projectAcceptsWork(project.status)) {
-    console.warn(
-      `[project-tick] task ${task.id} was dropped by the ${task.tier} engine but its project ` +
-        `is ${project?.status ?? "unreadable"} — failing it rather than re-queuing paid work ` +
-        `on a project that is not accepting any`,
-    );
+  /* The branch itself is `decideDropoutAction` in ./engine-fallback — pure, so
+   * every route through it is reachable in a test. This function keeps the I/O
+   * and the reporting. */
+  const action = decideDropoutAction({
+    tier: task.tier,
+    runStatus: task.run_status,
+    runId: task.run_id,
+    lastError: task.last_error,
+    attempt: task.attempt,
+    projectAcceptsWork: Boolean(project && projectAcceptsWork(project.status)),
+  });
+  if (action === "none") {
+    // The one case that deserves a word: a genuine dropout on a project that
+    // is not accepting work. Everything else is ordinary.
+    if (
+      tierCanDropOut(task.tier) &&
+      task.run_status === "failed" &&
+      isEngineDropout(task.last_error) &&
+      !(project && projectAcceptsWork(project.status))
+    ) {
+      console.warn(
+        `[project-tick] task ${task.id} was dropped by the ${task.tier} engine but its project ` +
+          `is ${project?.status ?? "unreadable"} — failing it rather than re-queuing paid work ` +
+          `on a project that is not accepting any`,
+      );
+    }
     return false;
+  }
+  // Past this point `project` is non-null and the tier is a droppable one:
+  // decideDropoutAction returned something other than "none", which requires
+  // both. Re-asserted as guards rather than with `!` so the narrowing is a
+  // proof the compiler checks, not a claim it takes on trust.
+  if (!project) return false;
+  if (!tierCanDropOut(task.tier)) return false;
+
+  /* Retry on the SAME engine first. The drops are envelope errors — agy
+   * returning status ERROR with an empty response and empty stderr — which is
+   * transient flakiness, not the work being impossible. Demoting on the first
+   * one sent 26 tasks to Claude that never got the second attempt so many of
+   * their neighbours succeeded on. See ENGINE_RETRIES_BEFORE_FALLBACK for the
+   * measurement.
+   *
+   * `demoteTaskTier` with from === to IS the requeue: same tier, status back to
+   * 'ready', run_id cleared, attempt incremented, and the same
+   * `status = 'running' AND tier = $2` guard against a row that moved under us. */
+  if (action === "retry-same-tier") {
+    const requeued = await demoteTaskTier(task.id, task.tier, task.tier);
+    if (requeued) {
+      console.warn(
+        `[project-tick] engine dropout — ${task.role} task ${task.id} (round ${task.round}) was ` +
+          `dropped by ${task.tier} ("${(task.last_error ?? "").trim().slice(0, 160)}") and is ` +
+          `re-queued on the SAME tier (attempt ${requeued.attempt} of ` +
+          `${ENGINE_RETRIES_BEFORE_FALLBACK + 1} before falling back to ` +
+          `${ENGINE_FALLBACK_TIER}) — ${project.name} · ${task.title}`,
+      );
+      return true;
+    }
+    // Row moved under us — fall through to the normal demote path, which
+    // repeats the same guard and reports honestly if it also misses.
   }
 
   const moved = await demoteTaskTier(task.id, task.tier, ENGINE_FALLBACK_TIER);
@@ -2796,6 +2849,7 @@ export async function projectTick(): Promise<void> {
     // second half, and it is done here rather than in db/projects.ts because
     // naming the workstreams runs the pure predicate, which lives in this file.
     await reportUnintegratedWorkstreams(finished.held);
+    await reconcileProjectStatuses();
     await goalHeartbeats();
   } catch (e) {
     console.error("[project-tick] tick failed:", e instanceof Error ? e.message : e);

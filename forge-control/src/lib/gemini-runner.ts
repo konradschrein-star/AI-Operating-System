@@ -53,6 +53,11 @@ import { recordSpend } from "../db/spend.ts";
  *  under the server and works perfectly over SSH. */
 export const AGY_BIN = "/root/.local/bin/agy";
 
+/** Linux `MAX_ARG_STRLEN`: the biggest single argv entry execve will accept,
+ *  32 pages including the trailing NUL. Verified empirically against agy on
+ *  this host — 131071 bytes spawns, 131072 throws E2BIG. */
+export const MAX_ARG_STRLEN = 131072;
+
 /** The only Gemini model this OS runs. Konrad, 2026-08-22: "We'll always use
  *  gemini-3.7-flash-high." */
 export const GEMINI_MODEL = "gemini-3.7-flash-high";
@@ -149,15 +154,59 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
   delete env.GEMINI_API_KEY;
   delete env.GOOGLE_API_KEY;
 
+  /* ── The 128 KiB argv cliff ────────────────────────────────────────────────
+   *
+   * The whole prompt travels as ONE argv entry (`-p prompt`), and Linux caps a
+   * single argument at MAX_ARG_STRLEN — 32 pages, 131072 bytes, NUL included.
+   * Measured on this host: a 131071-byte prompt spawns; 131072 throws E2BIG.
+   *
+   * Two reasons this needs an explicit guard rather than being left to the
+   * kernel. First, node throws E2BIG SYNCHRONOUSLY out of `spawn()` — it is not
+   * delivered to the `'error'` listener below, so without a try/catch it
+   * escapes as an unhandled throw from inside the promise executor and the
+   * caller sees a stack trace instead of an engine result. Second, the message
+   * would say "spawn E2BIG" and nothing about prompts, which is a bad thing to
+   * meet at 3am.
+   *
+   * Headroom today is wide: the system prompt is ~9.5 KB and the largest brief
+   * in the database is ~40 KB, so ~50 KB against a 128 KB ceiling. Briefs grow.
+   * agy offers no --prompt-file, and its only stdin channel
+   * (--input-format stream-json) is the same stdin the auth path blocks on, so
+   * there is no bigger door to route this through — the honest move is to fail
+   * with the numbers in the message. */
+  const promptBytes = Buffer.byteLength(prompt, "utf8");
+  if (promptBytes >= MAX_ARG_STRLEN) {
+    throw new Error(
+      `agy prompt is ${promptBytes} bytes, over the ${MAX_ARG_STRLEN}-byte single-argument ` +
+        `limit (Linux MAX_ARG_STRLEN); it cannot be passed on the command line. ` +
+        `Shorten the brief or the system prompt.`,
+    );
+  }
+
   return await new Promise<CcResult>((resolve, reject) => {
-    const child = spawn(AGY_BIN, args, {
-      cwd: opts.cwd,
-      env,
-      // stdin MUST be ignored. agy's auth path reads stdin, and a pipe nobody
-      // writes to never yields EOF — measured: the process was still running at
-      // 12s with a pipe, and answered in 372ms with /dev/null.
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let child;
+    try {
+      child = spawn(AGY_BIN, args, {
+        cwd: opts.cwd,
+        env,
+        // stdin MUST be ignored. agy's auth path reads stdin, and a pipe nobody
+        // writes to never yields EOF — measured: the process was still running at
+        // 12s with a pipe, and answered in 372ms with /dev/null.
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (e) {
+      /* Belt and braces for the OTHER limit: the guard above bounds ONE
+       * argument, while ARG_MAX bounds the whole vector plus the environment.
+       * A pile of --add-dir paths could in principle trip that even with a
+       * legal prompt, and it arrives by the same synchronous throw. */
+      reject(
+        new Error(
+          `agy could not be spawned (${(e as NodeJS.ErrnoException).code ?? "unknown"}): ` +
+            `prompt ${promptBytes} bytes, ${args.length} argv entries.`,
+        ),
+      );
+      return;
+    }
 
     let stdout = "";
     let stderr = "";
