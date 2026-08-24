@@ -20,7 +20,14 @@ import {
   invalidateRunsCache,
   listAllRuns,
   listRunShots,
+  resolveBrowserState,
 } from "../lib/uploads-index.ts";
+import {
+  inspectTakeover,
+  proxyTakeoverHttp,
+  resolveProfileForRun,
+  PROFILE_RE,
+} from "../lib/browser-takeover.ts";
 
 const r = new Hono();
 
@@ -127,11 +134,47 @@ r.get("/index", async (c) => {
 });
 
 /**
+ * GET /api/uploads/browser/:profile/state
+ * Returns inspection of noVNC takeover stack and browser state for a profile.
+ */
+r.get("/browser/:profile/state", async (c) => {
+  const profile = c.req.param("profile");
+  if (!PROFILE_RE.test(profile)) {
+    return c.json({ error: `bad profile: "${profile}"` }, 400);
+  }
+  try {
+    const inspection = await inspectTakeover(profile);
+    return c.json(inspection);
+  } catch (err: unknown) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+/**
+ * ALL /api/uploads/browser/:profile/vnc
+ * ALL /api/uploads/browser/:profile/vnc/*
+ * Authenticated proxy to loopback websockify / noVNC instance on 127.0.0.1:novncPort
+ */
+r.all("/browser/:profile/vnc", async (c) => {
+  const profile = c.req.param("profile");
+  return proxyTakeoverHttp(c.req.raw, profile, "vnc.html");
+});
+
+r.all("/browser/:profile/vnc/*", async (c) => {
+  const profile = c.req.param("profile");
+  const url = new URL(c.req.url);
+  const match = url.pathname.match(/\/browser\/[^/]+\/vnc\/?(.*)$/);
+  const subpath = match ? match[1] : "";
+  return proxyTakeoverHttp(c.req.raw, profile, subpath || "vnc.html");
+});
+
+/**
  * GET /api/uploads/:id/shots            images only (the camera strip)
  * GET /api/uploads/:id/shots?include=all  + run artefacts (the library)
  *
  * The default stays images-only on purpose: BrowserShots.tsx renders every
  * entry it receives inside an `<img>`.
+ * Enriched with browser_state for live outline and red mode diagnostics.
  */
 r.get("/:id/shots", async (c) => {
   const id = c.req.param("id");
@@ -143,14 +186,57 @@ r.get("/:id/shots", async (c) => {
   const dir = path.join(UPLOAD_DIR, id);
   const st = await fs.stat(dir).catch(() => null);
   if (!st || !st.isDirectory()) return c.json({ error: "not found" }, 404);
-  const shots = await listRunShots(dir, { include: includeParam });
+  const [shots, browser_state] = await Promise.all([
+    listRunShots(dir, { include: includeParam }),
+    resolveBrowserState(id),
+  ]);
   return c.json({
     id,
     include: includeParam,
     count: shots.length,
     image_count: shots.filter((s) => s.kind === "image").length,
     shots,
+    browser_state,
   });
+});
+
+/**
+ * GET /api/uploads/:id/browser-state
+ * Fast signal probe for live streaming and red mode state.
+ */
+r.get("/:id/browser-state", async (c) => {
+  const id = c.req.param("id");
+  if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
+  const browser_state = await resolveBrowserState(id);
+  return c.json({ id, browser_state });
+});
+
+/**
+ * ALL /api/uploads/:id/vnc
+ * ALL /api/uploads/:id/vnc/*
+ * Authenticated proxy for run's active browser takeover session.
+ */
+r.all("/:id/vnc", async (c) => {
+  const id = c.req.param("id");
+  if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
+  const profile = await resolveProfileForRun(id);
+  if (!profile) {
+    return c.json({ error: `No browser profile found for run ${id}` }, 404);
+  }
+  return proxyTakeoverHttp(c.req.raw, profile, "vnc.html");
+});
+
+r.all("/:id/vnc/*", async (c) => {
+  const id = c.req.param("id");
+  if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
+  const profile = await resolveProfileForRun(id);
+  if (!profile) {
+    return c.json({ error: `No browser profile found for run ${id}` }, 404);
+  }
+  const url = new URL(c.req.url);
+  const match = url.pathname.match(/\/[^/]+\/vnc\/?(.*)$/);
+  const subpath = match ? match[1] : "";
+  return proxyTakeoverHttp(c.req.raw, profile, subpath || "vnc.html");
 });
 
 r.get("/:id/:name", async (c) => {

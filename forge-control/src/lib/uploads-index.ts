@@ -11,6 +11,13 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import {
+  resolveBrowserState,
+  type BrowserState,
+  type ResolveBrowserStateOptions,
+} from "./browser-takeover.ts";
+
+export { resolveBrowserState, type BrowserState, type ResolveBrowserStateOptions };
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "/opt/ai-os/uploads";
 
@@ -160,13 +167,24 @@ export interface RunSummary {
   /** image_count + artifact_count — what the LIBRARY shows as "N files". */
   file_count: number;
   latest_ts: string | null;
+  /** Live streaming indicator (active browser session or running status). */
+  is_live: boolean;
+  /** Red mode indicator (exit 4 login required or stuck signal). */
+  needs_human: boolean;
+  /** Signal name ("login_required", "heartbeat_stale", "timeout", etc.). */
+  signal: string | null;
+  /** Enriched browser state detailing login, service, and noVNC takeover. */
+  browser_state?: BrowserState | null;
 }
+
+export const getUploadDir = () => process.env.UPLOAD_DIR ?? "/opt/ai-os/uploads";
 
 const LIST_CACHE_MS = 10_000;
 let cache: { at: number; runs: RunSummary[] } | null = null;
 
 async function computeAllRuns(): Promise<RunSummary[]> {
-  const entries = await fs.readdir(UPLOAD_DIR, { withFileTypes: true }).catch((err) => {
+  const uploadDir = getUploadDir();
+  const entries = await fs.readdir(uploadDir, { withFileTypes: true }).catch((err) => {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
   });
@@ -176,11 +194,12 @@ async function computeAllRuns(): Promise<RunSummary[]> {
     // "all", not the image default: a run that only ever wrote a patch or a
     // transcript used to be dropped from the index entirely, which is how a
     // run artefact became unreachable from the OS that produced it.
-    const files = await listRunShots(path.join(UPLOAD_DIR, entry.name), {
+    const files = await listRunShots(path.join(uploadDir, entry.name), {
       include: "all",
     });
     if (files.length === 0) continue;
     const images = files.filter((f) => f.kind === "image");
+    const browser_state = await resolveBrowserState(entry.name, { uploadDir });
     runs.push({
       id: entry.name,
       count: images.length,
@@ -188,6 +207,10 @@ async function computeAllRuns(): Promise<RunSummary[]> {
       artifact_count: files.length - images.length,
       file_count: files.length,
       latest_ts: files[0].mtime,
+      is_live: browser_state.is_live,
+      needs_human: browser_state.needs_human,
+      signal: browser_state.signal,
+      browser_state,
     });
   }
   runs.sort((a, b) => (b.latest_ts ?? "").localeCompare(a.latest_ts ?? ""));
