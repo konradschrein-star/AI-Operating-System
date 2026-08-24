@@ -100,6 +100,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
@@ -143,6 +145,13 @@ import {
 } from "./teamRows";
 import { ResponseNowContext, TeamRowView } from "./TeamRow";
 import { PlanKanban } from "./PlanKanban";
+import {
+  KEY_STEP,
+  PLAN_FRACTION_DEFAULT,
+  PLAN_FRACTION_KEY,
+  clampPlanFraction,
+  parseStoredFraction,
+} from "./plan-split";
 
 /** NFU3: one poll, 6s, paused whenever the panel is not visible.
  *
@@ -267,6 +276,17 @@ function Note({ children, color }: { children: React.ReactNode; color?: string }
   );
 }
 
+/* ── The draggable divider between the two zones ──────────────────────────────
+ *
+ * Konrad asked for this twice. The line between the team tree and the PLAN
+ * board was a `borderBottom` and the board hard-capped itself at `maxHeight:
+ * 40%`, so the split was a constant no gesture could reach: with a long team
+ * tree the board was a four-card slit, and with two workers the board wasted
+ * half the rail.
+ *
+ * The arithmetic lives in ./plan-split so it can be tested without a DOM.
+ */
+
 export function ChatTeamPanel({
   chatId,
   onOpenNode,
@@ -274,6 +294,78 @@ export function ChatTeamPanel({
   visible,
 }: ChatTeamPanelProps) {
   const enabled = visible && Boolean(chatId);
+
+  /* Splitter state. Hydrated in an effect rather than in the useState
+   * initialiser so the server-rendered markup and the first client render
+   * agree — reading localStorage during render is the classic hydration
+   * mismatch, and this panel is inside an SSR'd route. */
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const [planFraction, setPlanFraction] = useState(PLAN_FRACTION_DEFAULT);
+  const [hydrated, setHydrated] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ startY: number; startFraction: number; shellPx: number } | null>(null);
+
+  useEffect(() => {
+    let stored: string | null = null;
+    try {
+      stored = window.localStorage.getItem(PLAN_FRACTION_KEY);
+    } catch {
+      // Private mode / storage disabled: the default is a fine answer.
+    }
+    setPlanFraction(parseStoredFraction(stored));
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(PLAN_FRACTION_KEY, String(planFraction));
+    } catch {
+      // Same as above — a rail that cannot remember still resizes.
+    }
+  }, [planFraction, hydrated]);
+
+  const onSplitterPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const h = shellRef.current?.getBoundingClientRect().height ?? 0;
+      if (h <= 0) return;
+      dragRef.current = { startY: e.clientY, startFraction: planFraction, shellPx: h };
+      setDragging(true);
+      // Pointer capture keeps the drag alive when the cursor outruns a 7px
+      // strip, which it always does.
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    },
+    [planFraction],
+  );
+
+  const onSplitterPointerMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (d === null) return;
+    // Down shrinks the PLAN zone: the fraction is the zone BELOW the handle.
+    const delta = (e.clientY - d.startY) / d.shellPx;
+    setPlanFraction(clampPlanFraction(d.startFraction - delta, d.shellPx));
+  }, []);
+
+  const endSplitterDrag = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (dragRef.current === null) return;
+    dragRef.current = null;
+    setDragging(false);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // Already released (pointercancel after pointerup) — nothing to undo.
+    }
+  }, []);
+
+  const onSplitterKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step =
+      e.key === "ArrowUp" ? KEY_STEP : e.key === "ArrowDown" ? -KEY_STEP : null;
+    if (step === null) return;
+    e.preventDefault();
+    const h = shellRef.current?.getBoundingClientRect().height ?? 0;
+    setPlanFraction((f) => clampPlanFraction(f + step, h));
+  }, []);
 
   /* ── Which project's team, when the chat started more than one ────────────
    *
@@ -771,16 +863,23 @@ export function ChatTeamPanel({
    * to round 506's reviewed version, which is the point: this is a wrapper,
    * not a restructure. */
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+    <div
+      ref={shellRef}
+      style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+    >
       <div
         data-team-panel
         data-team-state={state}
         style={{
           display: "flex",
           flexDirection: "column",
-          flex: 1,
+          // `1 1 0` not `1`: the tree takes whatever the PLAN zone's
+          // flex-basis leaves, and shrinks below its content instead of
+          // pushing the splitter off the bottom on a long org chart.
+          flex: "1 1 0",
           minHeight: 0,
-          borderBottom: `1px solid ${tokens.borderSoft}`,
+          // The dividing line now belongs to the splitter below, which is the
+          // thing you can actually grab.
         }}
       >
         {dataState === "error" ? (
@@ -1116,12 +1215,60 @@ export function ChatTeamPanel({
           `projectOverride`: the server had the last word on which project this
           is (it validates the override and ranks the default), and the two
           zones must agree with the SERVER, not with each other. */}
-      <PlanKanban
-        chatId={chatId}
-        onOpenDoc={onOpenDoc}
-        visible={visible}
-        projectId={data?.project?.id ?? null}
+      {/* The grab handle. 7px of hit area around a 1px line — a 1px target is
+          not a control. `touchAction: none` so a drag on a trackpad/touch
+          screen resizes instead of scrolling the rail. Double-click restores
+          the 40% default, which is the cheap way back from a bad drag. */}
+      <div
+        data-team-plan-splitter
+        data-dragging={dragging ? "1" : "0"}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize the plan panel"
+        aria-valuenow={Math.round(planFraction * 100)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        tabIndex={0}
+        title="Drag to resize · double-click to reset · ↑/↓ to nudge"
+        onPointerDown={onSplitterPointerDown}
+        onPointerMove={onSplitterPointerMove}
+        onPointerUp={endSplitterDrag}
+        onPointerCancel={endSplitterDrag}
+        onKeyDown={onSplitterKeyDown}
+        onDoubleClick={() => setPlanFraction(PLAN_FRACTION_DEFAULT)}
+        style={{
+          flex: "none",
+          height: 7,
+          cursor: "row-resize",
+          touchAction: "none",
+          position: "relative",
+          background: dragging ? tokens.accent : tokens.borderSoft,
+          // A 7px band reading as a 1px rule until you touch it: the band is
+          // the hit area, the colour is the line.
+          backgroundClip: "content-box",
+          padding: "3px 0",
+        }}
       />
+      <div
+        style={{
+          // flex-basis as a percentage of the shell resolves against a definite
+          // main size here (the shell is `flex: 1` in a column with
+          // `minHeight: 0`), so this is the zone's real height. `0 0` pins it:
+          // only the splitter changes it.
+          flex: `0 0 ${(planFraction * 100).toFixed(3)}%`,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <PlanKanban
+          chatId={chatId}
+          onOpenDoc={onOpenDoc}
+          visible={visible}
+          fill
+          projectId={data?.project?.id ?? null}
+        />
+      </div>
     </div>
   );
 }

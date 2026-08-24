@@ -123,6 +123,11 @@ export interface PlanKanbanProps {
   /** False when the Team tab is closed or the side panel is collapsed. Gates
    *  the poll. */
   visible: boolean;
+  /** When true the zone fills the box its parent gives it instead of capping
+   *  itself at 40%. Set by ChatTeamPanel, which owns the draggable splitter and
+   *  therefore owns the height: two components cannot both decide how tall this
+   *  is. Left false everywhere else so the standalone default is unchanged. */
+  fill?: boolean;
   /** Which of the chat's projects to show, when it started more than one
    *  (round 1871). Null = the server's ranked default. Supplied by
    *  ChatTeamPanel's switcher so the board and the tree cannot disagree. */
@@ -529,6 +534,7 @@ export function PlanKanban({
   chatId,
   onOpenDoc,
   visible,
+  fill = false,
   projectId = null,
 }: PlanKanbanProps) {
   const enabled = visible && Boolean(chatId);
@@ -599,9 +605,12 @@ export function PlanKanban({
       data-plan-state={state}
       data-plan-progress={hasCounts ? `${progress.done}/${progress.total}` : "—"}
       style={{
-        flex: "0 1 auto",
+        /* `fill` hands the height decision to ChatTeamPanel's splitter. The
+         * self-cap below is the uncontrolled default and stays exactly as it
+         * was — a 40% ceiling with the tree taking the rest. */
+        flex: fill ? "1 1 0" : "0 1 auto",
         minHeight: 0,
-        maxHeight: "40%",
+        maxHeight: fill ? "none" : "40%",
         display: "flex",
         flexDirection: "column",
       }}
