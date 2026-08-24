@@ -1836,6 +1836,10 @@ export interface SettledRunningTask extends ProjectTask {
   /** Times this run has already been parked behind a usage wall. 0 for every
    *  run that never was, which is almost all of them. */
   usage_wall_attempts: number;
+  /** Times this run has already been parked behind a transient API overload
+   *  (529/503). Its own counter, NOT shared with the usage wall: two different
+   *  outages must not spend each other's retries. */
+  api_overload_attempts: number;
 }
 
 export async function listSettledRunningTasks(): Promise<SettledRunningTask[]> {
@@ -1844,7 +1848,8 @@ export async function listSettledRunningTasks(): Promise<SettledRunningTask[]> {
             r.status AS run_status,
             ${LAST_ASSISTANT_TEXT} AS last_text,
             ${LAST_ERROR_TEXT} AS last_error,
-            COALESCE((r.metadata->>'usage_wall_attempts')::int, 0) AS usage_wall_attempts
+            COALESCE((r.metadata->>'usage_wall_attempts')::int, 0) AS usage_wall_attempts,
+            COALESCE((r.metadata->>'api_overload_attempts')::int, 0) AS api_overload_attempts
        FROM project_tasks pt
        JOIN runs r ON r.id = pt.run_id
       WHERE pt.status = 'running'

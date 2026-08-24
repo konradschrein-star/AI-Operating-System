@@ -800,6 +800,58 @@ export async function recentLimitHits(days = 14, limit = 20): Promise<LimitHit[]
 }
 
 /**
+ * Park a run that died of a transient API overload (529/503) so the next tick
+ * picks it up again, instead of the reconcile failing its task and blocking the
+ * project over a busy server.
+ *
+ * Deliberately a SEPARATE function from `requeueRunAfterUsageWall` rather than
+ * a `kind` parameter on it. The two share this SQL today but they are two
+ * different outages with two different policies: the wall parses a published
+ * reset time and may defer for hours, this waits a flat minute. They also need
+ * SEPARATE attempt counters — sharing one would let a busy-server blip burn the
+ * retries a real quota wall needs, and would make each outage's give-up
+ * decision depend on the other's history.
+ *
+ * Same `AND status = 'failed'` guard, for the same reason: if Konrad cancelled
+ * the run between the reconcile's read and this write, do not resurrect it.
+ * Returns whether the row actually moved, so the caller can fall back to the
+ * ordinary failure path rather than assume a park that never happened.
+ */
+export async function requeueRunAfterApiOverload(input: {
+  runId: string;
+  wakeAt: Date;
+  /** 1-based; persisted as metadata.api_overload_attempts and read back by the
+   *  next reconcile to enforce the retry ceiling. */
+  attempt: number;
+  /** Appended to the thread so the pause is visible in the run's transcript —
+   *  and, on resume, is the text the engine is handed. */
+  note: string;
+}): Promise<boolean> {
+  const entry: ThreadEntry = {
+    role: "system",
+    content: input.note,
+    ts: new Date().toISOString(),
+    kind: "text",
+    meta: { api_overload: true, api_overload_attempt: input.attempt },
+  };
+  const r = await pool.query(
+    `UPDATE runs
+        SET status = 'queued',
+            wake_after = $2,
+            completed_at = NULL,
+            stuck_signal = NULL,
+            thread = thread || $3::jsonb,
+            metadata = COALESCE(metadata, '{}'::jsonb) ||
+                       jsonb_build_object('api_overload_attempts', $4::int),
+            updated_at = now()
+      WHERE id = $1
+        AND status = 'failed'`,
+    [input.runId, input.wakeAt.toISOString(), JSON.stringify([entry]), input.attempt],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
  * Park a run that died on the Claude subscription's usage wall: put it BACK on
  * the queue behind `wake_after` instead of leaving it as a corpse (R860).
  *

@@ -1033,17 +1033,19 @@ export const archiveAllChats = async (): Promise<number> => {
  *  replaced in full) when `since` no longer lines up with the live total.
  *  Overloaded so the many existing `fetchChat(id)` call sites keep getting a
  *  bare `RunDetail` unchanged. */
+export type RunDelta = Omit<RunDetail, "prompt"> & { prompt?: string };
+
 export function fetchChat(id: string): Promise<RunDetail>;
 export function fetchChat(
   id: string,
   since: number,
-): Promise<{ run: RunDetail; from: number; total: number }>;
+): Promise<{ run: RunDelta; from: number; total: number }>;
 export async function fetchChat(id: string, since?: number) {
   const suffix = since !== undefined ? `?since=${since}` : "";
-  const r = await getJson<{ run: RunDetail; from: number; total: number }>(
+  const r = await getJson<{ run: RunDelta; from: number; total: number }>(
     `/chat/${id}${suffix}`,
   );
-  return since === undefined ? r.run : r;
+  return since === undefined ? (r.run as RunDetail) : r;
 }
 
 /** Poll a chat's thread incrementally: request only what forge-control
@@ -1056,19 +1058,25 @@ export async function fetchChat(id: string, since?: number) {
  *  fetch on its own (`since` didn't match its live total — e.g. `/compact`
  *  shortened the thread between polls) — trusting the stale local count and
  *  appending anyway would duplicate every entry the cache still holds, so
- *  the full replacement thread wins outright. Otherwise an empty delta keeps
- *  `prev.thread`'s array reference (no new render for a thread that didn't
- *  change); a non-empty one is appended. */
+ *  the full replacement thread wins outright.
+ *
+ *  Delta responses (`from === prev.thread.length`) omit the static `prompt`
+ *  field to save steady-state bandwidth (~86% savings). The client preserves
+ *  `prev.prompt` across delta merges. If an empty delta arrives, `prev.thread`'s
+ *  array reference is kept (no new render for a thread that didn't change); a
+ *  non-empty one is appended. */
 export async function fetchChatDelta(
   id: string,
   prev: RunDetail | undefined,
 ): Promise<RunDetail> {
   if (prev === undefined) return fetchChat(id);
   const { run, from } = await fetchChat(id, prev.thread.length);
-  if (from !== prev.thread.length) return run;
-  return run.thread.length === 0
-    ? { ...run, thread: prev.thread }
-    : { ...run, thread: [...prev.thread, ...run.thread] };
+  if (from !== prev.thread.length) return run as RunDetail;
+  const prompt =
+    "prompt" in run && run.prompt !== undefined ? run.prompt : prev.prompt;
+  const thread =
+    run.thread.length === 0 ? prev.thread : [...prev.thread, ...run.thread];
+  return { ...prev, ...run, prompt, thread };
 }
 
 /** Which project — if any — this chat started. Shape of
