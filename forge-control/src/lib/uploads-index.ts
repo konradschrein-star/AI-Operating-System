@@ -169,11 +169,11 @@ export interface RunSummary {
   file_count: number;
   latest_ts: string | null;
   /** Live streaming indicator (active browser session or running status). */
-  is_live: boolean;
+  is_live?: boolean;
   /** Red mode indicator (exit 4 login required or stuck signal). */
-  needs_human: boolean;
+  needs_human?: boolean;
   /** Signal name ("login_required", "heartbeat_stale", "timeout", etc.). */
-  signal: string | null;
+  signal?: string | null;
   /** Enriched browser state detailing login, service, and noVNC takeover. */
   browser_state?: BrowserState | null;
 }
@@ -184,10 +184,12 @@ const LIST_CACHE_MS = 10_000;
 let cache: { at: number; runs: RunSummary[]; tag: string } | null = null;
 let cacheVersion = 0;
 
-function computeTag(runs: RunSummary[]): string {
+export function computeTag(runs: RunSummary[]): string {
   const h = crypto.createHash("sha1");
   for (const r of runs) {
-    h.update(`${r.id}:${r.count}:${r.image_count}:${r.artifact_count}:${r.file_count}:${r.latest_ts ?? ""};`);
+    h.update(
+      `${r.id}:${r.count}:${r.image_count}:${r.artifact_count}:${r.file_count}:${r.latest_ts ?? ""}:${r.is_live ? 1 : 0}:${r.needs_human ? 1 : 0}:${r.signal ?? ""};`,
+    );
   }
   return `"${h.digest("hex").slice(0, 16)}"`;
 }
@@ -218,18 +220,21 @@ async function computeAllRuns(): Promise<RunSummary[]> {
     if (files.length === 0) continue;
     const images = files.filter((f) => f.kind === "image");
     const browser_state = await resolveBrowserState(entry.name, { uploadDir });
-    runs.push({
+    const baseSummary: RunSummary = {
       id: entry.name,
       count: images.length,
       image_count: images.length,
       artifact_count: files.length - images.length,
       file_count: files.length,
       latest_ts: files[0].mtime,
-      is_live: browser_state.is_live,
-      needs_human: browser_state.needs_human,
-      signal: browser_state.signal,
-      browser_state,
-    });
+    };
+    if (browser_state.is_live || browser_state.needs_human) {
+      baseSummary.is_live = browser_state.is_live;
+      baseSummary.needs_human = browser_state.needs_human;
+      baseSummary.signal = browser_state.signal;
+      baseSummary.browser_state = browser_state;
+    }
+    runs.push(baseSummary);
   }
   runs.sort((a, b) => (b.latest_ts ?? "").localeCompare(a.latest_ts ?? ""));
   return runs;

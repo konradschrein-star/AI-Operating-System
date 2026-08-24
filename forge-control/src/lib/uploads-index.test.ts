@@ -11,7 +11,16 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseShotName, listRunShots, ID_RE } from "./uploads-index.ts";
+import {
+  parseShotName,
+  listRunShots,
+  ID_RE,
+  computeTag,
+  getUploadsCacheTag,
+  listAllRuns,
+  invalidateRunsCache,
+  type RunSummary,
+} from "./uploads-index.ts";
 
 describe("parseShotName", () => {
   test("a well-formed shot name", () => {
@@ -171,10 +180,19 @@ describe("listAllRuns & browser_state enrichment", () => {
     mkdirSync(run1, { recursive: true });
     writeFileSync(path.join(run1, "20260824T050000Z-perplexity-login-wall.png"), "x");
 
-    // Run 2: normal clean run
+    // Run 2: normal clean run (idle)
     const run2 = path.join(tempUploadDir, "cccc2222dddd");
     mkdirSync(run2, { recursive: true });
     writeFileSync(path.join(run2, "20260824T051000Z-dashboard.png"), "y");
+
+    // Run 3: active live streaming browser session
+    const run3 = path.join(tempUploadDir, "eeee3333ffff");
+    mkdirSync(run3, { recursive: true });
+    writeFileSync(path.join(run3, "20260824T052000Z-github-live.png"), "z");
+    writeFileSync(
+      path.join(run3, "browser_state.json"),
+      JSON.stringify({ is_live: true, service: "github" }),
+    );
   });
 
   after(() => {
@@ -186,23 +204,168 @@ describe("listAllRuns & browser_state enrichment", () => {
     rmSync(tempUploadDir, { recursive: true, force: true });
   });
 
-  test("listAllRuns enriches summaries with is_live, needs_human, and signal", async () => {
-    const { listAllRuns, invalidateRunsCache } = await import("./uploads-index.ts");
+  test("idle runs omit browser_state, is_live, needs_human, and signal from memory and serialized JSON", async () => {
     invalidateRunsCache();
     const runs = await listAllRuns();
-    assert.equal(runs.length, 2);
+    assert.equal(runs.length, 3);
 
+    const cleanRun = runs.find((r) => r.id === "cccc2222dddd");
+    assert.ok(cleanRun);
+    assert.equal(cleanRun.browser_state, undefined);
+    assert.equal(cleanRun.is_live, undefined);
+    assert.equal(cleanRun.needs_human, undefined);
+    assert.equal(cleanRun.signal, undefined);
+    assert.equal("browser_state" in cleanRun, false);
+    assert.equal("is_live" in cleanRun, false);
+    assert.equal("needs_human" in cleanRun, false);
+    assert.equal("signal" in cleanRun, false);
+
+    const cleanJson = JSON.stringify(cleanRun);
+    assert.equal(cleanJson.includes("browser_state"), false);
+    assert.equal(cleanJson.includes("is_live"), false);
+    assert.equal(cleanJson.includes("needs_human"), false);
+    assert.equal(cleanJson.includes("signal"), false);
+  });
+
+  test("alerting runs (needs_human) retain full browser_state and indicator fields", async () => {
+    invalidateRunsCache();
+    const runs = await listAllRuns();
     const loginRun = runs.find((r) => r.id === "aaaa1111bbbb");
     assert.ok(loginRun);
     assert.equal(loginRun.needs_human, true);
     assert.equal(loginRun.signal, "login_required");
+    assert.equal(loginRun.is_live, false);
     assert.ok(loginRun.browser_state);
     assert.equal(loginRun.browser_state.needs_login, true);
 
-    const cleanRun = runs.find((r) => r.id === "cccc2222dddd");
-    assert.ok(cleanRun);
-    assert.equal(cleanRun.needs_human, false);
-    assert.equal(cleanRun.signal, null);
+    const loginJson = JSON.stringify(loginRun);
+    assert.equal(loginJson.includes('"needs_human":true'), true);
+    assert.equal(loginJson.includes('"signal":"login_required"'), true);
+    assert.equal(loginJson.includes('"browser_state":'), true);
+  });
+
+  test("live streaming runs retain full browser_state and is_live flag", async () => {
+    invalidateRunsCache();
+    const runs = await listAllRuns();
+    const liveRun = runs.find((r) => r.id === "eeee3333ffff");
+    assert.ok(liveRun);
+    assert.equal(liveRun.is_live, true);
+    assert.equal(liveRun.needs_human, false);
+    assert.ok(liveRun.browser_state);
+    assert.equal(liveRun.browser_state.is_live, true);
+
+    const liveJson = JSON.stringify(liveRun);
+    assert.equal(liveJson.includes('"is_live":true'), true);
+    assert.equal(liveJson.includes('"browser_state":'), true);
+  });
+});
+
+describe("computeTag & ETag cache invalidation on state transitions", () => {
+  test("computeTag is deterministic and returns valid 16-hex quoted tag", () => {
+    const base: RunSummary[] = [
+      {
+        id: "111122223333",
+        count: 5,
+        image_count: 5,
+        artifact_count: 1,
+        file_count: 6,
+        latest_ts: "2026-08-24T10:00:00.000Z",
+      },
+    ];
+    const tag1 = computeTag(base);
+    const tag2 = computeTag(base);
+    assert.equal(tag1, tag2);
+    assert.match(tag1, /^"[a-f0-9]{16}"$/);
+  });
+
+  test("computeTag incorporates is_live, needs_human, and signal into hash", () => {
+    const base: RunSummary = {
+      id: "111122223333",
+      count: 5,
+      image_count: 5,
+      artifact_count: 1,
+      file_count: 6,
+      latest_ts: "2026-08-24T10:00:00.000Z",
+    };
+    const tagIdle = computeTag([base]);
+
+    const liveRun: RunSummary = { ...base, is_live: true, needs_human: false, signal: null };
+    const tagLive = computeTag([liveRun]);
+    assert.notEqual(tagLive, tagIdle, "transition to live must change ETag");
+
+    const alertRun: RunSummary = { ...base, is_live: false, needs_human: true, signal: "login_required" };
+    const tagAlert = computeTag([alertRun]);
+    assert.notEqual(tagAlert, tagIdle, "transition to alert must change ETag");
+    assert.notEqual(tagAlert, tagLive, "alert ETag must differ from live ETag");
+
+    const signalChangeRun: RunSummary = { ...base, is_live: false, needs_human: true, signal: "heartbeat_stale" };
+    const tagSignalChange = computeTag([signalChangeRun]);
+    assert.notEqual(tagSignalChange, tagAlert, "signal change must invalidate ETag");
+
+    const filesChangeRun: RunSummary = { ...base, count: 6, image_count: 6, file_count: 7 };
+    const tagFilesChange = computeTag([filesChangeRun]);
+    assert.notEqual(tagFilesChange, tagIdle, "file addition must invalidate ETag");
+  });
+
+  test("filesystem state transition invalidates getUploadsCacheTag via listAllRuns", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "uploads-etag-test-"));
+    const oldDir = process.env.UPLOAD_DIR;
+    process.env.UPLOAD_DIR = tempDir;
+
+    try {
+      const runDir = path.join(tempDir, "123456abcdef");
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(path.join(runDir, "20260824T060000Z-screen.png"), "test-image");
+
+      invalidateRunsCache();
+      const initialRuns = await listAllRuns();
+      assert.equal(initialRuns.length, 1);
+      assert.equal(initialRuns[0].is_live, undefined);
+      assert.equal(initialRuns[0].needs_human, undefined);
+      const tag1 = getUploadsCacheTag();
+
+      // Transition to live by dropping browser_state.json
+      const stateFile = path.join(runDir, "browser_state.json");
+      writeFileSync(stateFile, JSON.stringify({ is_live: true, service: "github" }));
+      invalidateRunsCache();
+
+      const liveRuns = await listAllRuns();
+      assert.equal(liveRuns.length, 1);
+      assert.equal(liveRuns[0].is_live, true);
+      assert.ok(liveRuns[0].browser_state);
+      const tag2 = getUploadsCacheTag();
+      assert.notEqual(tag2, tag1, "live transition must produce new ETag");
+
+      // Transition to needs_human by dropping auth.json with needs_login
+      writeFileSync(path.join(runDir, "auth.json"), JSON.stringify({ needs_login: true, service: "github" }));
+      invalidateRunsCache();
+
+      const alertRuns = await listAllRuns();
+      assert.equal(alertRuns[0].needs_human, true);
+      assert.equal(alertRuns[0].signal, "login_required");
+      const tag3 = getUploadsCacheTag();
+      assert.notEqual(tag3, tag2, "alert transition must produce new ETag");
+      assert.notEqual(tag3, tag1, "alert ETag must differ from idle ETag");
+
+      // Clean up state files -> back to idle
+      rmSync(stateFile, { force: true });
+      rmSync(path.join(runDir, "auth.json"), { force: true });
+      invalidateRunsCache();
+
+      const settledRuns = await listAllRuns();
+      assert.equal(settledRuns[0].browser_state, undefined);
+      assert.equal(settledRuns[0].is_live, undefined);
+      assert.equal(settledRuns[0].needs_human, undefined);
+      const tag4 = getUploadsCacheTag();
+      assert.equal(tag4, tag1, "reverting to idle restores original ETag");
+    } finally {
+      if (oldDir !== undefined) {
+        process.env.UPLOAD_DIR = oldDir;
+      } else {
+        delete process.env.UPLOAD_DIR;
+      }
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
