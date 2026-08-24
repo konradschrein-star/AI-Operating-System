@@ -2237,7 +2237,21 @@ export async function createFixChain(input: {
         title: c.title.slice(0, 200),
         brief: c.brief,
         fix_cycle: input.cycle,
-        tier: null,
+        /* THE SAME inherited tier as the builder above — not `null`.
+         *
+         * This line was the half of the fix-chain tier inheritance that got
+         * missed: the builder's insert was changed to `input.tier ?? null` and
+         * this one was left hardcoded, so every re-check row kept being born
+         * untiered, fell past TIER_MODELS and ran on the DEFAULT engine.
+         * `tier-inherit.test.ts`'s own header names "every fix-cycle builder
+         * AND re-check row" as the thing being fixed, so this was in scope and
+         * simply not carried through.
+         *
+         * Measured on rows created after the executor picked up the first half
+         * (2026-08-24 04:06Z): fix-cycle builders inherited, re-check rows were
+         * still 100% NULL. A gemini project's re-review is not a Claude run
+         * because of an unedited literal. */
+        tier: input.tier ?? null,
         chain_key: c.chainKey,
         depends_on: [builder.id],
         workstream: input.graph.checker.workstream,

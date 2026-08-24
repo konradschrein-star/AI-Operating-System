@@ -156,3 +156,53 @@ describe("ID_RE", () => {
     }
   });
 });
+
+describe("listAllRuns & browser_state enrichment", () => {
+  let tempUploadDir: string;
+  let oldUploadDir: string | undefined;
+
+  before(() => {
+    oldUploadDir = process.env.UPLOAD_DIR;
+    tempUploadDir = mkdtempSync(path.join(tmpdir(), "uploads-all-runs-"));
+    process.env.UPLOAD_DIR = tempUploadDir;
+
+    // Run 1: with login wall screenshot (Exit 4 signal)
+    const run1 = path.join(tempUploadDir, "aaaa1111bbbb");
+    mkdirSync(run1, { recursive: true });
+    writeFileSync(path.join(run1, "20260824T050000Z-perplexity-login-wall.png"), "x");
+
+    // Run 2: normal clean run
+    const run2 = path.join(tempUploadDir, "cccc2222dddd");
+    mkdirSync(run2, { recursive: true });
+    writeFileSync(path.join(run2, "20260824T051000Z-dashboard.png"), "y");
+  });
+
+  after(() => {
+    if (oldUploadDir !== undefined) {
+      process.env.UPLOAD_DIR = oldUploadDir;
+    } else {
+      delete process.env.UPLOAD_DIR;
+    }
+    rmSync(tempUploadDir, { recursive: true, force: true });
+  });
+
+  test("listAllRuns enriches summaries with is_live, needs_human, and signal", async () => {
+    const { listAllRuns, invalidateRunsCache } = await import("./uploads-index.ts");
+    invalidateRunsCache();
+    const runs = await listAllRuns();
+    assert.equal(runs.length, 2);
+
+    const loginRun = runs.find((r) => r.id === "aaaa1111bbbb");
+    assert.ok(loginRun);
+    assert.equal(loginRun.needs_human, true);
+    assert.equal(loginRun.signal, "login_required");
+    assert.ok(loginRun.browser_state);
+    assert.equal(loginRun.browser_state.needs_login, true);
+
+    const cleanRun = runs.find((r) => r.id === "cccc2222dddd");
+    assert.ok(cleanRun);
+    assert.equal(cleanRun.needs_human, false);
+    assert.equal(cleanRun.signal, null);
+  });
+});
+

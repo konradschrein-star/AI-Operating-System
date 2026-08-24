@@ -281,3 +281,162 @@ export function newestFirst(refs: readonly BrowserShotRef[]): BrowserShotRef[] {
     return b.ts.localeCompare(a.ts);
   });
 }
+
+/* ── Stream state & diagnostics (Round 1: Live & Red Mode) ────────────────── */
+
+export type StreamMode = "idle" | "live" | "needs_human";
+
+export interface BrowserStateSummary {
+  is_live?: boolean;
+  needs_human?: boolean;
+  needs_login?: boolean;
+  signal?: string | null;
+  service?: string | null;
+  decision?: string | null;
+  reason?: string | null;
+  reasons?: string[];
+  novnc_port?: number | null;
+  novnc_url?: string | null;
+  takeover_up?: boolean;
+  profile?: string | null;
+  stuck_signal?: string | null;
+  checked_at?: string | null;
+}
+
+export interface StreamWarningInfo {
+  title: string;
+  detail: string;
+  action: string;
+  service: string | null;
+  signal: string | null;
+}
+
+const LOGIN_WALL_PATTERN = /(login-wall|bot-wall|captcha|auth-wall|sign-in|challenge)/i;
+
+/**
+ * Check if a filename or label matches a login-wall or bot detection pattern.
+ * Pure and case-insensitive.
+ */
+export function isLoginWallName(name: string | null | undefined): boolean {
+  if (typeof name !== "string" || name.length === 0) return false;
+  return LOGIN_WALL_PATTERN.test(name);
+}
+
+/**
+ * Deterministically resolve whether a browser stream is:
+ * - "needs_human": blocked on login wall (exit 4), stuck signal, or captcha (Red Mode)
+ * - "live": actively running, streaming, or has active takeover stack (Blue Flowing Mode)
+ * - "idle": static archived stills
+ */
+export function resolveStreamMode(
+  state?: BrowserStateSummary | null,
+  refs?: readonly { name: string; label?: string }[],
+): StreamMode {
+  // 1. Red mode checks (priority order of trust)
+  if (state?.needs_human === true || state?.needs_login === true) {
+    return "needs_human";
+  }
+  if (state?.signal === "login_required" || state?.decision === "login_required") {
+    return "needs_human";
+  }
+  if (state?.stuck_signal && state.stuck_signal.length > 0) {
+    return "needs_human";
+  }
+  if (refs && refs.length > 0) {
+    for (const r of refs) {
+      if (isLoginWallName(r.name) || (r.label && isLoginWallName(r.label))) {
+        return "needs_human";
+      }
+    }
+  }
+
+  // 2. Live mode checks
+  if (state?.is_live === true || state?.takeover_up === true) {
+    return "live";
+  }
+
+  return "idle";
+}
+
+/**
+ * Return structured diagnostic warning info for Red Mode.
+ * Returns null if the stream is not in needs_human state.
+ */
+export function resolveStreamWarning(
+  state?: BrowserStateSummary | null,
+  refs?: readonly { name: string; label?: string }[],
+): StreamWarningInfo | null {
+  const mode = resolveStreamMode(state, refs);
+  if (mode !== "needs_human") return null;
+
+  let service = state?.service ?? null;
+  const signal = state?.signal ?? state?.stuck_signal ?? (state?.needs_login ? "login_required" : null);
+
+  // Attempt to deduce service from refs if not in state
+  if (!service && refs && refs.length > 0) {
+    for (const r of refs) {
+      const match = /^(\d{8}T\d{6}Z)-([a-z0-9-]+)\.[a-zA-Z0-9]+$/.exec(r.name);
+      if (match) {
+        const parts = match[2].split("-");
+        if (parts.length > 0 && parts[0] !== "screenshot") {
+          service = parts[0];
+          break;
+        }
+      }
+    }
+  }
+
+  if (signal === "login_required" || state?.needs_login) {
+    const serviceName = service ? service.charAt(0).toUpperCase() + service.slice(1) : "Browser";
+    const customReason = state?.reason ?? (state?.reasons && state.reasons.length > 0 ? state.reasons[0] : null);
+    return {
+      title: "Login Required",
+      detail: customReason ?? `${serviceName} requires human login or CAPTCHA verification`,
+      action: "Take control in manual mode or solve login to resume",
+      service,
+      signal: "login_required",
+    };
+  }
+
+  if (signal === "heartbeat_stale") {
+    return {
+      title: "Process Heartbeat Stale",
+      detail: "Worker process stopped sending heartbeats",
+      action: "Check worker logs or re-evaluate task status",
+      service,
+      signal: "heartbeat_stale",
+    };
+  }
+
+  return {
+    title: "Needs Operator Intervention",
+    detail: state?.reason ?? (signal ? `Run stalled with signal: ${signal}` : "Browser task requires human action"),
+    action: "Inspect stream in fullscreen or take manual control",
+    service,
+    signal: signal ?? "stuck",
+  };
+}
+
+/**
+ * Build the authenticated loopback noVNC proxy URL for a run directory.
+ * Security boundary: validates dirId against DIR_ID_RE before constructing.
+ *
+ * Appends a `path=` query param noVNC's own UI/vnc_lite.js read via
+ * `WebUtil.getConfigVar('path', 'websockify')` (see /usr/share/novnc/app/ui.js
+ * and vnc_lite.html) to pick the WebSocket URL it opens for the RFB canvas.
+ * Left at its default, that setting builds `ws://<host>/websockify` — the
+ * BARE root path on this origin, which never touches `/api/proxy/...` and so
+ * never reaches this proxy at all. Overriding it to the SAME nested path this
+ * vnc.html document was itself loaded from (with `vnc.html`/`vnc_lite.html`
+ * swapped for `websockify`) is what makes the canvas's WebSocket route back
+ * through the Next.js rewrite and forge-control's upgrade proxy instead of
+ * connecting to nothing at the origin root.
+ */
+export function vncProxyUrl(dirId: string, subpath = "vnc.html?autoconnect=1&resize=scale"): string | null {
+  if (!DIR_ID_RE.test(dirId)) return null;
+  const cleanSub = subpath.replace(/^\/+/, "");
+  const wsPath = `${PROXY_ROOT.slice(1)}/uploads/${dirId}/vnc/websockify`;
+  const sep = cleanSub.includes("?") ? "&" : "?";
+  return `${PROXY_ROOT}/uploads/${dirId}/vnc/${cleanSub}${sep}path=${wsPath}`;
+}
+

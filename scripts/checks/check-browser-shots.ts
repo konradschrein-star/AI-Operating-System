@@ -36,13 +36,17 @@ import {
 } from "../../forge-control-web/app/desktop/chat/thread-mapping.ts";
 import {
   extractBrowserShots,
+  isLoginWallName,
   newestFirst,
   parseShotName,
+  resolveStreamMode,
+  resolveStreamWarning,
   shotSrc,
   shotsNoun,
   shotClock,
   stampToIso,
   uploadsDirId,
+  vncProxyUrl,
   type BrowserShotRef,
   type ToolCallLike,
 } from "../../forge-control-web/app/desktop/chat/browser-shots.ts";
@@ -332,7 +336,78 @@ check("…then the older browser shot", sorted[1].name, "20260817T032357Z-settin
 check("…unstamped refs sink to the end", sorted[3].name, "image.png");
 check("newestFirst does not mutate its input", bashRefs[0].name, "20260817T032357Z-settings-surface-dark.png");
 
+/* ── 9. Login-wall detection ──────────────────────────────────────────────── */
+
+console.log("\n── isLoginWallName ─────────────────────────────────────────");
+check("perplexity login wall pattern", isLoginWallName("20260805T101530Z-perplexity-login-wall.png"), true);
+check("bot wall pattern", isLoginWallName("20260805T101530Z-bot-wall.png"), true);
+check("captcha pattern", isLoginWallName("20260805T101530Z-recaptcha-challenge.png"), true);
+check("auth wall pattern", isLoginWallName("20260805T101530Z-auth-wall.png"), true);
+check("sign-in pattern", isLoginWallName("20260805T101530Z-sign-in.png"), true);
+check("standard dark settings is not a wall", isLoginWallName("20260817T032357Z-settings-surface-dark.png"), false);
+check("plain image is not a wall", isLoginWallName("image.png"), false);
+check("null name does not throw", isLoginWallName(null), false);
+check("empty string does not throw", isLoginWallName(""), false);
+
+/* ── 10. resolveStreamMode (Red Mode vs Live Mode vs Idle) ────────────────── */
+
+console.log("\n── resolveStreamMode ───────────────────────────────────────");
+check("needs_human: true → needs_human (Red Mode)", resolveStreamMode({ needs_human: true }), "needs_human");
+check("needs_login: true → needs_human (Red Mode)", resolveStreamMode({ needs_login: true }), "needs_human");
+check("signal: login_required → needs_human (Red Mode)", resolveStreamMode({ signal: "login_required" }), "needs_human");
+check("stuck_signal: heartbeat_stale → needs_human (Red Mode)", resolveStreamMode({ stuck_signal: "heartbeat_stale" }), "needs_human");
+check("ref with login-wall label → needs_human (Red Mode)", resolveStreamMode(null, [
+  {
+    name: "20260805T101530Z-perplexity-login-wall.png",
+    label: "perplexity-login-wall",
+  },
+]), "needs_human");
+
+check("is_live: true → live (Blue Flowing Mode)", resolveStreamMode({ is_live: true }), "live");
+check("takeover_up: true → live (Blue Flowing Mode)", resolveStreamMode({ takeover_up: true }), "live");
+check("idle state → idle", resolveStreamMode({ is_live: false, needs_human: false }), "idle");
+check("empty / null state → idle", resolveStreamMode(null, []), "idle");
+
+/* ── 11. resolveStreamWarning (Diagnostic action info for Konrad) ─────────── */
+
+console.log("\n── resolveStreamWarning ────────────────────────────────────");
+const loginWarning = resolveStreamWarning({
+  needs_login: true,
+  service: "perplexity",
+  reason: "Perplexity login required — human verification needed",
+});
+check("login warning title", loginWarning?.title, "Login Required");
+check("login warning service", loginWarning?.service, "perplexity");
+check("login warning signal", loginWarning?.signal, "login_required");
+check("login warning action", loginWarning?.action, "Take control in manual mode or solve login to resume");
+
+const staleWarning = resolveStreamWarning({
+  stuck_signal: "heartbeat_stale",
+});
+check("stale warning title", staleWarning?.title, "Process Heartbeat Stale");
+check("stale warning signal", staleWarning?.signal, "heartbeat_stale");
+
+const idleWarning = resolveStreamWarning({ is_live: true });
+check("live / idle stream produces no warning", idleWarning, null);
+
+/* ── 12. vncProxyUrl (Loopback proxy URL boundary) ────────────────────────── */
+
+console.log("\n── vncProxyUrl ─────────────────────────────────────────────");
+check(
+  "valid 12-hex dirId builds authenticated vnc proxy URL",
+  vncProxyUrl("7a0c6432cde4"),
+  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc.html?autoconnect=1&resize=scale&path=api/proxy/uploads/7a0c6432cde4/vnc/websockify",
+);
+check(
+  "custom subpath is routed correctly",
+  vncProxyUrl("7a0c6432cde4", "vnc_lite.html"),
+  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc_lite.html?path=api/proxy/uploads/7a0c6432cde4/vnc/websockify",
+);
+check("invalid dirId yields null (security gate)", vncProxyUrl("invalid-id"), null);
+check("traversal in dirId yields null", vncProxyUrl("../../../etc/passwd"), null);
+
 console.log(
-  `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — browser-shot extraction`,
+  `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — browser-shot extraction and stream modes`,
 );
 process.exit(failures === 0 ? 0 : 1);
+

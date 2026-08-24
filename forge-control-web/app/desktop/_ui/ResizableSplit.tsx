@@ -245,13 +245,42 @@ export function ResizeHandle({
   /* The visible rule is 1px. The GRAB TARGET is not: a 1px strip is a
    * pixel-hunt with a pointer, and a divider you cannot reliably catch reads
    * as a divider that does not move — which is exactly how these were being
-   * experienced. So the element is HIT_PAD px thick, paints only its content
-   * box (hence `backgroundClip`), and cancels its own padding with a negative
-   * margin so the layout footprint stays the 1px it always was. Nothing moves;
-   * the handle simply becomes catchable. */
+   * experienced.
+   *
+   * Under global `box-sizing: border-box`, a 1px element with 5px horizontal
+   * padding collapses its content box to 0px (max(0, 1 - 10)). Because
+   * `backgroundClip: content-box` restricts painting to the content box,
+   * the line painted 0px (invisible). Setting `boxSizing: content-box`
+   * guarantees a 1px painted content box while padding creates an 11px
+   * grab target (1px + 2*5px). Negative margins (-5px each side) cancel
+   * the padding so the net layout footprint remains strictly 1px.
+   *
+   * Hover/active emphasis uses `tokens.borderEmphasis` instead of the old
+   * saturated blue accent slab. */
   const base: CSSProperties = {
     flex: "none",
-    background: lit ? tokens.accent : tokens.borderSoft,
+    boxSizing: "content-box",
+    /* `backgroundColor`, not the `background` SHORTHAND: `background` is a
+     * shorthand for backgroundClip/Origin/Image/… too, and React's style
+     * diffing only re-applies props that changed between renders. Hover
+     * toggles `lit`, so `background` is the one prop that changes on every
+     * hover — React re-sets *only* that key, and the browser's shorthand
+     * setter resets every OTHER background-* longhand (including the
+     * `backgroundClip: "content-box"` below, which never itself changes and
+     * so is never re-applied) back to its initial value. Net effect: the
+     * first hover of any divider's lifetime silently and permanently flips
+     * backgroundClip to border-box, so the "1px hairline" paints the full
+     * 11px hit-pad forever after — a live, browser-only regression a
+     * source-regex/arithmetic test cannot see, since it only exists after
+     * React re-renders a real DOM node. `backgroundColor` is a longhand: it
+     * never touches backgroundClip. */
+    /* `borderHandle`, NOT `borderSoft`. Making the line paint again was only
+     * half the fix. Measured on the real render (2026-08-24), `borderSoft` is
+     * 1.16:1 against this theme's #000 body and `borderEmphasis` is 1.32:1 —
+     * pixel-correct, and invisible to an eye. A card's edge may whisper
+     * because the shape it encloses gives it away; a divider encloses nothing
+     * and IS the affordance, so it gets its own tone. See theme.css. */
+    backgroundColor: lit ? tokens.borderHandleHover : tokens.borderHandle,
     backgroundClip: "content-box",
     transition: active ? "none" : "background 120ms ease",
     touchAction: "none",
@@ -277,7 +306,7 @@ export function ResizeHandle({
     axis === "x"
       ? {
           ...base,
-          width: lit ? 3 : 1,
+          width: 1,
           padding: `0 ${HIT_PAD}px`,
           margin: `0 -${HIT_PAD}px`,
           cursor: "col-resize",
@@ -285,7 +314,7 @@ export function ResizeHandle({
         }
       : {
           ...base,
-          height: lit ? 3 : 1,
+          height: 1,
           padding: `${HIT_PAD}px 0`,
           margin: `-${HIT_PAD}px 0`,
           cursor: "row-resize",

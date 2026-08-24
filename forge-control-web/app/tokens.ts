@@ -33,6 +33,11 @@ export const tokens = {
   borderSoft: v("borderSoft"),
   borderDivider: v("borderDivider"),
   borderEmphasis: v("borderEmphasis"),
+  /** A resize handle's line, at rest and under the pointer. NOT part of the
+   *  border scale: a divider has no enclosed shape to be inferred from, so it
+   *  is the one hairline that has to be genuinely visible. See theme.css. */
+  borderHandle: v("borderHandle"),
+  borderHandleHover: v("borderHandleHover"),
 
   // text
   text: v("text"),

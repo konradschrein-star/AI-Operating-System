@@ -32,6 +32,26 @@
   --fg-borderDivider: #141416;
   --fg-borderEmphasis: #222226;
 
+  /* A RESIZE HANDLE IS NOT A BORDER, and it cannot borrow a border's tone.
+   *
+   * Measured against the real render (2026-08-24): every border token above
+   * lands between 1.07:1 and 1.32:1 of contrast on this theme's surfaces
+   * (#000 body, #0b0b0c card). That is fine for a border — a card edge is
+   * found by the shape it encloses, so it may whisper. A divider has no
+   * shape to enclose. It IS the affordance, and at 1.16:1 it is painted,
+   * pixel-correct, and invisible to an eye: the round that made these
+   * handles paint again shipped `borderSoft` and Konrad still could not see
+   * them.
+   *
+   * So: its own token, at a tone chosen for the one job. ~1.6:1 at rest
+   * reads as quiet structure rather than decoration; ~2.5:1 on hover is
+   * unmistakable feedback without returning to the saturated blue slab that
+   * got these called "ugly" in the first place. Do not fold these back into
+   * the border scale — the whole point is that this one is allowed to be
+   * seen. */
+  --fg-borderHandle: #303036;
+  --fg-borderHandleHover: #4d4d55;
+
   /* text */
   --fg-text: #ededee;
   --fg-textHi: #f4f4f5;
@@ -194,6 +214,12 @@ html[data-theme="light"] {
   --fg-borderSoft: #e2e2de;
   --fg-borderDivider: #e7e7e3;
   --fg-borderEmphasis: #c2c2bd;
+
+  /* The handle's own tone, light theme — see the dark-theme block for why a
+   * divider does not borrow a border's contrast. Same targets, inverted:
+   * darker than the surface rather than lighter. */
+  --fg-borderHandle: #bdbdb7;
+  --fg-borderHandleHover: #8e8e88;
 
   /* Text ramp mirrors the dark one: high→ghost, just inverted in luminance. */
   --fg-text: #17171a;
