@@ -225,6 +225,34 @@ checkHas(
   "strict_write_sets",
   false,
 );
+/* ── tier_pin ──────────────────────────────────────────────────────────────
+ * The engine has escaped twice, silently: fix chains born with no tier at all,
+ * and an architect seeding its own children with tiers it chose itself. Both
+ * times the operator had asked for gemini and got Claude. Storing the request
+ * is what makes it a setting; these pin that it IS stored. */
+checkHas(
+  "architect_tier → tier_pin recorded, so downstream can honour it",
+  buildProjectMetadata({ name: "x", brief: "y", repo: "ai-os", architect_tier: "gemini" }),
+  "tier_pin",
+  true,
+);
+check(
+  "tier_pin carries the requested tier verbatim",
+  buildProjectMetadata({ architect_tier: "gemini" }).tier_pin,
+  "gemini",
+);
+check(
+  "a non-gemini tier pins too — this does not hardcode one engine",
+  buildProjectMetadata({ architect_tier: "flagship" }).tier_pin,
+  "flagship",
+);
+checkHas(
+  "no architect_tier → no pin, so untiered projects are untouched",
+  buildProjectMetadata({ name: "x", brief: "y", repo: "ai-os" }),
+  "tier_pin",
+  false,
+);
+
 checkHas(
   "goal mode → key present",
   buildProjectMetadata({ mode: "goal" }),
