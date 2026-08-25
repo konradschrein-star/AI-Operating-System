@@ -47,6 +47,7 @@ import {
   stampToIso,
   uploadsDirId,
   vncProxyUrl,
+  takeoverTicketUrl,
   type BrowserShotRef,
   type ToolCallLike,
 } from "../../forge-control-web/app/desktop/chat/browser-shots.ts";
@@ -394,17 +395,28 @@ check("live / idle stream produces no warning", idleWarning, null);
 
 console.log("\n── vncProxyUrl ─────────────────────────────────────────────");
 check(
-  "valid 12-hex dirId builds authenticated vnc proxy URL",
-  vncProxyUrl("7a0c6432cde4"),
-  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc.html?autoconnect=1&resize=scale&path=api/proxy/uploads/7a0c6432cde4/vnc/websockify",
+  "valid 12-hex dirId + ticket builds ticketed vnc proxy URL",
+  vncProxyUrl("7a0c6432cde4", "tkt-abc123"),
+  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc.html?autoconnect=1&resize=scale&path=api/browser-takeover/ws/tkt-abc123&reconnect=0",
 );
 check(
   "custom subpath is routed correctly",
-  vncProxyUrl("7a0c6432cde4", "vnc_lite.html"),
-  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc_lite.html?path=api/proxy/uploads/7a0c6432cde4/vnc/websockify",
+  vncProxyUrl("7a0c6432cde4", "tkt-abc123", "vnc_lite.html"),
+  "/api/proxy/uploads/7a0c6432cde4/vnc/vnc_lite.html?path=api/browser-takeover/ws/tkt-abc123&reconnect=0",
 );
-check("invalid dirId yields null (security gate)", vncProxyUrl("invalid-id"), null);
-check("traversal in dirId yields null", vncProxyUrl("../../../etc/passwd"), null);
+check("missing ticket yields null (no broken socket)", vncProxyUrl("7a0c6432cde4"), null);
+check("empty-string ticket yields null", vncProxyUrl("7a0c6432cde4", ""), null);
+check("invalid dirId yields null (security gate)", vncProxyUrl("invalid-id", "tkt-abc123"), null);
+check("traversal in dirId yields null", vncProxyUrl("../../../etc/passwd", "tkt-abc123"), null);
+
+console.log("\n── takeoverTicketUrl ───────────────────────────────────────");
+check(
+  "valid 12-hex dirId builds the authenticated mint path",
+  takeoverTicketUrl("7a0c6432cde4"),
+  "/api/proxy/uploads/7a0c6432cde4/vnc/ticket",
+);
+check("invalid dirId yields null (security gate)", takeoverTicketUrl("invalid-id"), null);
+check("traversal in dirId yields null", takeoverTicketUrl("../../../etc/passwd"), null);
 
 console.log(
   `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — browser-shot extraction and stream modes`,

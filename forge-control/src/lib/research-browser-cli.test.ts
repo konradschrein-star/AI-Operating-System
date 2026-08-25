@@ -115,6 +115,15 @@ interface ResearchBrowser {
   };
   novncUrl(port: number): string;
   sshTunnelCommand(port: number, target?: string): string;
+  OS_BASE_URL: string;
+  takeoverUrl(runId: string, base?: string): string;
+  browserStatePath(runId: string): string;
+  writeBrowserStateMarker(input: {
+    runId: string;
+    profile: string;
+    service: string;
+    novncPort: number;
+  }): { written: boolean; reason?: string; path?: string };
   sanitiseLabel(label: unknown): string;
   sanitiseRunId(runId: unknown): string | null;
   isServableRunId(runId: string): boolean;
@@ -140,8 +149,8 @@ interface ResearchBrowser {
     profile: string;
     service: string;
     serviceTitle: string;
-    novncPort: number;
-    sshTarget: string;
+    runId: string;
+    osBaseUrl?: string;
   }): string;
   parsePgTimestamp(value: unknown): number | null;
   findRecentLoginReminder(
@@ -818,16 +827,29 @@ describe("buildLoginReminderText", () => {
     profile: "perplexity",
     service: "perplexity",
     serviceTitle: "Perplexity",
-    novncPort: 6912,
-    sshTarget: "root@65.108.6.149",
+    runId: "0aa1fce7813c",
   };
 
-  test("names the noVNC URL, the profile, and the service to log into", () => {
+  test("names the clickable takeover URL, the profile, and the service to log into", () => {
     const text = rb.buildLoginReminderText(input);
-    assert.ok(text.includes(rb.novncUrl(6912)), "the exact noVNC URL must be in the reminder");
+    assert.ok(
+      text.includes(rb.takeoverUrl("0aa1fce7813c")),
+      "the exact takeover URL must be in the reminder",
+    );
+    assert.ok(text.startsWith("Research browser needs a ONE-TIME login"));
     assert.ok(text.includes('profile "perplexity"'));
     assert.ok(text.includes("Perplexity"));
-    assert.ok(text.includes(rb.sshTunnelCommand(6912, "root@65.108.6.149")), "the tunnel is required to reach it");
+  });
+
+  test("carries no ssh command — the whole point of the takeover URL is no tunnel", () => {
+    const text = rb.buildLoginReminderText(input);
+    assert.ok(!text.includes("ssh "), "an ssh command in the reminder means the tunnel is back");
+  });
+
+  test("osBaseUrl overrides RESEARCH_BROWSER_OS_BASE_URL's default host", () => {
+    const text = rb.buildLoginReminderText({ ...input, osBaseUrl: "https://example.invalid" });
+    assert.ok(text.includes("https://example.invalid/takeover/0aa1fce7813c"));
+    assert.ok(!text.includes(rb.OS_BASE_URL));
   });
 
   test("fits forge-control's 500-char limit — over-length is a 400, i.e. NO notification", () => {
@@ -838,12 +860,11 @@ describe("buildLoginReminderText", () => {
     );
   });
 
-  test("still fits with the longest legal profile name and a 5-digit port", () => {
+  test("still fits with the longest legal profile name and a long service title", () => {
     const text = rb.buildLoginReminderText({
       ...input,
       profile: "a".repeat(39),
       serviceTitle: "Some Service With A Fairly Long Name",
-      novncPort: 65535,
     });
     assert.ok(text.length <= rb.REMINDER_TEXT_MAX, `${text.length} chars`);
   });
@@ -862,6 +883,29 @@ describe("buildLoginReminderText", () => {
 
   test("promises no password is stored — the reminder is where Konrad reads that", () => {
     assert.match(rb.buildLoginReminderText(input), /nothing stores your password/i);
+  });
+});
+
+/* ========================================================================== *
+ * The run→profile marker (browser_state.json) resolveProfileForRun reads
+ * ========================================================================== */
+
+describe("browserStatePath / writeBrowserStateMarker", () => {
+  test("the marker path is <UPLOADS_ROOT>/<runId>/browser_state.json", () => {
+    assert.equal(rb.browserStatePath("0aa1fce7813c"), `${rb.UPLOADS_ROOT}/0aa1fce7813c/browser_state.json`);
+  });
+
+  test("the ADHOC_RUN_ID sentinel is skipped — no run row will ever resolve it", () => {
+    // Skipped, not written: assert on the return value only. Writing under UPLOADS_ROOT is a
+    // live-filesystem side effect this suite deliberately never takes (see file header) — the
+    // real write path was exercised by hand, out of the worktree, against a throwaway run id.
+    const result = rb.writeBrowserStateMarker({
+      runId: rb.ADHOC_RUN_ID,
+      profile: "perplexity",
+      service: "perplexity",
+      novncPort: 6912,
+    });
+    assert.equal(result.written, false);
   });
 });
 

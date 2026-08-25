@@ -29,6 +29,11 @@ import {
   resolveProfileForRun,
   PROFILE_RE,
 } from "../lib/browser-takeover.ts";
+import {
+  mintTakeoverTicket,
+  verifyTakeoverTicket,
+  isTakeoverTicketError,
+} from "../lib/takeover-ticket.ts";
 
 const r = new Hono();
 
@@ -171,6 +176,107 @@ r.get("/browser/:profile/state", async (c) => {
   }
 });
 
+/* ---------------------------------------------------------------------------
+ * Browser-takeover tickets.
+ *
+ * The websockify upgrade cannot come through here: a Next Route Handler cannot
+ * host a WebSocket, so nginx carries `/api/browser-takeover/ws/<ticket>`
+ * straight to this process, OUTSIDE NextAuth's middleware. These two mint
+ * routes are the authenticated half — they are reached through `/api/proxy`,
+ * behind the session cookie, and they are the only place a ticket is created.
+ * The socket itself accepts nothing but a ticket this process signed.
+ * ------------------------------------------------------------------------- */
+
+interface TakeoverTicketResponse {
+  ticket: string;
+  expires_at: string;
+  /** What noVNC needs for its `path` setting — NO leading slash. */
+  ws_path: string;
+  novnc_port: number;
+  profile: string;
+}
+
+type MintOutcome =
+  | { ok: true; body: TakeoverTicketResponse }
+  | { ok: false; status: 500 | 503; error: string };
+
+async function mintTicketFor(runId: string, profile: string): Promise<MintOutcome> {
+  let novncPort: number;
+  try {
+    novncPort = (await inspectTakeover(profile)).novnc_port;
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      status: 500,
+      error: `Cannot resolve the takeover port for profile "${profile}": ${(err as Error).message}`,
+    };
+  }
+
+  let ticket: string;
+  try {
+    ticket = mintTakeoverTicket({ runId, profile, port: novncPort });
+  } catch (err: unknown) {
+    const message = (err as Error).message;
+    // A missing or too-short TAKEOVER_TICKET_SECRET is an operator problem, not
+    // a bad request — 503, and never an unsigned ticket as a consolation prize.
+    if (message.includes("TAKEOVER_TICKET_SECRET")) {
+      return { ok: false, status: 503, error: message };
+    }
+    return { ok: false, status: 500, error: `Cannot mint a takeover ticket: ${message}` };
+  }
+
+  // Verify our own mint before handing it out. `expires_at` then comes from the
+  // signed payload instead of a second, drifting copy of the TTL, and a ticket
+  // our own gate would refuse never reaches Konrad's browser.
+  //
+  // Safe because verification does not spend the ticket: the single-use jti
+  // store lives in browser-takeover.ts's resolveTakeoverUpgradeTarget, not in
+  // verifyTakeoverTicket. Anyone moving the consume into verify must move this
+  // call out, or every minted ticket would arrive already spent.
+  const claims = verifyTakeoverTicket(ticket);
+  if (isTakeoverTicketError(claims)) {
+    return {
+      ok: false,
+      status: 500,
+      error: `Minted a ticket our own verifier rejects (${claims.error}) — refusing to hand it out`,
+    };
+  }
+
+  return {
+    ok: true,
+    body: {
+      ticket,
+      expires_at: new Date(claims.exp).toISOString(),
+      // noVNC builds its socket URL as `url += '/' + path`, so a leading slash
+      // here produces `//api/...`.
+      ws_path: `api/browser-takeover/ws/${ticket}`,
+      novnc_port: claims.port,
+      profile: claims.profile,
+    },
+  };
+}
+
+/**
+ * GET /api/uploads/browser/:profile/vnc/ticket
+ *
+ * Registered ABOVE the `/browser/:profile/vnc/*` catch-all directly below —
+ * Hono matches in registration order, and that catch-all would otherwise
+ * forward "ticket" to noVNC as a filename and answer 404 from websockify.
+ */
+r.get("/browser/:profile/vnc/ticket", async (c) => {
+  const profile = c.req.param("profile");
+  if (!PROFILE_RE.test(profile)) {
+    return c.json({ error: `bad profile: "${profile}"` }, 400);
+  }
+  // The claim set always carries a run id; the profile form has no run, so it
+  // says so explicitly rather than borrowing an id it does not have.
+  const outcome = await mintTicketFor(`profile:${profile}`, profile);
+  if (!outcome.ok) return c.json({ error: outcome.error }, outcome.status);
+  // A ticket is a bearer credential — it must never sit in a cache.
+  c.header("Cache-Control", "no-store");
+  return c.json(outcome.body);
+});
+
 /**
  * ALL /api/uploads/browser/:profile/vnc
  * ALL /api/uploads/browser/:profile/vnc/*
@@ -230,6 +336,26 @@ r.get("/:id/browser-state", async (c) => {
   if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
   const browser_state = await resolveBrowserState(id);
   return c.json({ id, browser_state });
+});
+
+/**
+ * GET /api/uploads/:id/vnc/ticket
+ *
+ * Registered ABOVE the `/:id/vnc/*` catch-all directly below, for the same
+ * reason as the profile form: registration order decides, and the catch-all
+ * would swallow "ticket".
+ */
+r.get("/:id/vnc/ticket", async (c) => {
+  const id = c.req.param("id");
+  if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
+  const profile = await resolveProfileForRun(id);
+  if (!profile) {
+    return c.json({ error: `No browser profile found for run ${id}` }, 404);
+  }
+  const outcome = await mintTicketFor(id, profile);
+  if (!outcome.ok) return c.json({ error: outcome.error }, outcome.status);
+  c.header("Cache-Control", "no-store");
+  return c.json(outcome.body);
 });
 
 /**

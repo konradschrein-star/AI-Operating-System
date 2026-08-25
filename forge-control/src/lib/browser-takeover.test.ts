@@ -7,9 +7,10 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { createServer, WebSocket, type Server } from "node:http";
-import { createHash } from "node:crypto";
+import { createServer, request as httpRequest, WebSocket, type Server } from "node:http";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
+import type { Duplex } from "node:stream";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -31,9 +32,32 @@ import {
   proxyTakeoverHttp,
   matchTakeoverUpgradePath,
   resolveTakeoverUpgradeTarget,
+  isTakeoverUpgradeRejection,
+  consumeTakeoverTicketJti,
+  clearSpentTakeoverTicketJtis,
   handleBrowserTakeoverUpgrade,
   PROFILE_RE,
 } from "./browser-takeover.ts";
+import { mintTakeoverTicket } from "./takeover-ticket.ts";
+import uploadsRoutes from "../routes/uploads.ts";
+
+/**
+ * The takeover gate is now ticket-only, so every upgrade test needs a signing
+ * secret. It is set here rather than taken from the host: a box that happens to
+ * export TAKEOVER_TICKET_SECRET must not be able to make these pass or fail.
+ */
+const TEST_SECRET = "browser-takeover-test-secret-0123456789";
+const originalSecret = process.env.TAKEOVER_TICKET_SECRET;
+process.env.TAKEOVER_TICKET_SECRET = TEST_SECRET;
+process.on("exit", () => {
+  if (originalSecret === undefined) delete process.env.TAKEOVER_TICKET_SECRET;
+  else process.env.TAKEOVER_TICKET_SECRET = originalSecret;
+});
+
+/** Builds the one URL path the upgrade listener answers on. */
+function wsPath(ticket: string): string {
+  return `/api/browser-takeover/ws/${ticket}`;
+}
 
 describe("displaySlot and port math", () => {
   test("fnv1a32 is stable and matches expected hash", () => {
@@ -393,58 +417,221 @@ describe("proxyTakeoverHttp", () => {
 });
 
 describe("matchTakeoverUpgradePath", () => {
-  test("matches /api/uploads/browser/:profile/vnc and /vnc/*", () => {
-    assert.deepEqual(matchTakeoverUpgradePath("/api/uploads/browser/perplexity/vnc"), {
-      kind: "profile",
-      id: "perplexity",
-      subpath: "",
+  test("matches the one ticket route and carries the ticket through", () => {
+    assert.deepEqual(matchTakeoverUpgradePath("/api/browser-takeover/ws/abc.def"), {
+      kind: "ticket",
+      ticket: "abc.def",
     });
-    assert.deepEqual(matchTakeoverUpgradePath("/api/uploads/browser/perplexity/vnc/websockify"), {
-      kind: "profile",
-      id: "perplexity",
-      subpath: "websockify",
+    assert.deepEqual(matchTakeoverUpgradePath("/api/browser-takeover/ws/abc.def/"), {
+      kind: "ticket",
+      ticket: "abc.def",
     });
   });
 
-  test("matches /api/uploads/:id/vnc and /vnc/* as a run id, not the 'browser' literal", () => {
-    assert.deepEqual(matchTakeoverUpgradePath("/api/uploads/7a0c6432cde4/vnc/websockify"), {
-      kind: "run",
-      id: "7a0c6432cde4",
-      subpath: "websockify",
-    });
+  test("the deleted unauthenticated arms no longer match anything", () => {
+    // These two paths used to open a socket on a bare, guessable id. If either
+    // ever matches again, a run id is a credential for a logged-in Chrome.
+    assert.equal(matchTakeoverUpgradePath("/api/uploads/browser/perplexity/vnc"), null);
+    assert.equal(matchTakeoverUpgradePath("/api/uploads/browser/perplexity/vnc/websockify"), null);
+    assert.equal(matchTakeoverUpgradePath("/api/uploads/7a0c6432cde4/vnc"), null);
+    assert.equal(matchTakeoverUpgradePath("/api/uploads/7a0c6432cde4/vnc/websockify"), null);
   });
 
-  test("returns null for unrelated paths", () => {
+  test("returns null for unrelated paths and for a ticket route with extra segments", () => {
     assert.equal(matchTakeoverUpgradePath("/api/uploads/7a0c6432cde4/shots"), null);
     assert.equal(matchTakeoverUpgradePath("/api/health"), null);
     assert.equal(matchTakeoverUpgradePath("/"), null);
+    assert.equal(matchTakeoverUpgradePath("/api/browser-takeover/ws"), null);
+    assert.equal(matchTakeoverUpgradePath("/api/browser-takeover/ws/"), null);
+    assert.equal(matchTakeoverUpgradePath("/api/browser-takeover/ws/tkt/websockify"), null);
   });
 });
 
-describe("resolveTakeoverUpgradeTarget", () => {
-  test("rejects an invalid profile name", async () => {
-    const target = await resolveTakeoverUpgradeTarget({ kind: "profile", id: "../bad", subpath: "" });
-    assert.ok("error" in target);
+describe("consumeTakeoverTicketJti — the replay store", () => {
+  test("a jti can be spent once and not twice", () => {
+    clearSpentTakeoverTicketJtis();
+    const exp = Date.now() + 60_000;
+    assert.equal(consumeTakeoverTicketJti("jti-one", exp), true);
+    assert.equal(consumeTakeoverTicketJti("jti-one", exp), false);
+    assert.equal(consumeTakeoverTicketJti("jti-two", exp), true);
   });
 
-  test("rejects an out-of-range port even with a valid profile", async () => {
-    const target = await resolveTakeoverUpgradeTarget(
-      { kind: "profile", id: "test", subpath: "" },
-      { targetPort: 8080 },
-    );
-    assert.ok("error" in target);
-  });
-
-  test("accepts a valid profile with an explicit in-range targetPort override", async () => {
-    const target = await resolveTakeoverUpgradeTarget(
-      { kind: "profile", id: "test", subpath: "" },
-      { targetPort: 6943 },
-    );
-    assert.deepEqual(target, { profile: "test", targetPort: 6943 });
+  test("entries are swept once their own expiry passes", () => {
+    clearSpentTakeoverTicketJtis();
+    const shortExp = Date.now() + 1_000;
+    assert.equal(consumeTakeoverTicketJti("jti-sweep", shortExp), true);
+    // Same jti, evaluated after that expiry: the entry is swept, so it is
+    // spendable again. (Verify would already have rejected the ticket itself
+    // as expired — this only proves the store does not grow forever.)
+    assert.equal(consumeTakeoverTicketJti("jti-sweep", shortExp, shortExp + 1), true);
+    clearSpentTakeoverTicketJtis();
   });
 });
 
-describe("WebSocket-upgrade proxy — real socket, full chain (round 5 fix)", () => {
+describe("resolveTakeoverUpgradeTarget — the ticket is the only input", () => {
+  test("a valid ticket yields the profile and port from the SIGNED payload", () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "r704-loginwall", port: 6943 });
+    const target = resolveTakeoverUpgradeTarget({ kind: "ticket", ticket });
+
+    assert.ok(!isTakeoverUpgradeRejection(target), `expected a target, got ${JSON.stringify(target)}`);
+    assert.equal(target.profile, "r704-loginwall");
+    assert.equal(target.targetPort, 6943);
+    assert.equal(target.runId, "run-abc");
+  });
+
+  test("the same ticket presented twice is refused as a replay", () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "scratch", port: 6943 });
+
+    const first = resolveTakeoverUpgradeTarget({ kind: "ticket", ticket });
+    assert.ok(!isTakeoverUpgradeRejection(first), "the first presentation must succeed");
+
+    const second = resolveTakeoverUpgradeTarget({ kind: "ticket", ticket });
+    assert.ok(isTakeoverUpgradeRejection(second), "the second presentation must be refused");
+    assert.equal(second.reason, "ticket_replayed");
+    assert.equal(second.status, 401);
+  });
+
+  test("an expired ticket is refused with 401", () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = mintTakeoverTicket({
+      runId: "run-abc",
+      profile: "scratch",
+      port: 6943,
+      ttlMs: 1,
+    });
+    // Hand-roll the wait: node:test has no clock control here, and 1ms is real.
+    const deadline = Date.now() + 5;
+    while (Date.now() < deadline) {
+      /* spin */
+    }
+    const target = resolveTakeoverUpgradeTarget({ kind: "ticket", ticket });
+    assert.ok(isTakeoverUpgradeRejection(target));
+    assert.equal(target.reason, "ticket_expired");
+    assert.equal(target.status, 401);
+  });
+
+  test("a tampered signature is refused with 401 and the payload is never read", () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "scratch", port: 6943 });
+    const [payload, signature] = ticket.split(".");
+    const flipped = (signature[0] === "A" ? "B" : "A") + signature.slice(1);
+
+    const target = resolveTakeoverUpgradeTarget({ kind: "ticket", ticket: `${payload}.${flipped}` });
+    assert.ok(isTakeoverUpgradeRejection(target));
+    assert.equal(target.reason, "ticket_bad_signature");
+    assert.equal(target.status, 401);
+    assert.equal(target.profile, undefined, "an unverified payload must not name a profile");
+    assert.equal(target.port, undefined, "an unverified payload must not name a port");
+  });
+
+  test("a tampered payload cannot re-point the socket at another port", () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "scratch", port: 6943 });
+    const [payloadB64, signature] = ticket.split(".");
+    const claims = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8")) as Record<
+      string,
+      unknown
+    >;
+    claims.port = 7700; // aim it at forge-control itself
+    const forged = `${Buffer.from(JSON.stringify(claims), "utf8").toString("base64url")}.${signature}`;
+
+    const target = resolveTakeoverUpgradeTarget({ kind: "ticket", ticket: forged });
+    assert.ok(isTakeoverUpgradeRejection(target));
+    assert.equal(target.reason, "ticket_bad_signature");
+  });
+
+  test("garbage and an empty ticket are refused, never thrown", () => {
+    clearSpentTakeoverTicketJtis();
+    for (const ticket of ["", "not-a-ticket", "a.b.c", "%%%.%%%", "../../etc/passwd"]) {
+      const target = resolveTakeoverUpgradeTarget({ kind: "ticket", ticket });
+      assert.ok(isTakeoverUpgradeRejection(target), `ticket ${JSON.stringify(ticket)} must be refused`);
+      assert.equal(target.status, 401);
+    }
+  });
+
+  test("a missing signing secret fails closed with 503, never open", () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "scratch", port: 6943 });
+    delete process.env.TAKEOVER_TICKET_SECRET;
+    try {
+      const target = resolveTakeoverUpgradeTarget({ kind: "ticket", ticket });
+      assert.ok(isTakeoverUpgradeRejection(target));
+      assert.equal(target.status, 503);
+      assert.equal(target.reason, "ticket_secret_unavailable");
+    } finally {
+      process.env.TAKEOVER_TICKET_SECRET = TEST_SECRET;
+    }
+  });
+});
+
+describe("uploads route ordering — /vnc/ticket is not swallowed by /vnc/*", () => {
+  // Lives in this file rather than a new uploads test because the declared
+  // write-set for this round is browser-takeover.ts, its test, and uploads.ts.
+  //
+  // The trap: Hono matches in registration order, so `r.all("/:id/vnc/*")` —
+  // registered since round 4 — will proxy "ticket" to websockify as a filename
+  // unless the mint route is registered above it. Asserting on the RESPONSE
+  // proves the ordering; asserting that the code contains a route would not.
+
+  test("GET /browser/:profile/vnc/ticket mints instead of proxying to noVNC", async () => {
+    clearSpentTakeoverTicketJtis();
+    const res = await uploadsRoutes.request("/browser/scratch/vnc/ticket");
+    assert.equal(res.status, 200, `expected a minted ticket, got ${res.status}`);
+    assert.equal(res.headers.get("cache-control"), "no-store");
+
+    const body = (await res.json()) as {
+      ticket: string;
+      expires_at: string;
+      ws_path: string;
+      novnc_port: number;
+    };
+    assert.match(body.ticket, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    assert.equal(body.ws_path, `api/browser-takeover/ws/${body.ticket}`);
+    assert.ok(!body.ws_path.startsWith("/"), "ws_path must have no leading slash");
+    assert.ok(
+      body.novnc_port >= NOVNC_PORT_BASE && body.novnc_port < NOVNC_PORT_BASE + DISPLAY_SPAN,
+      `novnc_port ${body.novnc_port} must be inside the loopback allowlist`,
+    );
+    assert.ok(Date.parse(body.expires_at) > Date.now(), "expires_at must be in the future");
+
+    // And the ticket it handed out actually opens the gate.
+    const target = resolveTakeoverUpgradeTarget({ kind: "ticket", ticket: body.ticket });
+    assert.ok(!isTakeoverUpgradeRejection(target), `minted ticket must verify: ${JSON.stringify(target)}`);
+    assert.equal(target.profile, "scratch");
+    assert.equal(target.targetPort, body.novnc_port);
+  });
+
+  test("GET /:id/vnc/ticket 404s for a run with no profile, rather than 400 from the catch-all", async () => {
+    // A well-formed 12-hex id that owns no upload directory: the mint route was
+    // reached (it resolved the profile and found none) rather than the catch-all.
+    const res = await uploadsRoutes.request("/aaaabbbbcccc/vnc/ticket");
+    assert.equal(res.status, 404);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /No browser profile found for run aaaabbbbcccc/);
+  });
+
+  test("a bad run id is rejected before any profile lookup", async () => {
+    const res = await uploadsRoutes.request("/NOT-AN-ID/vnc/ticket");
+    assert.equal(res.status, 400);
+  });
+
+  test("the mint route answers 503 when the signing secret is missing", async () => {
+    delete process.env.TAKEOVER_TICKET_SECRET;
+    try {
+      const res = await uploadsRoutes.request("/browser/scratch/vnc/ticket");
+      assert.equal(res.status, 503);
+      const body = (await res.json()) as { error: string };
+      assert.match(body.error, /TAKEOVER_TICKET_SECRET/);
+      assert.ok(!("ticket" in body), "a 503 must not carry an unsigned ticket");
+    } finally {
+      process.env.TAKEOVER_TICKET_SECRET = TEST_SECRET;
+    }
+  });
+});
+
+describe("WebSocket-upgrade proxy — real socket, ticket-gated, full chain", () => {
   // Round 4's proxyTakeoverHttp only ever proved plain HTTP GET/POST. noVNC's
   // canvas needs a 101 Switching Protocols handshake, which fetch() cannot
   // complete. This describe block proves the actual missing piece: a real
@@ -452,6 +639,10 @@ describe("WebSocket-upgrade proxy — real socket, full chain (round 5 fix)", ()
   // like index.ts (`server.on("upgrade", (req, socket, head) =>
   // handleBrowserTakeoverUpgrade(...))`), which must reach a minimal hand-rolled
   // "fake websockify" server and round-trip an application-level message.
+  //
+  // This round adds the gate: every one of those sockets must now present a
+  // valid, unspent, unexpired ticket. The negative cases below are the point —
+  // a takeover route that cannot be shown to REJECT is not secured.
 
   function decodeClientFrame(buf: Buffer): { opcode: number; payload: Buffer } {
     const opcode = buf[0] & 0x0f;
@@ -504,6 +695,24 @@ describe("WebSocket-upgrade proxy — real socket, full chain (round 5 fix)", ()
   const fakePort = 6943; // inside NOVNC_PORT_BASE..+DISPLAY_SPAN, distinct from the HTTP mock's 6942
   let proxyPort: number;
 
+  /**
+   * Every socket either server accepts, so teardown can destroy them.
+   *
+   * `server.close()` waits for open connections. These tests deliberately
+   * abandon upgraded sockets mid-flight (that is what a refused or replayed
+   * takeover looks like), which leaves the upstream half of the pipe dangling
+   * and makes close() never call back — the test process then hangs after the
+   * last assertion has already passed. Measured: without this, the file ran
+   * green and never exited.
+   */
+  const openSockets = new Set<Duplex>();
+  function trackSockets(server: Server): void {
+    server.on("connection", (socket) => {
+      openSockets.add(socket);
+      socket.on("close", () => openSockets.delete(socket));
+    });
+  }
+
   before(async () => {
     // Minimal raw WS echo server standing in for websockify — proves this
     // repo's OWN chain (index.ts wiring -> browser-takeover.ts), not a real
@@ -532,35 +741,91 @@ describe("WebSocket-upgrade proxy — real socket, full chain (round 5 fix)", ()
         socket.write(encodeServerFrame(frame.opcode || 0x1, frame.payload));
       });
     });
+    trackSockets(fakeWebsockify);
     await new Promise<void>((resolve) => fakeWebsockify.listen(fakePort, "127.0.0.1", () => resolve()));
 
-    // Wired identically to index.ts's `server.on("upgrade", ...)` — the exact
-    // fix this round adds. `{ targetPort: fakePort }` stands in for what
-    // production gets from inspectTakeover(profile).novnc_port.
+    // Wired identically to index.ts's `server.on("upgrade", ...)`, with NO
+    // options argument — exactly as index.ts calls it. The target port can
+    // therefore only come from the signed ticket, which is the property under
+    // test; `fakePort` is baked into the tickets these tests mint.
     proxyServer = createServer((_req, res) => {
       res.writeHead(404);
       res.end();
     });
     proxyServer.on("upgrade", (req, socket, head) => {
-      handleBrowserTakeoverUpgrade(req, socket, head, { targetPort: fakePort })
+      handleBrowserTakeoverUpgrade(req, socket, head)
         .then((handled) => {
           if (!handled) socket.destroy();
         })
         .catch(() => socket.destroy());
     });
+    trackSockets(proxyServer);
     await new Promise<void>((resolve) => proxyServer.listen(0, "127.0.0.1", () => resolve()));
     proxyPort = (proxyServer.address() as AddressInfo).port;
   });
 
   after(async () => {
+    for (const socket of openSockets) socket.destroy();
+    openSockets.clear();
     await Promise.all([
       new Promise<void>((resolve) => fakeWebsockify.close(() => resolve())),
       new Promise<void>((resolve) => proxyServer.close(() => resolve())),
     ]);
   });
 
-  test("a real WebSocket client connects through the proxy and round-trips a message", async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${proxyPort}/api/uploads/browser/wstest/vnc/websockify`);
+  /**
+   * Attempts a raw upgrade and reports what actually came back. A WebSocket
+   * client only surfaces "error" or "close" for a refusal, which cannot tell
+   * 401 apart from a destroyed socket — and the difference is exactly what
+   * these tests are here to pin.
+   */
+  function attemptUpgrade(
+    urlPath: string,
+  ): Promise<{ upgraded: true } | { upgraded: false; status: number; body: string }> {
+    return new Promise((resolve, reject) => {
+      const req = httpRequest({
+        host: "127.0.0.1",
+        port: proxyPort,
+        path: urlPath,
+        // No connection pooling: Node's global agent keeps sockets alive, and a
+        // pooled socket to a server this file is about to close is one more way
+        // for the process to outlive its own tests.
+        agent: false,
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Version": "13",
+          "Sec-WebSocket-Key": randomBytes(16).toString("base64"),
+        },
+      });
+      req.on("upgrade", (_res, socket) => {
+        socket.destroy();
+        resolve({ upgraded: true });
+      });
+      req.on("response", (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        res.on("end", () => resolve({ upgraded: false, status: res.statusCode ?? 0, body }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  /** Correctly signs arbitrary claims — the only way to test a signed-but-bad payload. */
+  function forgeTicket(claims: Record<string, unknown>): string {
+    const payloadB64 = Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
+    const sig = createHmac("sha256", TEST_SECRET).update(payloadB64).digest("base64url");
+    return `${payloadB64}.${sig}`;
+  }
+
+  test("a valid ticket carries a real WebSocket through to the loopback target", async () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "wstest", port: fakePort });
+    const ws = new WebSocket(`ws://127.0.0.1:${proxyPort}${wsPath(ticket)}`);
     try {
       await new Promise<void>((resolve, reject) => {
         ws.addEventListener("open", () => resolve());
@@ -578,20 +843,113 @@ describe("WebSocket-upgrade proxy — real socket, full chain (round 5 fix)", ()
     }
   });
 
-  test("an invalid profile name is rejected before any socket reaches the loopback target", async () => {
-    // "Not_Valid" fails PROFILE_RE (uppercase + underscore) but, unlike "..",
-    // survives WHATWG URL path normalization intact, so this actually
-    // exercises resolveTakeoverUpgradeTarget's rejection rather than a
-    // route mismatch caused by the client normalizing ".." away first.
-    const ws = new WebSocket(`ws://127.0.0.1:${proxyPort}/api/uploads/browser/Not_Valid/vnc/websockify`);
-    await new Promise<void>((resolve) => {
-      ws.addEventListener("error", () => resolve());
-      ws.addEventListener("close", () => resolve());
-      ws.addEventListener("open", () => {
-        ws.close();
-        resolve();
-        assert.fail("connection should not have opened for an invalid profile");
-      });
+  test("the port comes from the signed payload, not from the caller", async () => {
+    clearSpentTakeoverTicketJtis();
+    // 6944 is inside the allowlist and nothing is listening there. If the
+    // handler took its port from anywhere but the ticket, this would reach the
+    // fake websockify on 6943 and succeed.
+    const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "wstest", port: 6944 });
+    const result = await attemptUpgrade(wsPath(ticket)).catch(() => ({ upgraded: false as const, status: 0, body: "socket destroyed" }));
+    assert.equal(result.upgraded, false, "a ticket for a dead port must not upgrade");
+  });
+
+  test("NO ticket: the deleted unauthenticated arms are refused outright", async () => {
+    clearSpentTakeoverTicketJtis();
+    // The exact paths that used to open a socket on a bare, guessable id. The
+    // handler no longer claims them, so index.ts's wiring destroys the socket.
+    for (const urlPath of [
+      "/api/uploads/browser/wstest/vnc/websockify",
+      "/api/uploads/7a0c6432cde4/vnc/websockify",
+      "/api/browser-takeover/ws/",
+      "/api/browser-takeover/ws",
+    ]) {
+      await assert.rejects(
+        () => attemptUpgrade(urlPath),
+        `${urlPath} must not open a socket`,
+      );
+    }
+  });
+
+  test("EXPIRED ticket: refused with 401, no socket", async () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = forgeTicket({
+      v: 1,
+      rid: "run-abc",
+      prof: "wstest",
+      port: fakePort,
+      exp: Date.now() - 1_000,
+      jti: "expired0123456789abcdef0123456789",
     });
+    const result = await attemptUpgrade(wsPath(ticket));
+    assert.equal(result.upgraded, false);
+    assert.equal(result.status, 401);
+  });
+
+  test("REPLAYED ticket: the second presentation of a valid ticket is refused with 401", async () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "wstest", port: fakePort });
+
+    const first = await attemptUpgrade(wsPath(ticket));
+    assert.equal(first.upgraded, true, "the first presentation must open the socket");
+
+    const second = await attemptUpgrade(wsPath(ticket));
+    assert.equal(second.upgraded, false, "a replayed ticket must not open a second socket");
+    assert.equal(second.status, 401);
+  });
+
+  test("TAMPERED signature: refused with 401", async () => {
+    clearSpentTakeoverTicketJtis();
+    const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "wstest", port: fakePort });
+    const [payload, signature] = ticket.split(".");
+    const flipped = (signature[0] === "A" ? "B" : "A") + signature.slice(1);
+
+    const result = await attemptUpgrade(wsPath(`${payload}.${flipped}`));
+    assert.equal(result.upgraded, false);
+    assert.equal(result.status, 401);
+  });
+
+  test("a correctly SIGNED ticket cannot aim the socket outside the loopback allowlist", async () => {
+    clearSpentTakeoverTicketJtis();
+    // These payloads carry a valid signature — they are past every crypto
+    // check — and each names a port the socket must never reach, including
+    // forge-control's own listener. The assertion is on the OUTCOME, not on
+    // which layer catches it: the port range is enforced both inside
+    // verifyTakeoverTicket and again at use time, and either is a pass.
+    for (const port of [proxyPort, 22, 5432, 7700, 6899, 6960]) {
+      const ticket = forgeTicket({
+        v: 1,
+        rid: "run-abc",
+        prof: "wstest",
+        port,
+        exp: Date.now() + 60_000,
+        jti: `badport-${port}-0123456789abcdef`,
+      });
+      const result = await attemptUpgrade(wsPath(ticket));
+      assert.equal(result.upgraded, false, `port ${port} must not open a socket`);
+      assert.ok(
+        result.status === 401 || result.status === 404,
+        `port ${port}: expected a refusal status, got ${result.status}`,
+      );
+    }
+  });
+
+  test("a correctly SIGNED ticket carrying a forbidden profile is refused", async () => {
+    clearSpentTakeoverTicketJtis();
+    for (const prof of ["../../etc", "Not_Valid", "has space", ""]) {
+      const ticket = forgeTicket({
+        v: 1,
+        rid: "run-abc",
+        prof,
+        port: fakePort,
+        exp: Date.now() + 60_000,
+        jti: `badprof-${prof}-0123456789abcdef`,
+      });
+      const result = await attemptUpgrade(wsPath(ticket));
+      assert.equal(result.upgraded, false, `profile ${JSON.stringify(prof)} must not open a socket`);
+      assert.ok(
+        result.status === 401 || result.status === 404,
+        `profile ${JSON.stringify(prof)}: expected a refusal status, got ${result.status}`,
+      );
+    }
   });
 });

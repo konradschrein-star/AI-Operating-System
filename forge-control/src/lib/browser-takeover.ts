@@ -17,6 +17,12 @@ import { request as httpRequest, type IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import pg from "pg";
 
+import {
+  verifyTakeoverTicket,
+  isTakeoverTicketError,
+  type VerifyTakeoverTicketResult,
+} from "./takeover-ticket.ts";
+
 const { Pool } = pg;
 
 export const PROFILES_ROOT = process.env.PROFILES_ROOT ?? "/opt/ai-os/browser-profiles";
@@ -591,70 +597,193 @@ export async function proxyTakeoverHttp(
  */
 
 export interface TakeoverUpgradeMatch {
-  kind: "profile" | "run";
-  /** Profile name (kind "profile") or run/dir id (kind "run") from the URL. */
-  id: string;
-  /** Path segment(s) after `.../vnc/`, no leading slash. Empty means "websockify". */
-  subpath: string;
+  kind: "ticket";
+  /**
+   * The opaque signed ticket lifted out of the URL path. It is a BEARER
+   * CREDENTIAL: never log it, never echo it back, never put it in an error
+   * body. Only its `jti` (which carries no signature) is safe to record.
+   */
+  ticket: string;
 }
 
-// Mirrors the HTTP routes registered in routes/uploads.ts:
-//   ALL /api/uploads/browser/:profile/vnc(/*)?
-//   ALL /api/uploads/:id/vnc(/*)?
-// "browser" is checked first — it is more specific and would otherwise be
-// swallowed by the run-id pattern's `[^/]+` capture.
-const BROWSER_VNC_UPGRADE_RE = /^\/api\/uploads\/browser\/([^/]+)\/vnc\/?(.*)$/;
-const RUN_VNC_UPGRADE_RE = /^\/api\/uploads\/([^/]+)\/vnc\/?(.*)$/;
+/**
+ * The ONE upgrade route.
+ *
+ * `/api/browser-takeover/ws/<ticket>` is a dedicated, single-purpose prefix
+ * carried straight to this process by its own nginx `location`, because a Next
+ * Route Handler cannot host a WebSocket (no socket access, `Response` rejects
+ * 101). That location therefore also bypasses NextAuth's middleware, so the
+ * socket has to authenticate itself — the ticket is what replaces the missing
+ * session check.
+ *
+ * The two arms that used to live here — `/api/uploads/browser/:profile/vnc/*`
+ * and `/api/uploads/:id/vnc/*` — are DELETED, deliberately. They authenticated
+ * nothing: anyone who guessed a run id would have opened a live Chrome holding
+ * Konrad's logged-in Google and Perplexity sessions. Their HTTP siblings still
+ * exist in routes/uploads.ts and still sit behind NextAuth via `/api/proxy`;
+ * only the raw socket is ticket-only. One authentication rule, not "the safe
+ * one and the other one" — an unauthenticated arm left alive is how a careless
+ * nginx edit later becomes account takeover.
+ */
+const TICKET_UPGRADE_RE = /^\/api\/browser-takeover\/ws\/([^/]+)\/?$/;
 
 export function matchTakeoverUpgradePath(pathname: string): TakeoverUpgradeMatch | null {
-  const browserMatch = BROWSER_VNC_UPGRADE_RE.exec(pathname);
-  if (browserMatch) {
-    return { kind: "profile", id: decodeURIComponent(browserMatch[1]), subpath: browserMatch[2] ?? "" };
+  const m = TICKET_UPGRADE_RE.exec(pathname);
+  if (!m) return null;
+  // A ticket is base64url, so decoding is normally a no-op; malformed percent
+  // escapes must not throw inside the server's 'upgrade' listener. Hand the
+  // raw segment to verify instead and let it reject.
+  let ticket: string;
+  try {
+    ticket = decodeURIComponent(m[1]);
+  } catch {
+    ticket = m[1];
   }
-  const runMatch = RUN_VNC_UPGRADE_RE.exec(pathname);
-  if (runMatch) {
-    return { kind: "run", id: decodeURIComponent(runMatch[1]), subpath: runMatch[2] ?? "" };
+  return { kind: "ticket", ticket };
+}
+
+/**
+ * Ticket ids already spent, keyed by `jti`, valued by that ticket's own expiry.
+ *
+ * The ticket rides in the URL PATH SEGMENT — noVNC rebuilds its socket URL from
+ * the `path` setting and drops query parameters, so there is nowhere else to put
+ * it. That means every ticket lands in nginx access logs, browser history and
+ * any referrer header. "Signed and expiring" is not enough for a credential
+ * with that trail: without this store a ticket is replayable for its entire TTL
+ * by anyone who reads one log line.
+ *
+ * Swept lazily on each consume. Entries cannot outlive their own expiry, and
+ * the map is bounded by "takeover attempts inside one TTL", which is a human
+ * clicking a link.
+ */
+const spentTicketJtis = new Map<string, number>();
+
+/**
+ * Marks a ticket id as spent. Returns `false` if it was already spent — that is
+ * a replay, and the caller must refuse the socket.
+ */
+export function consumeTakeoverTicketJti(jti: string, exp: number, now = Date.now()): boolean {
+  for (const [seenJti, seenExp] of spentTicketJtis) {
+    if (seenExp <= now) spentTicketJtis.delete(seenJti);
   }
-  return null;
+  if (spentTicketJtis.has(jti)) return false;
+  spentTicketJtis.set(jti, exp);
+  return true;
+}
+
+/** Drops the replay store. For tests, and for a signing-key rotation. */
+export function clearSpentTakeoverTicketJtis(): void {
+  spentTicketJtis.clear();
 }
 
 export interface TakeoverUpgradeTarget {
   profile: string;
   targetPort: number;
+  runId: string;
+  jti: string;
 }
 
-export async function resolveTakeoverUpgradeTarget(
+export interface TakeoverUpgradeRejection {
+  /** Status line written on the raw socket before it closes. */
+  status: 401 | 404 | 503;
+  /** Short machine-readable cause — this is what the takeover log records. */
+  reason: string;
+  /** Body text. Deliberately terse and never derived from the ticket. */
+  error: string;
+  /** Present only once the ticket verified far enough to name them. */
+  runId?: string;
+  profile?: string;
+  port?: number;
+}
+
+export function isTakeoverUpgradeRejection(
+  result: TakeoverUpgradeTarget | TakeoverUpgradeRejection,
+): result is TakeoverUpgradeRejection {
+  return "reason" in result;
+}
+
+/**
+ * Turns a matched upgrade into a loopback target, or a refusal.
+ *
+ * Profile and port come from the SIGNED PAYLOAD and from nowhere else — there
+ * is no client-supplied run id, no path-derived profile and no caller override.
+ * That is the whole point of the ticket: the only thing the client contributes
+ * is a blob this process signed itself.
+ */
+export function resolveTakeoverUpgradeTarget(
   match: TakeoverUpgradeMatch,
-  options: ProxyTakeoverOptions = {},
-): Promise<TakeoverUpgradeTarget | { error: string }> {
-  let profile: string | null;
-  if (match.kind === "profile") {
-    profile = match.id;
-  } else {
-    profile = await resolveProfileForRun(match.id);
-  }
-
-  if (!profile || !PROFILE_RE.test(profile)) {
-    return { error: `No browser profile found for "${match.id}"` };
-  }
-
-  let targetPort = options.targetPort;
-  if (!targetPort) {
-    const inspection = await inspectTakeover(profile, options.stateRoot);
-    targetPort = inspection.novnc_port;
-  }
-
-  if (
-    !Number.isInteger(targetPort) ||
-    targetPort < NOVNC_PORT_BASE ||
-    targetPort >= NOVNC_PORT_BASE + DISPLAY_SPAN
-  ) {
+): TakeoverUpgradeTarget | TakeoverUpgradeRejection {
+  let claims: VerifyTakeoverTicketResult;
+  try {
+    claims = verifyTakeoverTicket(match.ticket);
+  } catch (err: unknown) {
+    // Only a missing or too-short signing secret throws; hostile input never
+    // does. An unconfigured box must fail closed, loudly, not open.
     return {
-      error: `Target port ${targetPort} is outside allowed loopback range ${NOVNC_PORT_BASE}-${NOVNC_PORT_BASE + DISPLAY_SPAN - 1}`,
+      status: 503,
+      reason: "ticket_secret_unavailable",
+      error: `Browser takeover is not configured: ${(err as Error).message}`,
     };
   }
 
-  return { profile, targetPort };
+  if (isTakeoverTicketError(claims)) {
+    return { status: 401, reason: claims.error, error: "Unauthorized" };
+  }
+
+  // Defence in depth, and stated plainly: verifyTakeoverTicket ALREADY checks
+  // both of these against the same two constants, so as the code stands today
+  // neither branch below can be reached through a signed ticket — a test
+  // pointing a signed ticket at port 7700 gets `ticket_port_out_of_range` from
+  // verify, not `port_out_of_range_at_use` from here. They are kept because
+  // they are the layer that survives verify being relaxed, the payload schema
+  // gaining a field, or a second caller appearing; the invariant "a socket is
+  // only ever aimed at 127.0.0.1:6900-6959" then still holds locally, where it
+  // is used. Anyone deleting them owes the tree a re-run proving the socket
+  // tests still refuse those ports.
+  if (!PROFILE_RE.test(claims.profile)) {
+    return {
+      status: 404,
+      reason: "profile_rejected_at_use",
+      error: "No browser profile found for this ticket",
+      runId: claims.runId,
+      profile: claims.profile,
+      port: claims.port,
+    };
+  }
+  if (
+    !Number.isInteger(claims.port) ||
+    claims.port < NOVNC_PORT_BASE ||
+    claims.port >= NOVNC_PORT_BASE + DISPLAY_SPAN
+  ) {
+    return {
+      status: 404,
+      reason: "port_out_of_range_at_use",
+      error: `Target port ${claims.port} is outside allowed loopback range ${NOVNC_PORT_BASE}-${NOVNC_PORT_BASE + DISPLAY_SPAN - 1}`,
+      runId: claims.runId,
+      profile: claims.profile,
+      port: claims.port,
+    };
+  }
+
+  // Last, so that a ticket is only burnt once it would actually have opened a
+  // socket. A second presentation of the same jti is a replay.
+  if (!consumeTakeoverTicketJti(claims.jti, claims.exp)) {
+    return {
+      status: 401,
+      reason: "ticket_replayed",
+      error: "Unauthorized",
+      runId: claims.runId,
+      profile: claims.profile,
+      port: claims.port,
+    };
+  }
+
+  return {
+    profile: claims.profile,
+    targetPort: claims.port,
+    runId: claims.runId,
+    jti: claims.jti,
+  };
 }
 
 /**
@@ -662,8 +791,15 @@ export async function resolveTakeoverUpgradeTarget(
  * instance on `127.0.0.1:${targetPort}`. Node's client-side `http.request`
  * exposes the outbound handshake as an `'upgrade'` event with the raw duplex
  * socket, which is the piece `fetch()` cannot do — this mirrors exactly what
- * `http-proxy`'s `.ws()` does internally (Next.js uses that same library to
- * proxy `/api/proxy/*` upgrades to this process; see `next.config.mjs`).
+ * `http-proxy`'s `.ws()` does internally.
+ *
+ * How the socket gets here (the comment this replaces claimed Next.js proxied
+ * upgrades to this process via `next.config.mjs`; it does not, and never did —
+ * `next.config.mjs` is 14 lines of `reactStrictMode` plus a webpack alias, with
+ * no `rewrites()` at all, and a Next Route Handler cannot host a WebSocket in
+ * the first place. That false comment is a large part of why this gap survived):
+ * nginx carries `/api/browser-takeover/ws/` straight to 127.0.0.1:7700 from its
+ * own `location` block, bypassing Next entirely. See PLAN.md.
  */
 export function proxyTakeoverUpgrade(
   req: IncomingMessage,
@@ -721,29 +857,82 @@ export function proxyTakeoverUpgrade(
   proxyReq.end();
 }
 
+const UPGRADE_STATUS_TEXT: Record<401 | 404 | 503, string> = {
+  401: "Unauthorized",
+  404: "Not Found",
+  503: "Service Unavailable",
+};
+
+/**
+ * One line per upgrade attempt, accepted or rejected. This is a live browser
+ * holding Konrad's logged-in sessions; every attempt to reach it is worth a
+ * record.
+ *
+ * The `jti` is logged and the ticket is NOT. A jti identifies an attempt and
+ * carries no signature, so it cannot be replayed; the ticket is the credential
+ * itself and would turn the log file into a set of live keys.
+ */
+function logTakeoverUpgrade(
+  outcome: "accepted" | "rejected",
+  fields: { runId?: string; profile?: string; port?: number; jti?: string; reason?: string; status?: number },
+): void {
+  const parts = [
+    `run=${fields.runId ?? "-"}`,
+    `profile=${fields.profile ?? "-"}`,
+    `port=${fields.port ?? "-"}`,
+    `jti=${fields.jti ?? "-"}`,
+  ];
+  if (outcome === "rejected") {
+    parts.push(`status=${fields.status ?? "-"}`, `reason=${fields.reason ?? "-"}`);
+  }
+  console.log(`[browser-takeover] upgrade ${outcome} ${parts.join(" ")}`);
+}
+
 /**
  * Entry point wired to the Node `http.Server`'s `'upgrade'` event in
  * `index.ts`. Returns `false` when the path is not a takeover upgrade at all
  * (caller should destroy the socket — no other route in this process expects
  * a raw upgrade), `true` once this function has taken ownership of the
  * socket (either proxying it or rejecting it with an HTTP status line).
+ *
+ * There is no `options` parameter any more, on purpose: a caller-supplied
+ * `targetPort` would be a second way to choose where the socket points, and
+ * the ticket must be the only one.
  */
 export async function handleBrowserTakeoverUpgrade(
   req: IncomingMessage,
   socket: Duplex,
   head: Buffer,
-  options: ProxyTakeoverOptions = {},
 ): Promise<boolean> {
   const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
   const match = matchTakeoverUpgradePath(pathname);
   if (!match) return false;
 
-  const target = await resolveTakeoverUpgradeTarget(match, options);
-  if ("error" in target) {
-    socket.end(`HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${target.error}`);
+  const target = resolveTakeoverUpgradeTarget(match);
+  if (isTakeoverUpgradeRejection(target)) {
+    logTakeoverUpgrade("rejected", {
+      runId: target.runId,
+      profile: target.profile,
+      port: target.port,
+      reason: target.reason,
+      status: target.status,
+    });
+    socket.end(
+      `HTTP/1.1 ${target.status} ${UPGRADE_STATUS_TEXT[target.status]}\r\n` +
+        `Content-Type: text/plain\r\nConnection: close\r\n\r\n${target.error}`,
+    );
     return true;
   }
 
-  proxyTakeoverUpgrade(req, socket, head, target.targetPort, match.subpath);
+  logTakeoverUpgrade("accepted", {
+    runId: target.runId,
+    profile: target.profile,
+    port: target.targetPort,
+    jti: target.jti,
+  });
+  // Fixed subpath: the ticket route carries no path of its own, and websockify
+  // is the only endpoint an upgrade ever needs. vnc.html and its assets are
+  // plain HTTP and stay behind NextAuth via /api/proxy.
+  proxyTakeoverUpgrade(req, socket, head, target.targetPort, "websockify");
   return true;
 }
