@@ -304,7 +304,7 @@ async function startNextDev(
     FORGE_CONTROL_URL: `http://127.0.0.1:${fcPort}`,
     TAKEOVER_TICKET_SECRET:
       process.env.TAKEOVER_TICKET_SECRET ??
-      "0123456789abcdef0123456789abcdef0123456789abcdef",
+      "TEST_TAKEOVER_TICKET_SECRET_0123456789abcdef0123456789abcdef",
   };
   const proc = spawn(path.join(WEB_ROOT, "node_modules/.bin/next"), ["dev", "-p", String(port)], {
     cwd: WEB_ROOT,
@@ -438,7 +438,7 @@ async function main(): Promise<void> {
   console.log("=== TAKEOVER CLIPBOARD BRIDGE & SESSION QUALITY E2E VERIFICATION ===");
 
   if (!process.env.TAKEOVER_TICKET_SECRET) {
-    process.env.TAKEOVER_TICKET_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef";
+    process.env.TAKEOVER_TICKET_SECRET = "TEST_TAKEOVER_TICKET_SECRET_0123456789abcdef0123456789abcdef";
   }
 
   const shots: string[] = [];
