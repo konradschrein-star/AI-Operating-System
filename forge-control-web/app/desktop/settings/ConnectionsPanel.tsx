@@ -42,7 +42,7 @@
  * state — the same rule the rest of this surface follows.
  */
 
-import { useCallback, useMemo, useState, type CSSProperties, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
 import { tokens } from "../../tokens";
 import { probeAllConnections, type ProbeAllResponse } from "../../api-connections";
 import {
@@ -65,15 +65,22 @@ import {
 import {
   agyConnection,
   claudeConnection,
+  fetchFleetDefaultTier,
+  fleetTierOptionLabel,
+  FLEET_CODE_DEFAULT_TIER,
+  FLEET_TASK_TIERS,
+  FLEET_TIER_COPY,
   geminiCliConnection,
   geminiKeyConnection,
   githubConnection,
   googleConnection,
   isReadFailure,
   ultraConnection,
+  updateFleetDefaultTier,
   type AgyFacts,
   type ConnectionState,
   type ConnectionSummary,
+  type FleetDefaultTierSetting,
   type GeminiCliFacts,
   type GithubFacts,
   type GoogleFacts,
@@ -213,6 +220,8 @@ export function ConnectionsPanel(): JSX.Element {
         error={probeAllError}
         onRun={() => void runProbeAll()}
       />
+
+      <FleetDefaultEngineSection />
 
       {registry.error && (
         <div
@@ -366,6 +375,242 @@ export function ConnectionsPanel(): JSX.Element {
       >
         <GitHubCard onFacts={setGithub} reloadKey={reloadKey} />
       </Row>
+    </div>
+  );
+}
+
+/**
+ * Fleet default engine switch — runtime tier configuration for sub-agent dispatch.
+ *
+ * Untiered and newly created tasks resolve against this setting at tick / dispatch time
+ * (GET /api/fleet/default-tier), backed by app_settings['fleet.default_tier'].
+ * Changing this setting updates the default immediately at runtime without restart.
+ *
+ * ── A FAILED READ SHOWS NOTHING, NOT A GUESS ─────────────────────────────
+ * This section's entire job is "the current default must be VISIBLE in the OS".
+ * It used to render `tierData?.default_tier ?? "gemini"` with the source chip
+ * reading DEFAULT — so when the fetch failed it asserted, in the operator's own
+ * settings surface, a fleet default that nothing had measured, and left the
+ * `<select>` permanently dead with no way back short of a page reload. A
+ * plausible number is worse than no number here: it is the one place Konrad
+ * goes to find out what the fleet is actually doing.
+ *
+ * So a failed read renders `—` / `UNREADABLE` and offers RETRY, and the three
+ * states — loading, failed, loaded — are distinguishable at a glance.
+ */
+export function FleetDefaultEngineSection(): JSX.Element {
+  const [tierData, setTierData] = useState<FleetDefaultTierSetting | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setError(null);
+    fetchFleetDefaultTier()
+      .then((data) => {
+        if (active) setTierData(data);
+      })
+      .catch((err) => {
+        if (active) {
+          setTierData(null);
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [reloadKey]);
+
+  const retry = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  const handleChange = useCallback(async (newTier: string) => {
+    setUpdating(true);
+    setError(null);
+    try {
+      const res = await updateFleetDefaultTier(newTier);
+      setTierData(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUpdating(false);
+    }
+  }, []);
+
+  /* THREE STATES, never collapsed into two. `loaded` is the only one that may
+   * name a tier; `failed` names none and offers a retry; `loading` says so. */
+  const loaded = tierData !== null;
+  const failed = tierData === null && error !== null;
+  const activeTier = tierData?.default_tier ?? "";
+  const isGemini = activeTier === FLEET_CODE_DEFAULT_TIER;
+  const tierCopy = FLEET_TASK_TIERS.find((t) => t === activeTier);
+  const sourceLabel = !loaded
+    ? failed
+      ? "UNREADABLE"
+      : "READING…"
+    : tierData.source === "app_settings"
+      ? "APP_SETTINGS (RUNTIME)"
+      : "DEFAULT";
+
+  return (
+    <div
+      data-fleet-default-engine
+      style={{
+        background: tokens.bgCard,
+        border: `1px solid ${tokens.border}`,
+        borderRadius: 12,
+        padding: "14px 16px",
+        marginBottom: 16,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: tokens.textHi }}>
+          Fleet Default Engine
+        </span>
+        <span
+          className="mono"
+          data-fleet-tier-badge
+          style={{
+            background: isGemini ? tokens.primaryActionBg : tokens.selectedBg,
+            color: isGemini ? tokens.textHi : tokens.accent,
+            border: `1px solid ${tokens.borderEmphasis}`,
+            borderRadius: 5,
+            padding: "2px 7px",
+            fontSize: 10.5,
+            fontWeight: 600,
+          }}
+        >
+          {loaded ? tierData.default_tier.toUpperCase() : "—"}
+        </span>
+        <span
+          className="mono"
+          data-fleet-tier-source
+          style={{
+            background: tokens.bgGutter,
+            color: !loaded
+              ? failed
+                ? tokens.warn
+                : tokens.textFaint
+              : tierData.source === "app_settings"
+                ? tokens.ok
+                : tokens.textFaint,
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 5,
+            padding: "2px 7px",
+            fontSize: 10.5,
+          }}
+        >
+          {sourceLabel}
+        </span>
+        {failed && (
+          <button
+            type="button"
+            data-fleet-tier-retry
+            onClick={retry}
+            className="mono"
+            style={{
+              background: tokens.bgGutter,
+              border: `1px solid ${tokens.borderEmphasis}`,
+              borderRadius: 5,
+              color: tokens.textHi,
+              cursor: "pointer",
+              fontSize: 10.5,
+              padding: "2px 8px",
+            }}
+          >
+            RETRY
+          </button>
+        )}
+        <span style={{ flex: 1 }} />
+        {tierData?.updated_at && (
+          <span
+            className="mono"
+            data-fleet-tier-updated
+            title={tierData.updated_at}
+            style={{ fontSize: 10.5, color: tokens.textFaint }}
+          >
+            UPDATED {new Date(tierData.updated_at).toLocaleTimeString()}
+          </span>
+        )}
+      </div>
+
+      <div style={{ fontSize: 12.5, color: tokens.textSoft, lineHeight: 1.5, marginTop: 8 }}>
+        The engine tier newly created and untiered sub-agent tasks resolve against at dispatch
+        time. Switchable at runtime with no deploy or restart required.
+      </div>
+
+      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+        <label
+          htmlFor="fleet-default-tier-select"
+          className="mono"
+          style={{ fontSize: 10, color: tokens.textLabel }}
+        >
+          DEFAULT ENGINE TIER
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <select
+            id="fleet-default-tier-select"
+            data-fleet-tier-select
+            value={activeTier}
+            disabled={updating || !loaded}
+            onChange={(e) => void handleChange(e.target.value)}
+            className="mono"
+            style={{
+              background: tokens.bgGutter,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 7,
+              color: tokens.textHi,
+              cursor: updating ? "progress" : "pointer",
+              fontSize: 12,
+              padding: "6px 10px",
+              minWidth: 260,
+            }}
+          >
+            {/* No option is selected while the read is unresolved, so the
+                control shows an empty box rather than a tier it has not
+                measured. The `value=""` entry exists only to give React a
+                matching option for that state. */}
+            {!loaded && <option value="">{failed ? "— unreadable —" : "— reading… —"}</option>}
+            {FLEET_TASK_TIERS.map((tier) => (
+              <option key={tier} value={tier}>
+                {fleetTierOptionLabel(tier)}
+              </option>
+            ))}
+          </select>
+          {updating && (
+            <span className="mono" style={{ fontSize: 11, color: tokens.textSoft }}>
+              Updating runtime setting…
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11.5, color: tokens.textSoft, lineHeight: 1.45, marginTop: 2 }}>
+          {tierCopy
+            ? FLEET_TIER_COPY[tierCopy].desc
+            : failed
+              ? "The current fleet default could not be read, so none is shown. Retry above."
+              : ""}
+        </div>
+      </div>
+
+      {error && (
+        <div
+          data-fleet-tier-error
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: tokens.bleed,
+            background: tokens.dangerActionBg,
+            border: `1px solid ${tokens.dangerActionBorder}`,
+            borderRadius: 8,
+            padding: "8px 10px",
+            marginTop: 10,
+            lineHeight: 1.45,
+            wordBreak: "break-word",
+          }}
+        >
+          {error}
+        </div>
+      )}
     </div>
   );
 }

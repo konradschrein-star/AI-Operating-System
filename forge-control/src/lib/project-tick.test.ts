@@ -1517,7 +1517,11 @@ describe("R17 warn clause — an undeclared builder is named at spawn", () => {
     // R58 (round 231) extracted the log line's text into `formatSpawnLog()` so
     // it could be tested hermetically (see the R58 describe block below); the
     // literal string moved out of this function, so the CALL is what's found.
-    const spawnedLog = spawn.indexOf("formatSpawnLog(task, run.id, task.project.name)");
+    // ROUND 975: the first argument is `dispatched`, not `task`. An untiered row
+    // now runs on the fleet default, and a spawn line that printed the ROW's
+    // tier would report "role-default" for a run that actually went to gemini —
+    // the log is the only place an operator sees which engine a task got.
+    const spawnedLog = spawn.indexOf("formatSpawnLog(dispatched, run.id, task.project.name)");
     const warnCall = spawn.indexOf("emptyWriteSetWarning(task, task.project.name)");
     assert.ok(spawnedLog > 0 && warnCall > spawnedLog, "the warn belongs beside the spawn record");
     assert.equal(
@@ -1863,7 +1867,7 @@ describe("R58 spawn log — workstream and dependency count", () => {
  *     reporting a comfortable pass.
  * ══════════════════════════════════════════════════════════════════════════ */
 
-import { GRAPH_GUIDE, IDEMPOTENCY_NOTE } from "./project-tick.ts";
+import { GRAPH_GUIDE, IDEMPOTENCY_NOTE, TIER_GUIDE } from "./project-tick.ts";
 
 /** The engine's own source, read once. The positive control runs at module load
  *  so an empty or wrong read cannot reach an assertion that would pass on it
@@ -2457,8 +2461,44 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    * quantities that happen to collide — the reviewer's 60 was a uuid plus a
    * longer name and work_branch at fe14a7e; this 12121 is a uuid alone at
    * fe14a7e plus round 242's own 26. Neither corroborates the other. */
+  /* ── ROUND 975: THE ENGINE DEFAULT MOVES TO GEMINI, AND THE BUDGET WITH IT ──
+   *
+   * Konrad, 2026-08-25: the Claude WEEKLY limit is reached. `gemini` (agy)
+   * becomes the fleet's default engine and the default becomes a RUNTIME
+   * setting (`app_settings['fleet.default_tier']`), so the next model change is
+   * a PUT rather than a deploy. TIER_GUIDE is the one place a planner learns
+   * which engine to ask for, so it is the one place that can be wrong fleet-wide.
+   *
+   * THIS IS A WIDENING, 3597 -> 3921, and the arithmetic is the whole licence:
+   *
+   *   TIER_GUIDE before this round   481 characters
+   *   TIER_GUIDE after               805
+   *   delta                         +324
+   *   maximalPlannerPrompt()       12818 -> 13142   = +324, MEASURED
+   *
+   * The two 324s are the positive control, and the same one round 900 used: the
+   * constant's own `.length` delta equals the prompt's delta, so TIER_GUIDE is
+   * rendered exactly once in this path and nothing else in the prompt moved.
+   * (The architect and non-goal planner branches interpolate it too; they are
+   * not this measurement, and they move by the same 324.)
+   *
+   * RETIREMENT WAS ATTEMPTED FIRST, as the standing condition requires. The
+   * first draft measured 875 (+394); compressing the runtime-switch sentence and
+   * folding the Claude ladder onto one line shed 70 without dropping a clause.
+   * What could NOT be shed: the engine name and the endpoint (a planner cannot
+   * ask for a tier it cannot spell, nor find the switch), the two named
+   * exceptions, and the REASON for them — "agy can report SUCCESS having written
+   * nothing" is the sentence that stops a planner tiering the gating review to
+   * gemini to be helpful, and a rule without its reason is the first thing a
+   * model optimises away. 324 characters per planner spawn (32 in 7 days) buys
+   * every builder, test, doc and re-check off a weekly-capped engine.
+   *
+   * WHAT DID NOT COST ANYTHING, stated so the next round does not go looking:
+   * the tick-time resolution of the runtime default is CODE, not prompt, and the
+   * doc-comments that carry its reasoning are free by the same measurement round
+   * 244 ran twice. */
   const BASELINE = 9221;
-  const BUDGET = 3597; // 3050 + 547, round 974 — see the LEDGER row for the arithmetic
+  const BUDGET = 3921; // 3597 + 324, round 975 — see the LEDGER row for the arithmetic
 
   test("G5 — the maximal planner prompt stays inside the amended budget", () => {
     const measured = maximalPlannerPrompt().length;
@@ -2572,6 +2612,19 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
       spent: 591,
       reserved: 591,
     },
+    {
+      round: 975,
+      what:
+        "TIER_GUIDE rewritten to make \"gemini\" (Gemini 3.7 Flash via agy) the fleet's default " +
+        "engine, to say that the default is a RUNTIME setting an omitted tier resolves against " +
+        "(GET /api/fleet/default-tier), and to name the two exceptions that stay on Claude — " +
+        "deploy/host-touching tasks and the one gating review of product code — with the reason " +
+        "(agy can report SUCCESS having written nothing). Project aios-gemini-default-tier, round " +
+        "1, after Konrad's Claude weekly limit was reached on 2026-08-25. 481 -> 805 characters; " +
+        "the prompt moved by the same 324, which is the control that TIER_GUIDE renders once here.",
+      spent: 324,
+      reserved: 324,
+    },
   ] as const;
 
   test("every character spent since the 5A tip is attributed to a round that declared it", () => {
@@ -2643,6 +2696,194 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
       "NF7 (round 900's row): the ledger charges 106 characters to the write_set-definition " +
         "sentence, and GRAPH_GUIDE no longer contains it verbatim",
     );
+    // Round 975's deliverable, asserted the same way: the CLAUSE against the
+    // constant, the DELIVERY against the built prompt. A TIER_GUIDE that lost
+    // the gemini default would shrink `measured` and fail the exactness
+    // assertion above as an over-count — this says which purchase went missing.
+    assert.ok(
+      TIER_GUIDE.includes('"gemini" (Gemini 3.7 Flash via agy) IS THE DEFAULT'),
+      "NF7 (round 975's row): the ledger charges 324 characters to making gemini the fleet " +
+        "default, and TIER_GUIDE no longer says so",
+    );
+    assert.ok(
+      prompt.includes(TIER_GUIDE),
+      "NF7 (round 975's row): TIER_GUIDE carries the charge but is not in the planner prompt at " +
+        "all, so the clause above was asserted against a constant nobody receives",
+    );
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * ROUND 975 — gemini is the fleet's default engine, and the switch is runtime.
+ *
+ * The brief: "Konrad's Claude weekly limit is reached. Gemini (agy) must become
+ * the fleet's DEFAULT engine for sub-agent work, and it must be switchable at
+ * runtime so this never needs a deploy again."
+ *
+ * These cases assert the CONSTANT, per this file's header convention, because
+ * TIER_GUIDE is what a planner reads and a hand-copied substring in a test is
+ * exactly the desync that convention exists to prevent. The delivery half — that
+ * the planner prompt actually carries it — is asserted in NF7's headroom case
+ * above, where the character charge for this text lives.
+ * ══════════════════════════════════════════════════════════════════════════ */
+describe("round 975 — TIER_GUIDE makes gemini the default and names its exceptions", () => {
+  test("gemini is stated as THE DEFAULT, with the categories it covers", () => {
+    assert.match(
+      TIER_GUIDE,
+      /"gemini" \(Gemini 3\.7 Flash via agy\) IS THE DEFAULT/,
+      "R975: TIER_GUIDE must name the engine AND the model — a planner cannot ask for a tier it " +
+        "cannot spell",
+    );
+    // Every category the brief names, checked one at a time so the failure says
+    // WHICH one a rewrite dropped rather than "the sentence changed".
+    for (const category of [
+      "builders",
+      "tests",
+      "boilerplate",
+      "docs",
+      "evidence",
+      "ALL re-checks",
+    ]) {
+      assert.ok(
+        TIER_GUIDE.includes(category),
+        `R975: TIER_GUIDE no longer routes ${category} to the default engine`,
+      );
+    }
+  });
+
+  test("the default is stated as a RUNTIME setting, with the endpoint that reads it", () => {
+    assert.ok(
+      TIER_GUIDE.includes("RUNTIME setting"),
+      "R975: the default is a row in app_settings that Konrad can flip mid-project; a guide that " +
+        "presents it as a constant teaches a planner to reason about the wrong thing",
+    );
+    assert.ok(
+      TIER_GUIDE.includes("/api/fleet/default-tier"),
+      "R975: TIER_GUIDE must name the endpoint that answers 'which engine is the fleet on right " +
+        "now' — the switch is useless to a planner that cannot find it",
+    );
+    // The old guide's claim. It is now FALSE — an omitted tier resolves to the
+    // fleet default at creation (routes/projects.ts) and at dispatch
+    // (spawnTaskRuns), not to Opus — and a stale absolute in a prompt is worse
+    // than no prompt: it makes planners tier defensively around a cost that no
+    // longer exists.
+    assert.doesNotMatch(
+      TIER_GUIDE,
+      /omitting it means Opus/,
+      "R975: TIER_GUIDE still claims an omitted tier means Opus, which the runtime default " +
+        "retired — it now means whatever app_settings['fleet.default_tier'] holds",
+    );
+  });
+
+  test("the Claude exception list is named, with the reason it exists", () => {
+    assert.ok(
+      TIER_GUIDE.includes('deploy/host-touching tasks ("junior")'),
+      "R975: the deploy/host-touching exception must stay on Claude AND name its tier — an " +
+        "exception without a tier is a planner's guess",
+    );
+    assert.ok(
+      TIER_GUIDE.includes(
+        'the ONE gating review of a phase touching product code ("standard")',
+      ),
+      "R975: the one gating review of product code must stay on Claude, with its tier",
+    );
+    // THE REASON IS THE LOAD-BEARING HALF. agy's write_to_file refuses a path
+    // that does not exist and the run can still return SUCCESS with an empty
+    // envelope (measured: 29 dropouts in six hours of gemini lanes,
+    // lib/engine-fallback.ts). A rule stated without its reason is the first
+    // thing a model optimises away when it wants to be helpful about cost.
+    assert.ok(
+      TIER_GUIDE.includes("agy can report SUCCESS having written nothing"),
+      "R975: the exception list lost the measured reason it exists, so a planner has nothing to " +
+        "weigh against 'gemini is free'",
+    );
+  });
+
+  /* THE DISPATCH WIRING, and why this one is a SOURCE assertion.
+   *
+   * `spawnTaskRuns()` claims rows out of Postgres and creates runs; there is no
+   * seam to call it through without a database, and this file opens none (NF3).
+   * What CAN be held without one is the shape of the defect this wiring keeps
+   * reintroducing: a resolved tier that reaches SOME of its consumers.
+   * `createFixChain` lost its re-check tier to exactly that — two insert sites,
+   * one of them fixed — and the tests passed with half the work done
+   * (lib/tier-inherit.ts records the measurement). Three consumers read the
+   * tier on this path: the write-set pre-create, the prompt (the sentence that
+   * tells a gemini builder its files already exist), and TIER_MODELS. The
+   * NEGATIVE half is the load-bearing one: a consumer left reading `task.tier`
+   * is the bug, and counting occurrences is what tells one site from three. */
+  test("the dispatch path resolves the runtime default and every consumer reads it", () => {
+    const src = readFileSync(fileURLToPath(new URL("./project-tick.ts", import.meta.url)), "utf8");
+    const spawn = src.slice(
+      src.indexOf("async function spawnTaskRuns("),
+      src.indexOf("/** Narrow a DB row's role"),
+    );
+    assert.ok(
+      spawn.includes("await resolveFleetDefaultTier()"),
+      "R975: the spawn path no longer resolves the fleet default, so an untiered row is back on " +
+        "its role file's model and the runtime switch reaches nothing already seeded",
+    );
+    assert.ok(
+      spawn.includes("task.tier === null ? await resolveFleetDefaultTier() : null"),
+      "R975: the default must be resolved ONLY for a row that carries no tier — resolving it " +
+        "unconditionally would override a tier a planner deliberately set",
+    );
+    for (const [consumer, needle] of [
+      ["the write-set pre-create (agy cannot create files)", "tierCanDropOut(dispatched.tier)"],
+      ["the prompt", "buildPrompt(dispatched, dispatched.project"],
+      ["the model/effort lookup", "TIER_MODELS[dispatched.tier]"],
+    ] as const) {
+      assert.ok(
+        spawn.includes(needle),
+        `R975: ${consumer} does not read the resolved tier (looked for "${needle}") — a ` +
+          "consumer left on the row's null is how a task gets dispatched to one engine and " +
+          "prepared for another",
+      );
+    }
+    const strays = spawn.match(/\btask\.tier\b/g) ?? [];
+    assert.equal(
+      strays.length,
+      1,
+      `R975: ${strays.length} reads of the row's tier remain in the spawn path; exactly one is ` +
+        "correct (the null test that decides whether to resolve at all). Every other consumer " +
+        "must read the RESOLVED tier — this is the two-insert-sites defect in its dispatch form. " +
+        "DOC-COMMENTS COUNT AS SOURCE to this regex (R49's gate makes the same point): if you " +
+        "tripped this by writing about the field rather than reading it, paraphrase instead",
+    );
+  });
+
+  test("an untiered dropout is diagnosed rather than passed off as a work failure", () => {
+    const src = readFileSync(fileURLToPath(new URL("./project-tick.ts", import.meta.url)), "utf8");
+    const demote = src.slice(
+      src.indexOf("export async function demoteAfterEngineFailure("),
+      src.indexOf("async function announceEngineFallback("),
+    );
+    // R870's recovery guards on the PERSISTED tier (`demoteTaskTier ... WHERE
+    // tier = $2`), so a NULL-tier row dispatched on the fleet default cannot be
+    // retried by it. That is the old failure path and it is loud — but "task
+    // failed" without the reason reads as the WORK failing, which is the one
+    // reading engine-fallback.ts exists to prevent.
+    assert.ok(
+      demote.includes("task.tier === null") &&
+        demote.includes("carries NO tier, ran on the fleet default engine"),
+      "R975: a dropout on an untiered row is reported as an ordinary failure, so the operator " +
+        "cannot tell an empty agy envelope from work that genuinely did not pass",
+    );
+  });
+
+  test("the Claude ladder survives — the exceptions need tiers to land on", () => {
+    for (const [tier, model] of [
+      ["fast", "Haiku"],
+      ["junior", "Sonnet"],
+      ["standard", "Opus"],
+      ["flagship", "Fable"],
+    ] as const) {
+      assert.ok(
+        TIER_GUIDE.includes(`"${tier}" (${model})`),
+        `R975: TIER_GUIDE no longer maps "${tier}" to ${model}; the gemini default does not ` +
+          "retire the Claude ladder, it demotes it to the exception path",
+      );
+    }
   });
 });
 

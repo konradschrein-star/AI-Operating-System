@@ -10,8 +10,16 @@
  */
 
 import pg from "pg";
+import type { TaskTier } from "./projects.ts";
 
 const { Pool } = pg;
+
+export interface Querier {
+  query<R extends pg.QueryResultRow = any>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<{ rows: R[] }>;
+}
 
 const DATABASE_URL =
   process.env.DATABASE_URL ??
@@ -102,6 +110,31 @@ export interface FleetState {
   status: FleetStatus;
   updated_at: string;
   updated_by: string;
+  default_tier: TaskTier;
+  default_tier_source: "app_settings" | "default";
+}
+
+export const FLEET_DEFAULT_TIER_KEY = "fleet.default_tier";
+export const DEFAULT_FLEET_TIER: TaskTier = "gemini";
+export const VALID_TASK_TIERS: readonly TaskTier[] = [
+  "fast",
+  "junior",
+  "standard",
+  "flagship",
+  "gemini",
+] as const;
+
+export function isValidTaskTier(tier: unknown): tier is TaskTier {
+  return (
+    typeof tier === "string" &&
+    (VALID_TASK_TIERS as readonly string[]).includes(tier)
+  );
+}
+
+export interface FleetDefaultTierSetting {
+  default_tier: TaskTier;
+  source: "app_settings" | "default";
+  updated_at: string | null;
 }
 
 /* ============================================================================
@@ -122,21 +155,157 @@ function humanAge(createdAt: string): string {
 }
 
 /* ============================================================================
- * Fleet state
+ * Fleet state & default tier
  * ========================================================================== */
 
-export async function getFleetState(): Promise<FleetState> {
-  const r = await pool.query<FleetState>(
+export async function getFleetDefaultTier(
+  db: Querier = pool,
+): Promise<FleetDefaultTierSetting> {
+  const r = await db.query<{ value: unknown; updated_at: Date | string }>(
+    `SELECT value, updated_at::text AS updated_at FROM app_settings WHERE key = $1`,
+    [FLEET_DEFAULT_TIER_KEY],
+  );
+  const row = r.rows[0];
+  if (!row) {
+    return {
+      default_tier: DEFAULT_FLEET_TIER,
+      source: "default",
+      updated_at: null,
+    };
+  }
+
+  let val = row.value;
+  if (typeof val === "string" && val.startsWith('"') && val.endsWith('"')) {
+    try {
+      val = JSON.parse(val);
+    } catch {
+      // keep val as is
+    }
+  }
+
+  if (!isValidTaskTier(val)) {
+    throw new Error(
+      `app_settings['${FLEET_DEFAULT_TIER_KEY}'] holds ${JSON.stringify(row.value)}, which is not a valid TaskTier (${VALID_TASK_TIERS.join(", ")}). Fix the row or delete it to fall back to the default ('${DEFAULT_FLEET_TIER}').`,
+    );
+  }
+
+  return {
+    default_tier: val,
+    source: "app_settings",
+    updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+  };
+}
+
+export async function setFleetDefaultTier(
+  tier: TaskTier,
+  updatedByOrDb?: string | Querier,
+  maybeDb?: Querier,
+): Promise<{ default_tier: TaskTier; source: "app_settings"; updated_at: string }> {
+  let db: Querier = pool;
+  if (typeof updatedByOrDb === "string") {
+    if (maybeDb) db = maybeDb;
+  } else if (
+    updatedByOrDb &&
+    typeof updatedByOrDb === "object" &&
+    "query" in updatedByOrDb
+  ) {
+    db = updatedByOrDb;
+  }
+
+  if (!isValidTaskTier(tier)) {
+    throw new Error(
+      `Invalid tier '${tier}': tier must be one of: ${VALID_TASK_TIERS.join(", ")}`,
+    );
+  }
+
+  const r = await db.query<{ updated_at: Date | string }>(
+    `INSERT INTO app_settings (key, value, updated_at)
+          VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (key) DO UPDATE
+            SET value = EXCLUDED.value, updated_at = now()
+      RETURNING updated_at::text AS updated_at`,
+    [FLEET_DEFAULT_TIER_KEY, JSON.stringify(tier)],
+  );
+  const row = r.rows[0];
+  if (!row) {
+    throw new Error(
+      `setting ${FLEET_DEFAULT_TIER_KEY} returned no row — the upsert did not apply. Has migration 0040 been applied to this database?`,
+    );
+  }
+
+  return {
+    default_tier: tier,
+    source: "app_settings",
+    updated_at: new Date(row.updated_at).toISOString(),
+  };
+}
+
+/** The degrading read behind `getFleetState()`. Exported so a test can drive it
+ *  directly against a malformed row without having to fake `fleet_state` too —
+ *  and so the pause gates' one dependency has a name to grep for. */
+export async function readFleetDefaultTierOrDegrade(
+  db: Querier = pool,
+): Promise<FleetDefaultTierSetting> {
+  try {
+    return await getFleetDefaultTier(db);
+  } catch (e) {
+    console.warn(
+      `[ai_os] could not read the fleet default tier (${
+        e instanceof Error ? e.message : String(e)
+      }) — reporting the code default '${DEFAULT_FLEET_TIER}'. The fleet's ` +
+        "run/pause status in this same response is unaffected and remains authoritative.",
+    );
+    return {
+      default_tier: DEFAULT_FLEET_TIER,
+      source: "default",
+      updated_at: null,
+    };
+  }
+}
+
+/* ── WHY THE TIER READ IS CAUGHT HERE AND NOWHERE ELSE ─────────────────────
+ *
+ * `getFleetState()` answers TWO questions that have nothing to do with each
+ * other: "is the fleet paused?" and "which engine is the default?". Only the
+ * first one is a safety control, and all three pause gates spell it
+ * `getFleetState().catch(() => ({ status: "running" }))` —
+ * lib/project-tick.ts, lib/cron-tick.ts, lib/telegram-bridge.ts. That `catch`
+ * cannot tell WHICH of the two questions failed, so before this clause existed
+ * a malformed `app_settings['fleet.default_tier']` row made
+ * `getFleetDefaultTier()` throw, the pause gate read the throw as "running",
+ * and a FROZEN fleet spawned paid runs — silently, and on every tick
+ * thereafter. `"sonnet"` written by hand into that row was enough.
+ *
+ * So the tier read degrades and the pause read does not. This is the same
+ * doctrine `resolveFleetDefaultTier()` states in lib/project-tick.ts: the throw
+ * is right for an API caller who can be told 500, and wrong anywhere it can
+ * decide whether work runs. Loud (console.warn, full reason) and degraded to
+ * the code default, never silent.
+ *
+ * NOT a silent fallback in the NF-sense: the setting's source is reported as
+ * `"default"`, which is exactly what it now is, and the reason is on the log. */
+export async function getFleetState(db: Querier = pool): Promise<FleetState> {
+  const r = await db.query<{
+    status: FleetStatus;
+    updated_at: string;
+    updated_by: string;
+  }>(
     `SELECT status, updated_at::text AS updated_at, updated_by
        FROM fleet_state
       WHERE id = 1`,
   );
-  if (r.rows[0]) return r.rows[0];
-  // The migration seeds this row; if it's somehow missing return a safe default.
-  return {
-    status: "running",
+  const tierInfo = await readFleetDefaultTierOrDegrade(db);
+  const base = r.rows[0] ?? {
+    status: "running" as FleetStatus,
     updated_at: new Date().toISOString(),
     updated_by: "system",
+  };
+  return {
+    status: base.status,
+    updated_at: base.updated_at,
+    updated_by: base.updated_by,
+    default_tier: tierInfo.default_tier,
+    default_tier_source: tierInfo.source,
   };
 }
 
@@ -144,10 +313,15 @@ export async function setFleetState(
   status: FleetStatus,
   updatedBy = "user",
 ): Promise<FleetState> {
+  let base: { status: FleetStatus; updated_at: string; updated_by: string };
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const r = await client.query<FleetState>(
+    const r = await client.query<{
+      status: FleetStatus;
+      updated_at: string;
+      updated_by: string;
+    }>(
       `UPDATE fleet_state
           SET status = $1, updated_at = now(), updated_by = $2
         WHERE id = 1
@@ -161,13 +335,37 @@ export async function setFleetState(
       [status === "paused"],
     );
     await client.query("COMMIT");
-    return r.rows[0];
+    /* Same shape as `getFleetState()` ten lines above, and for the same reason:
+     * the migration seeds this row, but if it is somehow missing the freeze
+     * still COMMITTED and the caller must be told the state it asked for — not
+     * handed a TypeError on `undefined.status` that reads as "the freeze did
+     * not take". */
+    base = r.rows[0] ?? {
+      status,
+      updated_at: new Date().toISOString(),
+      updated_by: updatedBy,
+    };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
   }
+
+  /* AFTER the transaction, deliberately. Inside the `try` this read's throw ran
+   * `ROLLBACK` on an ALREADY-COMMITTED transaction and rethrew, so a malformed
+   * `app_settings['fleet.default_tier']` row turned an applied freeze into a
+   * 500: `fleet_state` and `guardrail_rules` already said `paused`, and Konrad
+   * was told the freeze failed. Out here it cannot touch the transaction, and
+   * `readFleetDefaultTierOrDegrade` cannot throw at all. */
+  const tierInfo = await readFleetDefaultTierOrDegrade();
+  return {
+    status: base.status,
+    updated_at: base.updated_at,
+    updated_by: base.updated_by,
+    default_tier: tierInfo.default_tier,
+    default_tier_source: tierInfo.source,
+  };
 }
 
 /* ============================================================================

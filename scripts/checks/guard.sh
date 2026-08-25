@@ -159,9 +159,38 @@ run_check 1 "dollar-sweep" \
 # main...HEAD (three-dot: this branch's own commits, not main's since we
 # diverged — see AI OS memory two-dot-diff-shows-sibling-work-reversed).
 FORBIDDEN_RE='(^|/)app/desktop/DesktopApp\.tsx$|(^|/)app/desktop/nav-items\.ts$|(^|/)app/tokens\.ts$|(^|/)app/globals\.css$|(^|/)app/theme\.css$|(^|/)app/v2\.css$|project-tick|cc-runner|executor\.ts|db/projects|VaultFileList|routes/files'
+
+# OPERATOR WAIVER 2026-08-25 — lib/project-tick.ts, on ONE branch, for ONE project.
+#
+# Project aios-gemini-default-tier: Konrad's Claude WEEKLY limit is reached, so
+# gemini (agy) becomes the fleet's default engine and the default becomes a
+# runtime setting (app_settings['fleet.default_tier']) rather than another
+# deploy. TIER_GUIDE — the block that tells every planner which engine to ask
+# for — lives in lib/project-tick.ts, and the tick is where an untiered row is
+# resolved against that setting. The brief therefore ORDERS the edit this gate
+# forbids, which is the shape the 2026-08-23 waiver in gates-808.sh calls a toll
+# rather than evidence: passable only by disobeying the brief or by a builder
+# widening a gate. The edit is authorised in PLAN.md §4 ("Forbidden-File Gate
+# Authorization") and recorded here, where it is enforced.
+#
+# SCOPE, and why it is a branch rather than a release. The ban's reason is LIVE —
+# one careless edit to the scheduler breaks every lane at once — so it is not
+# retired. It is suspended for the file this project was authorised to change,
+# on the project's own branch, and nowhere else: any OTHER lane touching
+# project-tick still goes red, and this waiver expires by itself when the branch
+# is merged and deleted. cc-runner, executor.ts and db/projects stay forbidden
+# for this project too — none of them was authorised, and none was touched.
+WAIVER_BRANCH_2026_08_25='project/860c948e'
+WAIVED_RE_2026_08_25='forge-control/src/lib/project-tick(\.test)?\.ts$'
 if git rev-parse --verify main >/dev/null 2>&1; then
   fstart=$(date +%s)
   hits="$(git diff --name-only main...HEAD 2>/dev/null | grep -E "$FORBIDDEN_RE" || true)"
+  if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$WAIVER_BRANCH_2026_08_25" ] \
+     && [ -n "$hits" ]; then
+    # grep -v with no survivors exits 1; `|| true` keeps that from reading as a
+    # failure, and an empty `hits` is what the PASS branch below tests for.
+    hits="$(printf '%s\n' "$hits" | grep -vE "$WAIVED_RE_2026_08_25" || true)"
+  fi
   fdur=$(( $(date +%s) - fstart ))
   if [ -n "$hits" ]; then
     record 1 "forbidden-file-diff" "FAIL" "$fdur" "$(printf '%s' "$hits" | head -1)" \
