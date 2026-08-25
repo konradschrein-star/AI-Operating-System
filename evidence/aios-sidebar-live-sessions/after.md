@@ -65,20 +65,35 @@ full timeout to discover and isn't written down anywhere yet — added as a new 
 All saved to `/opt/ai-os/uploads/c7dcc38a9397/` and read back with the `Read` tool before being
 cited here. Viewport `1600×2400` throughout, matching before.md.
 
-1. **`/api/uploads/c7dcc38a9397/20260825T015710853Z-live-sessions-linked-light.png`** — real live
+1. **`/api/uploads/c7dcc38a9397/2026-08-25T015710853Z-live-sessions-linked-light.png`** — real live
    LIVE SESSIONS block, linked chat (`2ef126b7…`), light theme.
-2. **`/api/uploads/c7dcc38a9397/20260825T015718338Z-live-sessions-linked-dark.png`** — same chat,
+2. **`/api/uploads/c7dcc38a9397/2026-08-25T015718338Z-live-sessions-linked-dark.png`** — same chat,
    dark theme.
-3. **`/api/uploads/c7dcc38a9397/20260825T015731961Z-money-shot-mixed-engine-fixture.png`** — mixed
+3. **`/api/uploads/c7dcc38a9397/2026-08-25T015731961Z-money-shot-mixed-engine-fixture.png`** — mixed
    engine, see capture 2 below.
-4. **`/api/uploads/c7dcc38a9397/20260825T015723581Z-picker-expanded-29-candidates.png`** — picker +
+4. **`/api/uploads/c7dcc38a9397/2026-08-25T015723581Z-picker-expanded-29-candidates.png`** — picker +
    overlap scan, see capture 4 below.
-5. **`/api/uploads/c7dcc38a9397/20260825T015830796Z-unlinked-chat-single-note.png`** — unlinked
+5. **`/api/uploads/c7dcc38a9397/2026-08-25T015830796Z-unlinked-chat-single-note.png`** — unlinked
    chat, see capture 5 below.
 6. **Plan split** (superseded set, v2 is the one to trust — see capture 6):
-   `20260825T015945533Z-plan-split-before-drag-v2.png`,
-   `20260825T015947072Z-plan-split-after-drag-v2.png`,
-   `20260825T015948968Z-plan-split-after-reload-v2.png`.
+   `2026-08-25T015945533Z-plan-split-before-drag-v2.png`,
+   `2026-08-25T015947072Z-plan-split-after-drag-v2.png`,
+   `2026-08-25T015948968Z-plan-split-after-reload-v2.png`.
+
+> **Corrected in round 5 (fix cycle 1), round-4 review finding 4.** Every path above was
+> originally cited as `20260825T…` while the file on disk is `2026-08-25T…`, so all ten
+> citations resolved to nothing. Re-verified after the fix: each of the eight distinct
+> filenames exists in `/opt/ai-os/uploads/c7dcc38a9397/`, and
+> `GET /api/uploads/c7dcc38a9397/2026-08-25T015710853Z-live-sessions-linked-light.png`
+> now returns `200 image/png` (748 132 B) where the old form returns `404`.
+>
+> **The filenames themselves still violate the stamp convention, and are deliberately not
+> being renamed.** The spec is compact UTC ISO-8601 (`20260825T015710Z`); these carry
+> hyphens in the date and a millisecond field. Renaming would invalidate the round-4
+> reviewer's own read-backs and every reference written since. The names on disk are the
+> record; the convention debt is disclosed here rather than papered over. Root cause and
+> the one-variable fix that prevents it: fleet memory
+> `uploads-stamp-extended-vs-compact-breaks-citations.md`.
 
 ## Capture 1 — the LIVE SESSIONS block with real live sessions: **done**
 
@@ -175,8 +190,8 @@ lane bounded the switcher with `maxHeight: 62, overflowY: "auto"`. You're lookin
 `main`, which is still unbounded."* That is an independent, differently-sourced confirmation of
 exactly this round's own conclusion: **the overlap is real on deployed `main` and already fixed on
 this branch** — visible verbatim in the transcript captured incidentally inside
-`20260825T015945533Z-plan-split-before-drag-v2.png` and
-`20260825T015947072Z-plan-split-after-drag-v2.png` (main chat column, mid-page). I did not seed
+`2026-08-25T015945533Z-plan-split-before-drag-v2.png` and
+`2026-08-25T015947072Z-plan-split-after-drag-v2.png` (main chat column, mid-page). I did not seed
 this confirmation and could not have predicted it landing inside my own capture window; noting it
 because it is real evidence, from a source I don't control, agreeing with the measurement above.
 

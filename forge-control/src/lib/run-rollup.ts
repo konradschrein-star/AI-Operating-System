@@ -259,15 +259,21 @@ export function ingestEvent(runId: string, e: CcEvent): void {
           sub.ended_at = ts;
           sub.updated_at = ts;
         }
-        /* ── The tool_result hole (measured 2026-08-25) ──────────────────────
+        /* ── The tool_result hole ────────────────────────────────────────────
          *
          * This used to write `tool: null`, and every reader of it renders a
          * blank: `activityLabel` (live/AgentActivity.tsx) returns "" for a
-         * tool_result outright. Replaying the rollup's own state machine over
-         * 321 runs / 66 h of thread shows the parent sits in `tool_result` for
-         * 60.8% of live wall-clock — a tool returns in milliseconds and the
-         * model then thinks for seconds — so the "what is it doing right now"
-         * column would be empty most of the time it is looked at.
+         * tool_result outright. Replaying this state machine over 338 runs of
+         * `runs.thread` shows the parent sits in `tool_result` for 58.8-75.3%
+         * of live wall-clock — a tool returns in milliseconds and the model
+         * then thinks for seconds — so the "what is it doing right now" column
+         * would be empty most of the time it is looked at.
+         *
+         * The range is the measurement's honest width: the share depends on
+         * the idle-gap cap that defines "live", 68.3% at a 120 s cap. Method,
+         * raw counts and the re-runnable instrument are in
+         * `evidence/aios-sidebar-live-sessions/activity-truth.md` §2-§4; it is
+         * NOT the bare "60.8%" round 0 published against no artefact.
          *
          * The answering tool's name is the honest label for that state: the
          * agent is digesting what `Bash` just returned. It costs one map
@@ -408,4 +414,27 @@ export async function finalizeRollup(runId: string): Promise<void> {
 /** Test-only reset. */
 export function _resetForTests(): void {
   state.clear();
+}
+
+/** Test-only read of the in-memory rollup for one run.
+ *
+ *  Exists because `pendingTools` is otherwise observable only through a
+ *  `flush()` to Postgres, which would make the unit suite need a database —
+ *  see the header of `run-rollup.test.ts`. Returns a shallow copy so a test
+ *  cannot mutate executor state through it, and `null` when the run has no
+ *  rollup (never seen, or already finalized). */
+export function _snapshotForTests(runId: string): {
+  currentActivity: CurrentActivityRollup | null;
+  pendingTools: [string, string][];
+  subagents: SubagentRollup[];
+  lastModel: string | null;
+} | null {
+  const s = state.get(runId);
+  if (!s) return null;
+  return {
+    currentActivity: s.currentActivity === null ? null : { ...s.currentActivity },
+    pendingTools: Array.from(s.pendingTools.entries()),
+    subagents: Array.from(s.subagents.values()),
+    lastModel: s.lastModel,
+  };
 }

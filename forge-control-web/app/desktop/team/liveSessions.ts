@@ -163,8 +163,10 @@ export function engineFor(node: TeamNode): {
  *
  * `/live`'s `activityLabel` (live/AgentActivity.tsx:165) returns the empty
  * string for `tool_result` outright, and the rollup replay measured the parent
- * sitting in that state for 60.8% of live wall-clock — a cell that is blank
- * most of the time it is looked at. So:
+ * sitting in that state for 58.8-75.3% of live wall-clock depending on the
+ * idle-gap cap that defines "live" (68.3% at a 120 s cap, 338 runs) — a cell
+ * that is blank most of the time it is looked at. Method and raw counts:
+ * `evidence/aios-sidebar-live-sessions/activity-truth.md` §3-§4. So:
  *
  *   tool_call     → the tool's name.
  *   tool_result   → the tool's name, TOO. Since commit 3e63a45 the rollup
