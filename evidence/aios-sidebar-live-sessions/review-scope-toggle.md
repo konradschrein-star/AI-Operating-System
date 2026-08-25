@@ -240,7 +240,7 @@ one `git hash-object` + `git log --all --find-object` per path, run by me, not i
 | `forge-control-web/app/desktop/chat/FileExplorerPanel.tsx` | yes — `27ab8d5` |
 | `forge-control-web/app/desktop/chat/MessageMarkdown.tsx` | yes — `5067233` |
 | `forge-control/src/routes/files.ts` | yes — `2db8998` |
-| `forge-control-web/app/desktop/ChatSurface.tsx` | blob in no commit, but the change is a 16-line `subscribeOpenFile` effect belonging to the `chat-ref-nav` lanes |
+| **`forge-control-web/app/desktop/ChatSurface.tsx`** | **NO — sole copy** (corrected, see below) |
 | **`forge-control-web/auth.ts`** | **NO — sole copy** |
 
 `auth.ts` adds `issuer: "https://github.com/login/oauth"` to the GitHub provider: GitHub
@@ -250,6 +250,24 @@ error until this line exists. `git log --all -S 'https://github.com/login/oauth'
 exactly one commit, `2f1d89a` — which is the sibling reviewer's own **prose** describing the
 fix, not the code. The working tree is still the only copy of something serving Konrad's
 logins.
+
+**CORRECTION, made before this review was final (05:58 UTC).** My first gloss on
+`ChatSurface.tsx` read "blob in no commit, but the change belongs to the chat-ref-nav
+lanes", which understated it. Round 5's note
+`live-checkout-dirt-2026-08-25-two-sole-copies` says there are **two** sole copies, and I
+re-measured rather than take it on trust: the working-tree blob is `65f9c67`, present in no
+commit, and `git diff 27ab8d5 -- ChatSurface.tsx` shows it is `27ab8d5` **plus** three
+uncommitted lines that turn `fetchChatDelta`'s second argument from a value into a thunk
+(`() => qc.getQueryData(...)`) — a deferred cache read, a real semantic change, not
+whitespace. So `ChatSurface.tsx` needs preserving on the same terms as `auth.ts`; only five
+of the seven resolve themselves when the chat-ref-nav lanes merge. The lesson generalises:
+"is this path in a commit" and "is this *content* in a commit" are different questions, and
+`git hash-object` + `git log --all --find-object` answers the second.
+
+A **verified preservation patch already exists** —
+`evidence/aios-sidebar-live-sessions/live-checkout-dirt-2026-08-25.patch`, commit `0e1c069`
+on `project/fb3b5fb2`, covering the untracked files too. Step 2 of the protocol is therefore
+already discharged; what remains is step 3, the named commit-in-place owner.
 
 **The fix — and it is NOT "revert and redo in the worktree".**
 - Do **not** revert, discard or `git stash` any of the seven. Konrad's standing ruling
