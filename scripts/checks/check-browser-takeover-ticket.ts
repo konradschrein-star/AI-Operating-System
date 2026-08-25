@@ -738,6 +738,105 @@ ok(
   wsPrefixHits.join(", "),
 );
 
+/* ── 6.1b index.ts's exemption is SCOPED to redaction ───────────────────── */
+
+/* index.ts is on the allowlist above because it names the prefix in order to
+ * REDACT it from the request log. That reason is the whole exemption. An
+ * allowlist entry is permission for a file to KNOW the path exists, and the
+ * moment it also becomes permission to SERVE something there, the allowlist has
+ * stopped guarding anything. Round-4 review, finding 1: "add the entry scoped
+ * to the redaction use, plus an assertion that index.ts mounts no route under
+ * the prefix".
+ *
+ * Written as a pure function so it can be run twice — once on the real file,
+ * which must be clean, and once on a synthetic file carrying exactly the defect
+ * it exists to catch, which must be dirty. Same doctrine as §6.0. */
+
+const INDEX_REL = "forge-control/src/index.ts";
+const WS_PREFIX_LITERAL = "api/browser-takeover/ws/";
+
+/**
+ * Blank every comment body, preserving offsets and newlines, so an occurrence's
+ * position in the ORIGINAL source still means something. Prose about the prefix
+ * is not a route; only code is.
+ */
+function blankComments(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, " "));
+}
+
+interface IndexPrefixScan {
+  /** Code (non-comment) occurrences that are NOT inside the redaction array. */
+  strayOffsets: number[];
+  /** Code occurrences inside the redaction array — must be at least one. */
+  redactionOffsets: number[];
+  /** Anything that looks like a Hono mount under the takeover namespace. */
+  mounts: string[];
+}
+
+function scanIndexPrefixUse(src: string): IndexPrefixScan {
+  const blanked = blankComments(src);
+  const declStart = blanked.indexOf("REDACTED_PATH_PREFIXES");
+  const declEnd = declStart < 0 ? -1 : blanked.indexOf("]", declStart);
+
+  const strayOffsets: number[] = [];
+  const redactionOffsets: number[] = [];
+  for (let i = blanked.indexOf(WS_PREFIX_LITERAL); i !== -1; i = blanked.indexOf(WS_PREFIX_LITERAL, i + 1)) {
+    if (declStart >= 0 && declEnd > declStart && i >= declStart && i <= declEnd) redactionOffsets.push(i);
+    else strayOffsets.push(i);
+  }
+
+  const mounts: string[] = [];
+  const MOUNT_RE = /\b(?:app|server)\s*\.\s*(?:route|use|get|post|put|patch|delete|all|on)\s*\(\s*["'`]\/api\/browser-takeover[^"'`]*/g;
+  for (const m of blanked.matchAll(MOUNT_RE)) mounts.push(m[0].trim());
+
+  return { strayOffsets, redactionOffsets, mounts };
+}
+
+const indexScan = scanIndexPrefixUse(readRepoFile(INDEX_REL));
+ok(
+  `${INDEX_REL} names the prefix in code ONLY inside REDACTED_PATH_PREFIXES`,
+  indexScan.strayOffsets.length === 0,
+  `stray code occurrences at offsets: ${indexScan.strayOffsets.join(", ")}`,
+);
+ok(
+  "…and it does name it there, so the scan is not passing on an empty set",
+  indexScan.redactionOffsets.length >= 1,
+  "no occurrence found inside the redaction array — comment-blanking may have eaten the file",
+);
+ok(
+  `${INDEX_REL} mounts no router under the takeover namespace`,
+  indexScan.mounts.length === 0,
+  indexScan.mounts.join(" | "),
+);
+
+/* THE DISCRIMINATION RUN. A synthetic index.ts carrying both offences: a bare
+ * code occurrence outside the array, and a real mount. If the scanner comes back
+ * clean on THIS, it would come back clean on the real thing too. */
+const SYNTHETIC_INDEX = [
+  "const REDACTED_PATH_PREFIXES = [\"/api/browser-takeover/ws/\"];",
+  "// a comment naming /api/browser-takeover/ws/ must NOT count",
+  "const shortcut = \"/api/browser-takeover/ws/\" + ticket;",
+  "app.route(\"/api/browser-takeover\", takeover);",
+].join("\n");
+const syntheticScan = scanIndexPrefixUse(SYNTHETIC_INDEX);
+ok(
+  "discrimination · the scanner catches a stray code occurrence",
+  syntheticScan.strayOffsets.length === 1,
+  `expected exactly 1, got ${syntheticScan.strayOffsets.length}`,
+);
+ok(
+  "discrimination · …and ignores the one in a comment",
+  syntheticScan.redactionOffsets.length === 1,
+  `expected exactly 1 in-array occurrence, got ${syntheticScan.redactionOffsets.length}`,
+);
+ok(
+  "discrimination · the scanner catches a router mounted under the namespace",
+  syntheticScan.mounts.length === 1,
+  `expected exactly 1, got ${syntheticScan.mounts.length}: ${syntheticScan.mounts.join(" | ")}`,
+);
+
 /* ── 6.2 nothing else pipes a takeover socket ───────────────────────────── */
 
 /* proxyTakeoverUpgrade is the function that moves bytes onto the loopback VNC

@@ -445,6 +445,181 @@ describe("matchTakeoverUpgradePath", () => {
     assert.equal(matchTakeoverUpgradePath("/api/browser-takeover/ws/"), null);
     assert.equal(matchTakeoverUpgradePath("/api/browser-takeover/ws/tkt/websockify"), null);
   });
+
+  /**
+   * Round-4 review, suggestion S1: the suite asserted what the route DOES but
+   * never what it IS, so widening the regex to a second arm
+   * (`/api/browser-takeover/(?:ws|run)/…`) left all 76 tests green. The alias
+   * would still demand a ticket, so it was never a hole — but the nginx
+   * location is a PREFIX match whose comment reads "NOTHING ELSE MAY EVER BE
+   * MOUNTED HERE", and an invariant no test can break is a claim, not a
+   * guarantee. This pins the shape: one literal segment `ws`, then exactly one
+   * more segment, and nothing else in the whole namespace answers.
+   */
+  test("the route SHAPE is /api/browser-takeover/ws/<one-segment> and nothing else", () => {
+    for (const alias of [
+      "/api/browser-takeover/run/abc.def",
+      "/api/browser-takeover/socket/abc.def",
+      "/api/browser-takeover/vnc/abc.def",
+      "/api/browser-takeover/abc.def",
+      "/api/browser-takeover/wss/abc.def",
+      "/api/browser-takeover/ws2/abc.def",
+      "/api/browser-takeoverx/ws/abc.def",
+      "/browser-takeover/ws/abc.def",
+      "/api/browser-takeover/ws/a/b",
+    ]) {
+      assert.equal(
+        matchTakeoverUpgradePath(alias),
+        null,
+        `${alias} must NOT be an upgrade route — the nginx location is a prefix match`,
+      );
+    }
+    // …and the one real shape still works, so this is not vacuously strict.
+    assert.deepEqual(matchTakeoverUpgradePath("/api/browser-takeover/ws/abc.def"), {
+      kind: "ticket",
+      ticket: "abc.def",
+    });
+  });
+});
+
+/**
+ * resolveProfileForRun — WHICH BROWSER a run's ticket gets signed for.
+ *
+ * This function had no test at all until round 5; it was imported by this file
+ * and never called, which is how round-4 review finding 3 survived: screenshot
+ * NAME inference ran ahead of the marker the driver deliberately writes, so a
+ * run whose marker said `os-ui` resolved to `perplexity` because a file called
+ * `<ts>-perplexity-open.png` happened to sit in its uploads dir. The mint
+ * endpoint then signed a ticket for the wrong logged-in Chrome.
+ */
+describe("resolveProfileForRun — marker beats filename", () => {
+  let uploadDir: string;
+  let stateRoot: string;
+
+  const runDir = (runId: string) => path.join(uploadDir, runId);
+  const writeMarker = (runId: string, profile: string, body: Record<string, unknown>) => {
+    const dir = path.join(runDir(runId), "browser-state");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, `${profile}.json`), JSON.stringify(body));
+  };
+
+  before(() => {
+    uploadDir = mkdtempSync(path.join(tmpdir(), "takeover-uploads-"));
+    stateRoot = mkdtempSync(path.join(tmpdir(), "takeover-state-"));
+    // Both profiles have live state dirs — the ONLY thing separating them is
+    // which piece of evidence the resolver believes.
+    for (const p of ["perplexity", "os-ui", "r704-loginwall"]) {
+      mkdirSync(path.join(stateRoot, p), { recursive: true });
+    }
+  });
+
+  after(() => {
+    rmSync(uploadDir, { recursive: true, force: true });
+    rmSync(stateRoot, { recursive: true, force: true });
+  });
+
+  test("finding 3, reproduced: a stray perplexity screenshot does NOT outrank the marker", async () => {
+    const runId = "2ce31fa484df";
+    mkdirSync(runDir(runId), { recursive: true });
+    // The exact shape measured live on 2026-08-25.
+    writeFileSync(path.join(runDir(runId), "20260825T005232Z-perplexity-open.png"), "not-a-png");
+    writeMarker(runId, "os-ui", {
+      profile: "os-ui",
+      service: "os-ui",
+      checked_at: "2026-08-25T00:52:00.000Z",
+    });
+
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), "os-ui");
+  });
+
+  test("the legacy single-file marker also outranks the screenshot name", async () => {
+    const runId = "aaaabbbbcccc";
+    mkdirSync(runDir(runId), { recursive: true });
+    writeFileSync(path.join(runDir(runId), "20260825T010000Z-perplexity-open.png"), "not-a-png");
+    writeFileSync(
+      path.join(runDir(runId), "browser_state.json"),
+      JSON.stringify({ profile: "os-ui", service: "os-ui" }),
+    );
+
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), "os-ui");
+  });
+
+  test("two profiles in one run: the NEWEST checked_at wins, not the last writer", async () => {
+    const runId = "1111222233ff";
+    mkdirSync(runDir(runId), { recursive: true });
+    // Written in the order os-ui → perplexity, but os-ui carries the later clock.
+    writeMarker(runId, "os-ui", { profile: "os-ui", checked_at: "2026-08-25T02:00:00.000Z" });
+    writeMarker(runId, "perplexity", {
+      profile: "perplexity",
+      checked_at: "2026-08-25T01:00:00.000Z",
+    });
+
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), "os-ui");
+
+    // …and the older one is still on disk, which is the whole point of keying
+    // the marker by run AND profile: a second takeover ADDS a file.
+    writeMarker(runId, "perplexity", {
+      profile: "perplexity",
+      checked_at: "2026-08-25T03:00:00.000Z",
+    });
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), "perplexity");
+  });
+
+  test("a marker whose body names a different profile than its filename is discarded", async () => {
+    const runId = "dddd4444eeee";
+    mkdirSync(runDir(runId), { recursive: true });
+    // Filename says os-ui, body says perplexity. Neither answer is trustworthy,
+    // so the resolver must fall through rather than pick one.
+    writeMarker(runId, "os-ui", { profile: "perplexity", checked_at: "2026-08-25T02:00:00.000Z" });
+
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), null);
+  });
+
+  test("a marker filename that is not a valid profile name is ignored", async () => {
+    const runId = "9999888877ff";
+    const dir = path.join(runDir(runId), "browser-state");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path.join(dir, "Perplexity.json"), // capital P — PROFILE_RE rejects it
+      JSON.stringify({ profile: "Perplexity", checked_at: "2026-08-25T02:00:00.000Z" }),
+    );
+    writeFileSync(path.join(dir, "not-json.txt"), "perplexity");
+
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), null);
+  });
+
+  test("auth.json still resolves when there is no marker of either kind", async () => {
+    const runId = "5555666677ee";
+    mkdirSync(runDir(runId), { recursive: true });
+    writeFileSync(
+      path.join(runDir(runId), "auth.json"),
+      JSON.stringify({ service: "r704-loginwall", needs_login: true }),
+    );
+
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), "r704-loginwall");
+  });
+
+  test("screenshot-name inference still works — as the LAST resort, with no marker present", async () => {
+    const runId = "abcdefabcdef";
+    mkdirSync(runDir(runId), { recursive: true });
+    writeFileSync(path.join(runDir(runId), "20260825T010000Z-perplexity-login-wall.png"), "x");
+
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), "perplexity");
+  });
+
+  test("a screenshot naming a profile with no state dir resolves to nothing", async () => {
+    const runId = "0f0f0f0f0f0f";
+    mkdirSync(runDir(runId), { recursive: true });
+    writeFileSync(path.join(runDir(runId), "20260825T010000Z-nosuchprofile-open.png"), "x");
+
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), null);
+  });
+
+  test("an empty run dir resolves to nothing at all", async () => {
+    const runId = "c0ffeec0ffee";
+    mkdirSync(runDir(runId), { recursive: true });
+    assert.equal(await resolveProfileForRun(runId, { uploadDir, stateRoot }), null);
+  });
 });
 
 describe("consumeTakeoverTicketJti — the replay store", () => {
