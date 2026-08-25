@@ -42,6 +42,7 @@ import tasks from "./routes/tasks.ts";
 import integrations from "./routes/integrations.ts";
 import daily from "./routes/daily.ts";
 import journal from "./routes/journal.ts";
+import thoughts from "./routes/thoughts.ts";
 import terminal from "./routes/terminal.ts";
 import map from "./routes/map.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
@@ -251,6 +252,9 @@ app.route("/api/daily", daily);
 // JOURNAL surface (aios-journal-and-mentor): paper-photo capture, dated and
 // indexed over the same /opt/ai-os/uploads/ tree chat attachments use.
 app.route("/api/journal", journal);
+// THOUGHTS surface (aios-journal-thoughts-stats §3.2): idea pool, quotes,
+// dreams — frontmatter files in the vault, lib/thoughts.ts is the store.
+app.route("/api/thoughts", thoughts);
 app.route("/api/terminal", terminal);
 // The MAP surface's aggregator: businesses (vault), PM2, systemd, nginx
 // ingress, storage/datastores and planning canvases in one payload, each
