@@ -27,6 +27,7 @@ import {
   GraphValidationError,
 } from "../lib/task-graph.ts";
 import { provisionWorkspace, removeWorkspace } from "../lib/workspace.ts";
+import { getFleetDefaultTier } from "../db/ai_os.ts";
 
 const r = new Hono();
 
@@ -793,13 +794,18 @@ r.post("/:id/tasks", async (c) => {
     );
   }
 
+  const effectiveTier =
+    pinnedTier ??
+    requestedTier ??
+    (await getFleetDefaultTier()).default_tier;
+
   const { task, created } = await createTask({
     project_id: id,
     round,
     role: body.role as TaskRole,
     title,
     brief,
-    tier: pinnedTier ?? requestedTier,
+    tier: effectiveTier,
     /* THE SENTINEL — the single line in this phase most worth a second reader
      * (02-architecture.md §2.2, ruled as E2 in §9.1). `dependsOn` is `undefined`
      * when the caller sent NO depends_on, which createTask() writes as SQL NULL:
