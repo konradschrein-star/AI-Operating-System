@@ -592,3 +592,28 @@ realLog(ok ? "PASS — the tick resolved each untiered row against the setting l
 await pool.end();
 process.exit(ok ? 0 : 1);
 ```
+
+### 5.7 Gate suite at round 4's tip
+
+`bash scripts/checks/gates-808.sh --strict` → **29 EXECUTED, 1 RED, 5 SKIPPED-by-design**,
+`GATES_EXIT=1`. Identical to round 3's reading.
+
+Gate 9 (`dollar-sweep.sh`) went RED mid-round on a doc-comment this round added
+("…chooses which model spends Konrad's money"). Reworded rather than allowlisted, per
+that gate's standing rule; green again at `a5cb4df`.
+
+The single RED is gate 5, `no-raw-colours.cjs`, and it is inherited — verified two ways:
+
+```
+$ git diff --name-only main...HEAD | grep -c WeekGrid
+0
+$ git show main:forge-control-web/app/desktop/goals/WeekGrid.tsx | sed -n 48p
+  { bg: "#3f51b5", fg: "#ffffff" }, // blueberry
+```
+
+Gate 6 (forbidden-file diff) is GREEN: the only engine files in `main...HEAD` are
+`lib/project-tick.ts` and its `.test.ts`, both covered by the operator waiver recorded
+in `PLAN.md` §4 and in `gates-808.sh`. Round 4 did not touch either of them.
+
+`pnpm test`: **2382 tests / 469 suites / 0 fail** (round 3: 2365 / 465).
+`fleet-tier.test.ts`: 36/36 (round 3: 19/19).
