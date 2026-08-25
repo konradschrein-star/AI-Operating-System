@@ -53,7 +53,10 @@ import { fileURLToPath } from "node:url";
 import type { Duplex } from "node:stream";
 
 import uploadsRoutes from "../../forge-control/src/routes/uploads.ts";
-import { handleBrowserTakeoverUpgrade } from "../../forge-control/src/lib/browser-takeover.ts";
+import {
+  handleBrowserTakeoverUpgrade,
+  TAKEOVER_UPGRADE_PREFIX,
+} from "../../forge-control/src/lib/browser-takeover.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const WEB_ROOT = path.join(REPO_ROOT, "forge-control-web");
@@ -213,9 +216,15 @@ async function startForgeControlProbe(): Promise<{ port: number; stop: () => voi
  * under the takeover prefix goes STRAIGHT to forge-control, never touching the
  * Next Route Handler (which answers every upgrade with 502 + x-proxy-bailout,
  * because a Route Handler cannot host a WebSocket). Same shape as the live
- * `location /api/browser-takeover/ws/` block.
+ * location block, whose prefix is TAKEOVER_UPGRADE_PREFIX.
  */
-const WS_PREFIX = "/api/browser-takeover/ws/";
+/* IMPORTED, never restated. check-browser-takeover-ticket.ts §6.1 allowlists the
+ * files permitted to name the public upgrade prefix — a new file naming it is a
+ * new public route until proven otherwise, and this harness earning an
+ * exemption for a string it can import would be the allowlist paying for
+ * nothing. It also means a change to the prefix moves this hop with it instead
+ * of silently routing the socket into the Next handler's 502. */
+const WS_PREFIX = TAKEOVER_UPGRADE_PREFIX;
 
 async function startFrontProxy(port: number, nextPort: number, fcPort: number): Promise<{
   port: number;
@@ -263,6 +272,13 @@ async function startFrontProxy(port: number, nextPort: number, fcPort: number): 
         .join("");
       socket.write(statusLine + headers + "\r\n");
       if (upHead.length > 0) socket.unshift(upHead);
+      // Both halves need an error handler BEFORE the pipe. When the browser
+      // closes, one side goes away first and the other's in-flight write raises
+      // EPIPE on a socket with no listener — which Node promotes to an uncaught
+      // exception and kills the harness after every check has already passed.
+      // A dead peer is the normal end of a takeover, not a failure.
+      upSocket.on("error", () => socket.destroy());
+      socket.on("error", () => upSocket.destroy());
       upSocket.pipe(socket);
       socket.pipe(upSocket);
     });
@@ -546,7 +562,14 @@ async function main(): Promise<void> {
       const iframes = page.frames().map((f: { url(): string }) => f.url());
       check(
         "…and the pane embedded the ticketed noVNC URL",
-        iframes.some((u: string) => u.includes("/vnc/vnc.html") && u.includes("path=api/browser-takeover/ws/")),
+        // noVNC builds its socket URL as `origin + "/" + path`, so the query
+        // param carries the prefix WITHOUT its leading slash. Derived from the
+        // module, for the same reason WS_PREFIX is.
+        iframes.some(
+          (u: string) =>
+            u.includes("/vnc/vnc.html") &&
+            u.includes(`path=${TAKEOVER_UPGRADE_PREFIX.replace(/^\//, "")}`),
+        ),
         iframes.join("\n        "),
       );
       const canvas = page.frameLocator("iframe[title='Live Browser Takeover']").locator("canvas");

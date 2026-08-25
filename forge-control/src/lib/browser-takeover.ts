@@ -702,6 +702,16 @@ export interface TakeoverUpgradeMatch {
  * one and the other one" — an unauthenticated arm left alive is how a careless
  * nginx edit later becomes account takeover.
  */
+/**
+ * The public prefix nginx forwards here, exported so nothing else has to spell
+ * it out. `check-browser-takeover-ticket.ts` §6.1 allowlists the handful of
+ * files permitted to name this literal, on the principle that a new file naming
+ * it is a new public route until proven otherwise — and a test harness that
+ * needs to know where the socket goes should IMPORT the answer rather than earn
+ * an exemption for restating it. An exemption should buy something.
+ */
+export const TAKEOVER_UPGRADE_PREFIX = "/api/browser-takeover/ws/";
+
 const TICKET_UPGRADE_RE = /^\/api\/browser-takeover\/ws\/([^/]+)\/?$/;
 
 export function matchTakeoverUpgradePath(pathname: string): TakeoverUpgradeMatch | null {
