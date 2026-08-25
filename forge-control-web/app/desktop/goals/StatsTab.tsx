@@ -14,6 +14,7 @@ import { tokens } from "../../tokens";
 import type { DayStats, DayStatsHabit } from "../../api";
 import { Heatmap, DaySheet } from "./Heatmap";
 import { addDays } from "./quick-add";
+import { movingAverage } from "../stats/stats-math";
 import {
   Bars,
   CARD,
@@ -434,12 +435,13 @@ function HabitStatRow({
   );
 }
 
-/** Trailing moving average; the first `n-1` points average what exists so the
- *  line starts where the data starts instead of floating at zero. */
-export function movingAverage(values: number[], n: number): number[] {
-  return values.map((_, i) => {
-    const from = Math.max(0, i - n + 1);
-    const slice = values.slice(from, i + 1);
-    return slice.reduce((a, b) => a + b, 0) / slice.length;
-  });
-}
+/**
+ * Trailing moving average — MOVED to `../stats/stats-math.ts`, where it is
+ * covered by `stats-math.test.ts`, and re-exported here so existing importers
+ * keep working (PLAN.md §5: "extract the primitives, delete nothing yet").
+ *
+ * This tab is unmounted since the week board shipped. The live `StatsPanel`
+ * must not import from a file that is queued for deletion, so the definition
+ * moved and this line is the forwarding address.
+ */
+export { movingAverage } from "../stats/stats-math";

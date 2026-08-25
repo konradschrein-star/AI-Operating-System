@@ -35,6 +35,7 @@ export type Surface =
   | "autonomy"
   | "automation"
   | "goals"
+  | "thoughts"
   | "journal"
   | "map"
   | "search"
@@ -62,7 +63,7 @@ export type Surface =
 export const SURFACES: readonly Surface[] = [
   "today", "inbox", "chat", "tasks", "pipeline", "library", "money",
   "businesses", "skills", "memory", "live", "control", "autonomy",
-  "automation", "goals", "journal", "map", "search", "settings",
+  "automation", "goals", "thoughts", "journal", "map", "search", "settings",
 ];
 
 export const isSurface = (v: unknown): v is Surface =>
@@ -118,6 +119,11 @@ export const NAV: NavItem[] = [
   { key: "autonomy", label: "AUTONOMY", group: "ai" },
   { key: "automation", label: "AUTOMATION", group: "ai" },
   { key: "goals", label: "GOALS/TASKS", group: "recall" },
+  /* THOUGHTS sits between the board and the journal on purpose: the board is
+   * what he is doing, the journal is what he did, and the idea pool is the
+   * thing that turns into either. It carries no `unbuilt` flag — the surface
+   * ships with this entry (PLAN.md §3.2). */
+  { key: "thoughts", label: "THOUGHTS", group: "recall" },
   { key: "journal", label: "JOURNAL", group: "recall" },
   { key: "map", label: "MAP", group: "recall" },
 ];

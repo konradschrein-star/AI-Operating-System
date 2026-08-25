@@ -1634,3 +1634,366 @@ describe("concurrent appendToDailyNote: every acknowledged capture survives", ()
     assert.equal(vault.pendingVaultWrites(), 0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PLAN.md §3.5 — the actor guard and the `author: forge` stamp.
+//
+// The layout is read at CALL time (lib/vault-layout.ts), so these tests flip
+// VAULT_LAYOUT around each case and put it back. Every refusal is paired with
+// the same call under `legacy`, where it must succeed: a guard tested only in
+// the split direction passes against a module that refuses unconditionally,
+// which is the one outcome that would break every writer running today.
+// ---------------------------------------------------------------------------
+
+/** Run `body` with the vault split, then restore. Not a fixture-wide setting:
+ *  the tests above characterise the LEGACY paths and must keep running there. */
+async function withLayout<T>(name: "legacy" | "split", body: () => Promise<T>): Promise<T> {
+  const previous = process.env.VAULT_LAYOUT;
+  process.env.VAULT_LAYOUT = name;
+  try {
+    return await body();
+  } finally {
+    if (previous === undefined) delete process.env.VAULT_LAYOUT;
+    else process.env.VAULT_LAYOUT = previous;
+  }
+}
+
+/** The same, for the synchronous helpers. */
+function withLayoutSync(name: "legacy" | "split", body: () => void): void {
+  const previous = process.env.VAULT_LAYOUT;
+  process.env.VAULT_LAYOUT = name;
+  try {
+    body();
+  } finally {
+    if (previous === undefined) delete process.env.VAULT_LAYOUT;
+    else process.env.VAULT_LAYOUT = previous;
+  }
+}
+
+const isActorRefused = (
+  e: unknown,
+): e is InstanceType<typeof vault.VaultActorRefusedError> =>
+  e instanceof vault.VaultActorRefusedError && e.name === "VaultActorRefusedError";
+
+describe("§3.5 actor guard — an agent may not write on Konrad's side", () => {
+  const OUTSIDE = [
+    "Konrad/Journal/2026-08-25.md", // his journal
+    "Konrad/Thoughts/Ideas/2026-08-25-idea.md", // his ideas
+    "loose-root-note.md", // the flat vault's root, unmoved
+    "Daily/2026-08-25.md", // the PRE-split path: no longer the agent's
+    "Forgeries/x.md", // prefix-lookalike: "Forge" is not a prefix match on a name
+  ];
+  const INSIDE = [
+    "Forge/Daily/2026-08-25.md",
+    "Forge/Inbox/capture.md",
+    "Forge/Thoughts/Seeds/2026-08-25-seed.md",
+    "Forge", // the root folder itself
+    "Forge/",
+  ];
+
+  test("split: refused outside the agent root, allowed inside it", () => {
+    withLayoutSync("split", () => {
+      for (const rel of OUTSIDE) {
+        assert.throws(
+          () => vault.assertActorMayWrite("agent", rel),
+          (e: unknown) => {
+            assert.ok(isActorRefused(e), `expected VaultActorRefusedError, got ${e}`);
+            // The error must name the path AND the rule — an operator reading
+            // "refused" with neither goes looking in the wrong module.
+            assert.ok(e.message.includes(rel.replace(/^\.\//, "")), e.message);
+            assert.match(e.message, /Forge\//);
+            assert.match(e.message, /VAULT_LAYOUT=split/);
+            // And it is a VaultRefusedError, so routes/vault.ts's existing 400
+            // mapping carries the reason to the caller.
+            assert.ok(e instanceof vault.VaultRefusedError);
+            return true;
+          },
+          `an agent write to ${rel} must be refused while the vault is split`,
+        );
+      }
+      for (const rel of INSIDE) {
+        assert.doesNotThrow(() => vault.assertActorMayWrite("agent", rel), `${rel} is the agent's`);
+      }
+      });
+    });
+
+  test("split: an equivalent path spelled differently is judged the same", () => {
+    // Canonicalisation, not string equality: `./Forge/x.md` and `/Forge/x.md`
+    // are the same destination, and `Konrad/x.md` stays refused in every
+    // spelling. A guard that compared raw strings would let the first two
+    // through as "not starting with Forge/".
+    withLayoutSync("split", () => {
+      for (const rel of ["./Forge/x.md", "/Forge/x.md", "Forge\\x.md"]) {
+        assert.doesNotThrow(() => vault.assertActorMayWrite("agent", rel), rel);
+      }
+      for (const rel of ["./Konrad/x.md", "/Konrad/x.md", "Konrad\\x.md"]) {
+        assert.throws(() => vault.assertActorMayWrite("agent", rel), isActorRefused, rel);
+      }
+    });
+  });
+
+  test("split: actor konrad is refused nothing — his reply lands in the agent-side note", () => {
+    withLayoutSync("split", () => {
+      for (const rel of [...OUTSIDE, ...INSIDE]) {
+        assert.doesNotThrow(() => vault.assertActorMayWrite("konrad", rel), rel);
+      }
+    });
+  });
+
+  test("legacy: the guard is inert — the identical agent writes are allowed", () => {
+    // THE FLIP. Without this the suite above passes against a guard that
+    // refuses regardless of layout, i.e. against a module that breaks every
+    // writer in production the moment it ships.
+    const previous = process.env.VAULT_LAYOUT;
+    delete process.env.VAULT_LAYOUT; // unset === legacy, the deployed state
+    try {
+      for (const rel of [...OUTSIDE, ...INSIDE]) {
+        assert.doesNotThrow(() => vault.assertActorMayWrite("agent", rel), rel);
+      }
+      process.env.VAULT_LAYOUT = "legacy"; // explicit, same answer
+      for (const rel of OUTSIDE) {
+        assert.doesNotThrow(() => vault.assertActorMayWrite("agent", rel), rel);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.VAULT_LAYOUT;
+      else process.env.VAULT_LAYOUT = previous;
+    }
+  });
+
+  test("every write verb consults the guard (source inspection)", () => {
+    // appendToDailyNote's call CANNOT fire from configuration today — its
+    // destination is layout().dailyDir(), which always carries the agent root,
+    // so no VAULT_DAILY_DIR value puts it on Konrad's side (a `..` escape is
+    // refused earlier, by resolveInVault). It is kept, and asserted here rather
+    // than behaviourally, so that a later change to dailyDir() cannot quietly
+    // leave the append verb unguarded.
+    for (const verb of ["appendToDailyNote", "createNote", "writeVaultFile"]) {
+      const start = CODE.indexOf(`export async function ${verb}`);
+      assert.notEqual(start, -1, `${verb} must be exported from lib/vault.ts`);
+      const rest = CODE.slice(start + 1);
+      const end = rest.indexOf("\nexport ");
+      const body = end === -1 ? rest : rest.slice(0, end);
+      assert.match(body, /assertActorMayWrite\(/, `${verb} must consult the actor guard`);
+    }
+    // Flip the inspection: a verb that does NOT call it is detectable.
+    const readerStart = CODE.indexOf("export async function readDailyNote");
+    const reader = CODE.slice(readerStart, CODE.indexOf("\nexport ", readerStart + 1));
+    assert.doesNotMatch(reader, /assertActorMayWrite\(/, "a read verb needs no write guard");
+  });
+});
+
+describe("§3.5 actor guard — end to end through the verbs", () => {
+  test("split: createNote into Konrad's side is refused AND creates no directory", async () => {
+    const folder = "Konrad/Thoughts/Ideas";
+    await withLayout("split", async () => {
+      await assert.rejects(
+        () => vault.createNote({ title: "Refused Idea", content: "body", folder }),
+        isActorRefused,
+      );
+    });
+    // The refusal must precede the mkdir — otherwise every refused write leaves
+    // an empty folder in Konrad's tree and Obsidian shows it.
+    await assert.rejects(
+      () => fsp.stat(abs(folder)),
+      (e: NodeJS.ErrnoException) => e.code === "ENOENT",
+      "a refused createNote must not have created its destination folder",
+    );
+
+    // Flip 1: the same call with actor "konrad" lands.
+    const mine = await withLayout("split", () =>
+      vault.createNote({ title: "His Idea", content: "body", folder, actor: "konrad" }),
+    );
+    assert.equal(mine.path, `${folder}/His Idea.md`);
+    assert.ok((await fsp.readFile(abs(mine.path), "utf8")).includes("body"));
+
+    // Flip 2: the same AGENT call under legacy lands too.
+    const legacy = await withLayout("legacy", () =>
+      vault.createNote({ title: "Legacy Idea", content: "body", folder }),
+    );
+    assert.equal(legacy.path, `${folder}/Legacy Idea.md`);
+  });
+
+  test("split: createNote defaults to the agent-side Inbox", async () => {
+    const created = await withLayout("split", () =>
+      vault.createNote({ title: "Split Capture", content: "captured" }),
+    );
+    assert.equal(created.path, "Forge/Inbox/Split Capture.md");
+    // Flip: under legacy the same call still lands in the flat Inbox.
+    const flat = await withLayout("legacy", () =>
+      vault.createNote({ title: "Legacy Capture", content: "captured" }),
+    );
+    assert.equal(flat.path, "Inbox/Legacy Capture.md");
+  });
+
+  test("split: writeVaultFile refuses an agent edit of his note, byte for byte", async () => {
+    const rel = "Konrad/Notes/his-note.md";
+    const original = "# his note\n\nEvery byte of this is his.\n";
+    await fsp.mkdir(path.dirname(abs(rel)), { recursive: true });
+    await fsp.writeFile(abs(rel), original, { encoding: "utf8", flag: "wx" });
+
+    await withLayout("split", async () => {
+      await assert.rejects(
+        () =>
+          vault.writeVaultFile({
+            path: rel,
+            content: "# his note\n\nAn agent rewrote this.\n",
+            baseSha256: hex(original),
+          }),
+        isActorRefused,
+      );
+    });
+    assert.equal(await fsp.readFile(abs(rel), "utf8"), original, "the note must be untouched");
+
+    // Flip 1: actor "konrad" may edit his own note while split.
+    const konradEdit = "# his note\n\nHe rewrote it himself.\n";
+    await withLayout("split", () =>
+      vault.writeVaultFile({
+        path: rel,
+        content: konradEdit,
+        baseSha256: hex(original),
+        actor: "konrad",
+      }),
+    );
+    assert.equal(await fsp.readFile(abs(rel), "utf8"), konradEdit);
+
+    // Flip 2: under legacy the AGENT edit that was refused above lands.
+    const agentEdit = "# his note\n\nAn agent rewrote this.\n";
+    await withLayout("legacy", () =>
+      vault.writeVaultFile({ path: rel, content: agentEdit, baseSha256: hex(konradEdit) }),
+    );
+    assert.equal(await fsp.readFile(abs(rel), "utf8"), agentEdit);
+  });
+
+  test("split: the daily note is the agent's, and an agent append lands there", async () => {
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const rel = `Forge/Daily/${today}.md`;
+    try {
+      const created = await withLayout("split", () =>
+        vault.appendToDailyNote({ section: "Notes", text: "split-mode capture" }),
+      );
+      assert.deepEqual(created, { path: rel, created: true });
+      const disk = await fsp.readFile(abs(rel), "utf8");
+      assert.ok(disk.includes("— split-mode capture"));
+
+      // Konrad's journal reply appends to that same agent-side note — the case
+      // a guard confining "konrad" to the human root would have broken.
+      const reply = await withLayout("split", () =>
+        vault.appendToDailyNote({ section: "Journal", text: "his reply", actor: "konrad" }),
+      );
+      assert.deepEqual(reply, { path: rel, created: false });
+      assert.ok((await fsp.readFile(abs(rel), "utf8")).includes("— his reply"));
+    } finally {
+      await fsp.rm(abs(rel), { force: true });
+    }
+  });
+});
+
+describe("§3.5 author: forge — stamped on creation, never on an append", () => {
+  test("split: a created note opens with the frontmatter; legacy is byte-identical to before", async () => {
+    const split = await withLayout("split", () =>
+      vault.createNote({ title: "Stamped Note", content: "body text" }),
+    );
+    const stamped = await fsp.readFile(abs(split.path), "utf8");
+    assert.ok(
+      stamped.startsWith("---\nauthor: forge\n---\n# Stamped Note\n"),
+      `frontmatter must open the file:\n${stamped}`,
+    );
+
+    // Flip: under legacy the identical call produces the pre-flag bytes, with
+    // no frontmatter at all. This is what "the guard is inert" means in bytes.
+    const legacy = await withLayout("legacy", () =>
+      vault.createNote({ title: "Unstamped Note", content: "body text" }),
+    );
+    const plain = await fsp.readFile(abs(legacy.path), "utf8");
+    assert.ok(!plain.startsWith("---"), `legacy must not stamp:\n${plain}`);
+    assert.doesNotMatch(plain, /^author: forge$/m);
+    const captured = /^captured: (\d{4}-\d{2}-\d{2} \d{2}:\d{2})$/m.exec(plain);
+    assert.ok(captured);
+    assert.equal(
+      plain,
+      `# Unstamped Note\n\nbody text\n\n---\ncaptured: ${captured[1]}\nsource: ai-os\n`,
+    );
+  });
+
+  test("split: a note created FOR Konrad is not stamped as the fleet's", async () => {
+    const his = await withLayout("split", () =>
+      vault.createNote({
+        title: "His Own Note",
+        content: "body",
+        folder: "Konrad/Notes",
+        actor: "konrad",
+      }),
+    );
+    const disk = await fsp.readFile(abs(his.path), "utf8");
+    assert.ok(!disk.includes("author: forge"), `konrad's note must not claim a forge author:\n${disk}`);
+  });
+
+  test("split: the created daily note is stamped, and a later append leaves the header alone", async () => {
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const rel = `Forge/Daily/${today}.md`;
+    try {
+      await withLayout("split", () =>
+        vault.appendToDailyNote({ section: "Tasks", text: "first line" }),
+      );
+      const afterCreate = await fsp.readFile(abs(rel), "utf8");
+      assert.ok(
+        afterCreate.startsWith(`---\nauthor: forge\n---\n# ${today}\n`),
+        `the template must carry the stamp:\n${afterCreate}`,
+      );
+
+      await withLayout("split", () =>
+        vault.appendToDailyNote({ section: "Notes", text: "second line" }),
+      );
+      const afterAppend = await fsp.readFile(abs(rel), "utf8");
+      // Exactly one frontmatter block, unchanged, and the note grew by one line.
+      assert.equal(afterAppend.split("author: forge").length - 1, 1);
+      assert.ok(afterAppend.startsWith(`---\nauthor: forge\n---\n# ${today}\n`));
+      assert.equal(afterAppend.split("\n").length, afterCreate.split("\n").length + 1);
+      assert.ok(afterAppend.includes("— second line"));
+    } finally {
+      await fsp.rm(abs(rel), { force: true });
+    }
+  });
+
+  test("stampAgentAuthor: creates the key, never rewrites an existing header", () => {
+    const withFrontmatter = "---\narea: Business\nimportance: 8\n---\n\n# Idea\n";
+    const withAuthor = "---\nauthor: konrad\narea: Business\n---\n\n# Idea\n";
+    const unterminated = "---\nnot really frontmatter\n\n# Idea\n";
+
+    withLayoutSync("split", () => {
+      // Absent → inserted at the top of the EXISTING block, the rest untouched.
+      assert.equal(
+        vault.stampAgentAuthor(withFrontmatter, "agent"),
+        "---\nauthor: forge\narea: Business\nimportance: 8\n---\n\n# Idea\n",
+      );
+      // Present → left exactly as it was. "Never rewrite" is the whole rule.
+      assert.equal(vault.stampAgentAuthor(withAuthor, "agent"), withAuthor);
+      // A lone `---` is a horizontal rule, not a header: nothing is guessed.
+      assert.equal(vault.stampAgentAuthor(unterminated, "agent"), unterminated);
+      // No frontmatter at all → a block is prepended.
+      assert.equal(
+        vault.stampAgentAuthor("# Idea\n", "agent"),
+        "---\nauthor: forge\n---\n# Idea\n",
+      );
+      // konrad is never stamped as forge.
+      assert.equal(vault.stampAgentAuthor("# Idea\n", "konrad"), "# Idea\n");
+    });
+
+    // Flip: under legacy every one of those is the identity function.
+    withLayoutSync("legacy", () => {
+      for (const content of [withFrontmatter, withAuthor, unterminated, "# Idea\n"]) {
+        assert.equal(vault.stampAgentAuthor(content, "agent"), content);
+      }
+    });
+  });
+});

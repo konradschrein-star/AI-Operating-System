@@ -18,9 +18,10 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import { IMPORTANCE_SCALE, areaColor } from "./ui";
-import { deleteDayTask, updateDayTask, type DayTask } from "../../api";
+import { deleteDayTask, fetchLifeGoals, updateDayTask, type DayTask, type LifeGoal } from "../../api";
 
 const AREAS = [
   "business",
@@ -47,8 +48,29 @@ export function TaskDetail({ task, onClose, onSaved }: TaskDetailProps) {
   const [area, setArea] = useState(task.area ?? "");
   const [importance, setImportance] = useState(task.importance);
   const [due, setDue] = useState(task.due_day ?? "");
+  const [goalId, setGoalId] = useState(task.goal_id ?? "");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const lifeGoalsQ = useQuery({
+    queryKey: ["life-goals"],
+    queryFn: () => fetchLifeGoals(),
+  });
+
+  const sortedGoals = useMemo(() => {
+    const goals: LifeGoal[] = lifeGoalsQ.data ?? [];
+    return [...goals].sort((a, b) => {
+      if (a.status === "in_progress" && b.status !== "in_progress") return -1;
+      if (b.status === "in_progress" && a.status !== "in_progress") return 1;
+      return a.title.localeCompare(b.title);
+    });
+  }, [lifeGoalsQ.data]);
+
+  const suggestedGoal = useMemo(() => {
+    if (!task.suggested_goal_id) return null;
+    const goals: LifeGoal[] = lifeGoalsQ.data ?? [];
+    return goals.find((g) => g.id === task.suggested_goal_id) ?? null;
+  }, [task.suggested_goal_id, lifeGoalsQ.data]);
 
   useEffect(() => {
     setTitle(task.title);
@@ -56,6 +78,7 @@ export function TaskDetail({ task, onClose, onSaved }: TaskDetailProps) {
     setArea(task.area ?? "");
     setImportance(task.importance);
     setDue(task.due_day ?? "");
+    setGoalId(task.goal_id ?? "");
   }, [task]);
 
   const links = useMemo(() => Array.from(new Set(notes.match(URL_RE) ?? [])), [notes]);
@@ -70,6 +93,7 @@ export function TaskDetail({ task, onClose, onSaved }: TaskDetailProps) {
         area: area || null,
         importance,
         due_day: due || null,
+        goal_id: goalId || null,
       });
       onSaved();
     } catch (e) {
@@ -223,6 +247,77 @@ export function TaskDetail({ task, onClose, onSaved }: TaskDetailProps) {
               outline: "none",
             }}
           />
+        </Field>
+
+        <Field label="Life Goal">
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <select
+                value={goalId}
+                onChange={(e) => setGoalId(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: "6px 9px",
+                  borderRadius: 6,
+                  border: `1px solid ${tokens.border}`,
+                  background: tokens.inputBg,
+                  color: tokens.textHi,
+                  fontSize: 12,
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">None (unlinked)</option>
+                {sortedGoals.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.title} ({g.status === "in_progress" ? "in progress" : g.status})
+                  </option>
+                ))}
+              </select>
+              {goalId && (
+                <button
+                  type="button"
+                  onClick={() => setGoalId("")}
+                  style={{
+                    padding: "5px 9px",
+                    borderRadius: 6,
+                    border: `1px solid ${tokens.borderSoft}`,
+                    background: "transparent",
+                    color: tokens.textSoft,
+                    fontSize: 11,
+                    cursor: "pointer",
+                  }}
+                  title="Unlink from goal"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {suggestedGoal && !goalId && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setGoalId(suggestedGoal.id)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "4px 9px",
+                    borderRadius: 5,
+                    border: `1px solid ${tokens.accent}`,
+                    background: `${tokens.accent}18`,
+                    color: tokens.accent,
+                    fontSize: 11,
+                    cursor: "pointer",
+                  }}
+                  title={`Link to suggested goal "${suggestedGoal.title}"`}
+                >
+                  <span>suggested: {suggestedGoal.title} — link</span>
+                </button>
+              </div>
+            )}
+          </div>
         </Field>
 
         <Field label="Notes · markdown, paste links freely">

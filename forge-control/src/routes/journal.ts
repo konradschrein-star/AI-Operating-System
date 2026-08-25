@@ -1,8 +1,12 @@
 /**
- * JOURNAL surface — paper-first capture.
+ * JOURNAL surface — the mentor's read, the day's evidence, and the reply.
  *
- *   GET    /api/journal/day?day=YYYY-MM-DD   → { day, count, entries }
+ *   GET    /api/journal/day?day=YYYY-MM-DD   → the PLAN.md §4.1 body:
+ *                                               { day, mentor, evidence, reply,
+ *                                                 entries, count, errors }
  *                                               (day defaults to today, Europe/Berlin)
+ *   POST   /api/journal/:day/reply            { subjective?: 1..10, reflection?: string }
+ *                                             → { ok, reply }
  *   POST   /api/journal/upload                multipart form:
  *                                               field "file" (or "files"), the photo
  *                                               field "day"     optional, YYYY-MM-DD, defaults to today
@@ -23,6 +27,18 @@
  * ocr_status: 'unavailable' and ocr_text: null. Nothing here fakes a
  * transcript; a future pass (a vision model call) can fill both columns in
  * without a migration.
+ *
+ * ── What GET /day answers with, and what it never does ───────────────────
+ * The page must be full before Konrad touches it, so /day assembles eleven
+ * independent sources (lib/evidence/) rather than handing back a blank form.
+ * A source that fails yields `null` for its field plus an entry in `errors[]`,
+ * NEVER an empty array — "no commits today" and "the repo is unreadable" are
+ * different facts and the card prints the second one. The whole request is a
+ * 500 only if the assembler itself throws; one dead source is a 200 with an
+ * error in it.
+ *
+ * `entries` (the paper timeline) and `count` are byte-for-byte what this route
+ * already returned, so nothing that reads them today breaks.
  */
 
 import { Hono } from "hono";
@@ -30,12 +46,14 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { berlinDay } from "../lib/day-score.ts";
-import { appendToDailyNote } from "../lib/vault.ts";
+import { appendToDailyNote, VaultConflictError, VaultRefusedError } from "../lib/vault.ts";
 import {
   listJournalEntries,
   createJournalEntry,
   deleteJournalEntry,
 } from "../db/journal.ts";
+import { collectJournalDay } from "../lib/evidence/index.ts";
+import { saveJournalReply } from "../db/journal-day.ts";
 
 const r = new Hono();
 
@@ -67,18 +85,111 @@ function describe(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** GET /day — the timeline for one calendar day. */
+/** GET /day — the mentor's read, the day's evidence, the reply, the timeline. */
 r.get("/day", async (c) => {
   const day = c.req.query("day") ?? berlinDay();
   if (!DAY_RE.test(day)) {
     return c.json({ error: `day must be YYYY-MM-DD, got: ${day}` }, 400);
   }
   try {
-    const entries = await listJournalEntries(day);
-    return c.json({ day, count: entries.length, entries });
+    // The paper timeline is the twelfth source, and the only one whose failure
+    // is fatal to the request: it is what this route promised before today and
+    // callers of the old shape do not know about errors[].
+    const [assembled, entries] = await Promise.all([
+      collectJournalDay(day),
+      listJournalEntries(day),
+    ]);
+    return c.json({
+      day: assembled.day,
+      mentor: assembled.mentor,
+      evidence: assembled.evidence,
+      reply: assembled.reply,
+      count: entries.length,
+      entries,
+      errors: assembled.errors,
+    });
   } catch (e) {
     const msg = describe(e);
     console.error("[journal/day]", msg);
+    return c.json({ error: msg }, 500);
+  }
+});
+
+/**
+ * POST /:day/reply — the felt rating and the reflection.
+ *
+ * `day_plans` owns the state (db/daily.ts's reflect(), an upsert); the journal
+ * note is a mirror appended under compare-and-swap. A lost CAS is a 409 with the
+ * reason, never a silent overwrite of whatever Konrad typed into the note in
+ * Obsidian while this request was in flight.
+ */
+r.post("/:day/reply", async (c) => {
+  const day = c.req.param("day");
+  if (!DAY_RE.test(day)) {
+    return c.json({ error: `day must be YYYY-MM-DD, got: ${day}` }, 400);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return c.json({ error: "JSON object body expected" }, 400);
+  }
+  const raw = body as Record<string, unknown>;
+
+  let subjective: number | undefined;
+  if (raw.subjective !== undefined && raw.subjective !== null) {
+    const n = raw.subjective;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 10) {
+      return c.json(
+        { error: `subjective must be an integer 1..10, got ${JSON.stringify(raw.subjective)}` },
+        400,
+      );
+    }
+    subjective = n;
+  }
+
+  let reflection: string | undefined;
+  if (raw.reflection !== undefined && raw.reflection !== null) {
+    if (typeof raw.reflection !== "string") {
+      return c.json(
+        { error: `reflection must be a string, got ${typeof raw.reflection}` },
+        400,
+      );
+    }
+    const trimmed = raw.reflection.trim();
+    if (trimmed) reflection = trimmed;
+  }
+
+  if (subjective === undefined && reflection === undefined) {
+    return c.json(
+      { error: "nothing to save: send subjective (1..10), reflection (non-empty), or both" },
+      400,
+    );
+  }
+
+  try {
+    const reply = await saveJournalReply(day, { subjective, reflection });
+    console.log(
+      `[journal/reply] ${day} felt=${reply.subjective ?? "-"} note=${reply.note_path ?? "-"}`,
+    );
+    return c.json({ ok: true, reply });
+  } catch (e) {
+    const msg = describe(e);
+    if (e instanceof VaultConflictError) {
+      console.error("[journal/reply] vault conflict", msg);
+      return c.json(
+        {
+          error:
+            `the journal note for ${day} changed while this reply was being written — ` +
+            `the rating and reflection ARE saved in day_plans; reload and re-send to mirror it`,
+        },
+        409,
+      );
+    }
+    if (e instanceof VaultRefusedError) {
+      console.error("[journal/reply] vault refused", msg);
+      return c.json({ error: msg }, 400);
+    }
+    console.error("[journal/reply]", msg);
     return c.json({ error: msg }, 500);
   }
 });

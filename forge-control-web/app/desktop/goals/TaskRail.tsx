@@ -13,11 +13,12 @@
  * writes the calendar event.
  */
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import { IMPORTANCE_SCALE, areaColor, importanceColor, importanceLabel } from "./ui";
 import { byPressure, isOpen, isScheduled, nextTask, pressure } from "./pressure";
-import type { DayTask } from "../../api";
+import { fetchLifeGoals, type DayTask, type LifeGoal } from "../../api";
 
 /** Konrad's task areas. Free text in the DB, so this is a suggestion list and
  *  not a constraint — typing a new one still works. */
@@ -56,7 +57,15 @@ export function TaskRail({
   const [menu, setMenu] = useState<{ kind: "imp" | "area"; query: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const lifeGoalsQ = useQuery({
+    queryKey: ["life-goals"],
+    queryFn: () => fetchLifeGoals(),
+  });
+  const goals = lifeGoalsQ.data ?? [];
+  const goalMap = useMemo(() => new Map(goals.map((g) => [g.id, g])), [goals]);
+
   const next = nextTask(tasks, today);
+  const nextGoal = next?.goal_id ? goalMap.get(next.goal_id) : null;
   const loose = tasks
     .filter(isOpen)
     .filter((t) => !isScheduled(t))
@@ -146,6 +155,7 @@ export function TaskRail({
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
               <Tag text={importanceLabel(next.importance)} color={importanceColor(next.importance)} />
               {next.area && <Tag text={next.area} color={areaColor(next.area)} />}
+              {nextGoal && <Tag text={nextGoal.title} color={tokens.accent} />}
               {next.due_day && <Tag text={`due ${next.due_day}`} color={tokens.warn} />}
               {next.carried >= 3 && (
                 <Tag text={`carried ${next.carried}×`} color={tokens.bleed} />
@@ -296,7 +306,16 @@ export function TaskRail({
             Nothing unscheduled.
           </div>
         ) : (
-          visible.map((t) => <Row key={t.id} task={t} today={today} onToggle={onToggle} onOpen={onOpen} />)
+          visible.map((t) => (
+            <Row
+              key={t.id}
+              task={t}
+              today={today}
+              goal={t.goal_id ? (goalMap.get(t.goal_id) ?? null) : null}
+              onToggle={onToggle}
+              onOpen={onOpen}
+            />
+          ))
         )}
         {loose.length > 14 && (
           <button
@@ -343,11 +362,13 @@ function Tag({ text, color }: { text: string; color: string }) {
 function Row({
   task,
   today,
+  goal,
   onToggle,
   onOpen,
 }: {
   task: DayTask;
   today: string;
+  goal?: LifeGoal | null;
   onToggle: (id: string, done: boolean) => void | Promise<void>;
   onOpen: (id: string) => void;
 }) {
@@ -388,6 +409,20 @@ function Row({
           style={{ fontSize: 9, color: tokens.textGhost, marginTop: 2, display: "flex", gap: 7 }}
         >
           {task.area && <span style={{ color: areaColor(task.area) }}>@{task.area}</span>}
+          {goal && (
+            <span
+              style={{
+                color: tokens.accent,
+                maxWidth: 90,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={goal.title}
+            >
+              ◆ {goal.title}
+            </span>
+          )}
           {task.due_day && (
             <span style={{ color: overdue ? tokens.bleed : tokens.textGhost }}>
               due {task.due_day}

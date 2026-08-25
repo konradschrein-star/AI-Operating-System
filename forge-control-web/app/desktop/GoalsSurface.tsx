@@ -45,7 +45,9 @@ import {
   updateCalendarEvent,
   fetchCalendarView,
   fetchDailyDay,
+  fetchDayStats,
   fetchDayTasks,
+  fetchLifeGoals,
   quickCapture,
   reflectDay,
   setDayHabit,
@@ -58,14 +60,36 @@ import { WeekGrid } from "./goals/WeekGrid";
 import { TaskRail } from "./goals/TaskRail";
 import { HabitStrip } from "./goals/HabitStrip";
 import { TaskDetail } from "./goals/TaskDetail";
+import { LifeGoalsDrawer } from "./goals/LifeGoalsDrawer";
 import { localDayKey, weekDays } from "./goals/pressure";
+import { chipStyle } from "./goals/ui";
+import { StatsPanel } from "./stats/StatsPanel";
+import { usePersistentState } from "./_ui/ResizableSplit";
+
+/** Persisted in localStorage `forge.goals.view` — board is the default every
+ *  session opens on; STATS is a deliberate switch, never remembered as "on"
+ *  from a previous visit unless Konrad left it that way himself. */
+type GoalsView = "board" | "stats";
+const isGoalsView = (v: unknown): v is GoalsView => v === "board" || v === "stats";
+
+/** "this week moved: <goal> (n) · … · k done tasks unlinked" (PLAN.md §3.3) —
+ *  the same honesty-counter shape as `stats/GoalsWeek.tsx`, compressed to one
+ *  line for the header strip. */
+export function weekStripText(week: { moved: { title: string; tasks_done: number }[]; unlinked_done: number }): string {
+  if (week.moved.length === 0) return "nothing linked to a goal moved this week";
+  const parts = week.moved.map((m) => `${m.title} (${m.tasks_done})`);
+  const unlinkedWord = week.unlinked_done === 1 ? "task" : "tasks";
+  return `this week moved: ${parts.join(" · ")} · ${week.unlinked_done} done ${unlinkedWord} unlinked`;
+}
 
 export function GoalsSurface() {
   const qc = useQueryClient();
   const todayKey = localDayKey(new Date());
   const [anchor, setAnchor] = useState<string>(todayKey);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [goalsDrawerOpen, setGoalsDrawerOpen] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [view, setView] = usePersistentState<GoalsView>("forge.goals.view", "board", isGoalsView);
 
   const days = useMemo(() => weekDays(anchor), [anchor]);
   const weekStart = days[0];
@@ -95,6 +119,24 @@ export function GoalsSurface() {
     queryFn: () => fetchDailyDay(todayKey),
     placeholderData: keepPreviousData,
     refetchInterval: 120_000,
+  });
+
+  // Same key LifeGoalsDrawer and TaskDetail/TaskRail use — one fetch serves
+  // the header count, the drawer's list and every goal chip on the board.
+  const lifeGoalsQ = useQuery({
+    queryKey: ["life-goals"],
+    queryFn: () => fetchLifeGoals(),
+  });
+
+  // The header's honesty strip is its own query, independent of the STATS
+  // panel below (§3.6 — each source fails alone): closing the panel or never
+  // opening it must not hide whether this week moved anything. 7 days so
+  // `goals_week`'s server-side week window lines up with "this week", not a
+  // rolling 30-day sample.
+  const weekStatsQ = useQuery({
+    queryKey: ["daily-stats", 7],
+    queryFn: () => fetchDayStats(7),
+    retry: 1,
   });
 
   const tasks: DayTask[] = tasksQ.data ?? [];
@@ -245,6 +287,22 @@ export function GoalsSurface() {
               {banner}
             </span>
           )}
+          <button
+            onClick={() => setGoalsDrawerOpen(true)}
+            style={navBtn()}
+            title="Open the Life Goals drawer"
+          >
+            LIFE GOALS · {lifeGoalsQ.data ? lifeGoalsQ.data.length : "···"}
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === "stats"}
+            onClick={() => setView(view === "stats" ? "board" : "stats")}
+            style={chipStyle(view === "stats")}
+            title="Swap the board for the shared stats panel"
+          >
+            STATS
+          </button>
           <span
             className="mono"
             style={{
@@ -273,6 +331,18 @@ export function GoalsSurface() {
         </div>
       </div>
 
+      {/* This week against the life goals — the honesty line, always visible,
+          independent of whether the STATS panel is open (§3.6). */}
+      <div className="mono" style={{ fontSize: 10.5, color: tokens.textMuted, flexShrink: 0 }}>
+        {weekStatsQ.isPending && "reading this week…"}
+        {weekStatsQ.isError &&
+          `week movement unavailable — ${weekStatsQ.error instanceof Error ? weekStatsQ.error.message : String(weekStatsQ.error)}`}
+        {weekStatsQ.data &&
+          (weekStatsQ.data.goals_week
+            ? weekStripText(weekStatsQ.data.goals_week)
+            : "week movement unavailable — server has not shipped goals_week yet")}
+      </div>
+
       {/* Habits + the day's two numbers */}
       <div style={{ flexShrink: 0 }}>
         <HabitStrip
@@ -284,56 +354,63 @@ export function GoalsSurface() {
         />
       </div>
 
-      {/* Rail + grid */}
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: "grid",
-          gridTemplateColumns: "minmax(230px, 290px) 1fr",
-          gap: 10,
-        }}
-      >
-        <TaskRail
-          tasks={tasks}
-          today={todayKey}
-          onQuickAdd={(text) => quickM.mutate(text)}
-          onToggle={(taskId, done) => toggleM.mutate({ taskId, done })}
-          onOpen={setOpenTaskId}
-          onStart={(taskId) => startM.mutate(taskId)}
-          busy={toggleM.isPending || startM.isPending}
-        />
-
-        <WeekGrid
-          day={anchor}
-          tasks={tasks}
-          events={events}
-          onSchedule={(taskId, startIso) => scheduleM.mutate({ taskId, startIso })}
-          onToggleTask={(taskId, done) => toggleM.mutate({ taskId, done })}
-          onOpenTask={setOpenTaskId}
-          onEmptySlot={(startIso) => {
-            const when = new Date(startIso).toLocaleString("en-GB", {
-              weekday: "short",
-              hour: "2-digit",
-              minute: "2-digit",
-            });
-            const title = window.prompt(`New event at ${when}`);
-            if (!title?.trim()) return;
-            void createCalendarEvent({
-              summary: title.trim(),
-              start: startIso,
-              end: new Date(new Date(startIso).getTime() + 60 * 60_000).toISOString(),
-            })
-              .then(() => {
-                invalidate();
-                flash("added to Google Calendar");
-              })
-              .catch((e: unknown) =>
-                flash(`could not add: ${e instanceof Error ? e.message : String(e)}`),
-              );
+      {/* Rail + grid, or STATS — the toggle swaps the whole area, never both
+          at once; the habit strip and header above stay put either way. */}
+      {view === "stats" ? (
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <StatsPanel mount="goals" />
+        </div>
+      ) : (
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "grid",
+            gridTemplateColumns: "minmax(230px, 290px) 1fr",
+            gap: 10,
           }}
-        />
-      </div>
+        >
+          <TaskRail
+            tasks={tasks}
+            today={todayKey}
+            onQuickAdd={(text) => quickM.mutate(text)}
+            onToggle={(taskId, done) => toggleM.mutate({ taskId, done })}
+            onOpen={setOpenTaskId}
+            onStart={(taskId) => startM.mutate(taskId)}
+            busy={toggleM.isPending || startM.isPending}
+          />
+
+          <WeekGrid
+            day={anchor}
+            tasks={tasks}
+            events={events}
+            onSchedule={(taskId, startIso) => scheduleM.mutate({ taskId, startIso })}
+            onToggleTask={(taskId, done) => toggleM.mutate({ taskId, done })}
+            onOpenTask={setOpenTaskId}
+            onEmptySlot={(startIso) => {
+              const when = new Date(startIso).toLocaleString("en-GB", {
+                weekday: "short",
+                hour: "2-digit",
+                minute: "2-digit",
+              });
+              const title = window.prompt(`New event at ${when}`);
+              if (!title?.trim()) return;
+              void createCalendarEvent({
+                summary: title.trim(),
+                start: startIso,
+                end: new Date(new Date(startIso).getTime() + 60 * 60_000).toISOString(),
+              })
+                .then(() => {
+                  invalidate();
+                  flash("added to Google Calendar");
+                })
+                .catch((e: unknown) =>
+                  flash(`could not add: ${e instanceof Error ? e.message : String(e)}`),
+                );
+            }}
+          />
+        </div>
+      )}
 
       {openTask && (
         <TaskDetail
@@ -345,6 +422,8 @@ export function GoalsSurface() {
           }}
         />
       )}
+
+      {goalsDrawerOpen && <LifeGoalsDrawer onClose={() => setGoalsDrawerOpen(false)} />}
     </div>
   );
 }

@@ -1,6 +1,9 @@
 /**
  * Daily goals / habits / task planner / life goals data access.
- * Schema: db/migrations/0042_daily_goals.sql, 0043_goals_and_calendar.sql.
+ * Schema: db/migrations/0042_daily_goals.sql, 0043_goals_and_calendar.sql,
+ * 0050_day_tasks_goal.sql (day_tasks.goal_id — NOT applied to content_forge yet;
+ * the deploy phase owns that, and every goal_id read here answers 500 until it
+ * has run).
  * Spec: docs/spec-daily-goals.md.
  *
  * All SQL for the GOALS/TASKS surface lives here; routes/daily.ts is thin.
@@ -32,6 +35,10 @@ import {
   type DayScore,
   type GoalStatus,
 } from "../lib/day-score.ts";
+// The Mon–Sun week boundary is read through Europe/Berlin, not off the string.
+// It already exists in lib/calendar.ts and the goals-week rollup must agree with
+// the week the board draws, so it is imported rather than reimplemented here.
+import { weekStart } from "../lib/calendar.ts";
 
 const { Pool } = pg;
 
@@ -117,6 +124,12 @@ export interface DayTask {
   /** Google's own last-modified stamp as we last saw it — the guard against
    *  echoing our own write back as if it were his edit. */
   gtask_updated: string | null;
+  /** The life goal this task serves (0050). NULL is the normal case. */
+  goal_id: string | null;
+  /** Read-time only, never stored: the single `in_progress` life goal sharing
+   *  this task's area, when there is exactly one. Two candidates or none give
+   *  null — a guess with a coin flip in it is worse than no chip at all. */
+  suggested_goal_id: string | null;
   created_at: string;
   updated_at: string;
   /** Calendar days since creation, in Berlin terms. > 14 is bad news (§6). */
@@ -144,6 +157,24 @@ export interface LifeGoal {
   updated_at: string;
 }
 
+/**
+ * A life goal as the drawer reads it: the row plus what the board has actually
+ * done about it (0050's `day_tasks.goal_id`).
+ *
+ * Derived, never stored. `progress` is a number Konrad types; these four are
+ * the ones he cannot fake — which is the whole point of the link.
+ */
+export interface LifeGoalWithWork extends LifeGoal {
+  /** Linked tasks still open (`todo` or `doing`). */
+  tasks_open: number;
+  /** Linked tasks completed in the last 30 days. */
+  tasks_done_30d: number;
+  /** `duration_min ?? est_min ?? 0` summed over those completions. */
+  minutes_30d: number;
+  /** The most recent `done_at` of any linked task, ever. Null = never moved. */
+  last_moved_at: string | null;
+}
+
 /** carried >= STALE_AT puts a task in the "do it or kill it" strip (§5). */
 export const STALE_AT = 3;
 
@@ -156,11 +187,22 @@ const HABIT_COLS = `id::text, key, label, icon, grp, polarity, weight, sort,
 
 /**
  * `age_days` is computed in SQL rather than from created_at in Node.
+ *
+ * `suggested_goal_id` is likewise a read-time expression and not a column: the
+ * suggestion has to change the moment a goal is started or its area edited, and
+ * a stored copy would go stale silently. `count(*) = 1` is the whole rule — the
+ * aggregate returns exactly one row per task, so an area with no in_progress
+ * goal and an area with three both yield NULL.
  */
 const TASK_COLS = `id::text, title, area, importance, status, planned_day::text,
                    due_day::text, est_min, carried, notes, done_at::text,
                    start_time::text, duration_min, gcal_event_id,
-                   gtask_id, gtask_updated::text,
+                   gtask_id, gtask_updated::text, goal_id::text,
+                   (SELECT CASE WHEN count(*) = 1 THEN max(g.id::text) END
+                      FROM life_goals g
+                     WHERE g.status = 'in_progress'
+                       AND g.area IS NOT NULL
+                       AND g.area = day_tasks.area) AS suggested_goal_id,
                    created_at::text, updated_at::text,
                    ((now() AT TIME ZONE 'Europe/Berlin')::date
                     - (created_at AT TIME ZONE 'Europe/Berlin')::date)::int
@@ -169,6 +211,28 @@ const TASK_COLS = `id::text, title, area, importance, status, planned_day::text,
 const LIFE_GOAL_COLS = `id::text, title, status, horizon, area, progress,
                          started_day::text, target_day::text, completed_at::text,
                          notes, created_at::text, updated_at::text`;
+
+/**
+ * The work a life goal has drawn, as a LATERAL beside LIFE_GOAL_COLS.
+ *
+ * A LATERAL rather than a GROUP BY join because a goal with no linked tasks
+ * must still come back — with zeros, which is a fact about the goal, not an
+ * absence of the goal. The 30-day cut is on `done_at`, the same clock the
+ * stats window uses.
+ */
+const LIFE_GOAL_WORK = `LEFT JOIN LATERAL (
+    SELECT count(*) FILTER (WHERE t.status IN ('todo','doing'))::int AS tasks_open,
+           count(*) FILTER (WHERE t.status = 'done'
+                              AND t.done_at >= now() - interval '30 days')::int
+             AS tasks_done_30d,
+           COALESCE(sum(COALESCE(t.duration_min, t.est_min, 0))
+                      FILTER (WHERE t.status = 'done'
+                                AND t.done_at >= now() - interval '30 days'), 0)::int
+             AS minutes_30d,
+           max(t.done_at)::text AS last_moved_at
+      FROM day_tasks t
+     WHERE t.goal_id = life_goals.id
+  ) work ON true`;
 
 /** Phone order: the four rows appear top to bottom as the day runs. */
 const GRP_ORDER = `CASE grp WHEN 'morning' THEN 0 WHEN 'body' THEN 1
@@ -482,15 +546,16 @@ export async function createTask(input: {
   gcal_event_id?: string | null;
   gtask_id?: string | null;
   gtask_updated?: string | null;
+  goal_id?: string | null;
 }): Promise<DayTask> {
   const r = await pool.query<DayTask>(
     `INSERT INTO day_tasks (title, area, importance, status, planned_day, due_day,
                             est_min, notes, start_time, duration_min, gcal_event_id,
-                            gtask_id, gtask_updated, done_at)
+                            gtask_id, gtask_updated, goal_id, done_at)
      VALUES ($1, $2::text, COALESCE($3::smallint, 2), COALESCE($4::text, 'todo'),
              $5::date, $6::date, $7::smallint, $8::text,
              $9::timestamptz, COALESCE($10::smallint, 30), $11::text,
-             $12::text, $13::timestamptz,
+             $12::text, $13::timestamptz, $14::uuid,
              CASE WHEN $4::text = 'done' THEN now() ELSE NULL END)
      RETURNING ${TASK_COLS}`,
     [
@@ -507,6 +572,7 @@ export async function createTask(input: {
       input.gcal_event_id ?? null,
       input.gtask_id ?? null,
       input.gtask_updated ?? null,
+      input.goal_id ?? null,
     ],
   );
   const row = r.rows[0];
@@ -531,6 +597,7 @@ export async function updateTask(
     gcal_event_id?: string | null;
     gtask_id?: string | null;
     gtask_updated?: string | null;
+    goal_id?: string | null;
   },
 ): Promise<DayTask | null> {
   const sets: string[] = [];
@@ -553,6 +620,10 @@ export async function updateTask(
   if (patch.gtask_id !== undefined) put("gtask_id", patch.gtask_id, "::text");
   if (patch.gtask_updated !== undefined)
     put("gtask_updated", patch.gtask_updated, "::timestamptz");
+  // Explicit null is how a link is CUT, so `undefined` (absent) and `null`
+  // (unlink) must stay distinguishable all the way down — hence the
+  // `!== undefined` test rather than a truthiness check.
+  if (patch.goal_id !== undefined) put("goal_id", patch.goal_id, "::uuid");
   if (patch.status !== undefined) {
     put("status", patch.status, "::text");
     vals.push(patch.status);
@@ -629,6 +700,44 @@ export async function unlinkTasksFromEvent(eventId: string): Promise<number> {
   return r.rowCount ?? 0;
 }
 
+/**
+ * Every completed task whose `done_at` falls in a Berlin day range, with the
+ * minutes it consumed and whatever it was linked to.
+ *
+ * Used by the goals-week rollup and by lib/calendar-stats.ts. `minutes` is
+ * `duration_min ?? est_min ?? 0` — a done task with neither is real work with
+ * an unknown cost, and inventing a default here would put fiction in an hours
+ * chart. `gcal_event_id` comes back so the caller can fall back to the length
+ * of the linked calendar event, which is the one honest source left.
+ */
+export interface DoneTaskInRange {
+  id: string;
+  title: string;
+  area: string | null;
+  done_at: string;
+  minutes: number;
+  gcal_event_id: string | null;
+  goal_id: string | null;
+  goal_title: string | null;
+  goal_horizon: string | null;
+}
+
+export async function doneTasksInRange(from: Day, to: Day): Promise<DoneTaskInRange[]> {
+  const r = await pool.query<DoneTaskInRange>(
+    `SELECT t.id::text, t.title, t.area, t.done_at::text,
+            COALESCE(t.duration_min, t.est_min, 0)::int AS minutes,
+            t.gcal_event_id, t.goal_id::text,
+            g.title AS goal_title, g.horizon AS goal_horizon
+       FROM day_tasks t
+       LEFT JOIN life_goals g ON g.id = t.goal_id
+      WHERE t.status = 'done' AND t.done_at IS NOT NULL
+        AND (t.done_at AT TIME ZONE 'Europe/Berlin')::date BETWEEN $1 AND $2
+      ORDER BY t.done_at`,
+    [from, to],
+  );
+  return r.rows;
+}
+
 export async function rolloverTasks(to: Day): Promise<DayTask[]> {
   const r = await pool.query<DayTask>(
     `UPDATE day_tasks
@@ -650,7 +759,7 @@ export async function listLifeGoals(opts: {
   horizon?: string;
   status?: string;
   area?: string;
-} = {}): Promise<LifeGoal[]> {
+} = {}): Promise<LifeGoalWithWork[]> {
   const where: string[] = [];
   const vals: unknown[] = [];
   const put = (v: unknown): string => {
@@ -658,15 +767,20 @@ export async function listLifeGoals(opts: {
     return `$${vals.length}`;
   };
 
-  if (opts.horizon) where.push(`horizon = ${put(opts.horizon)}`);
-  if (opts.status) where.push(`status = ${put(opts.status)}`);
-  if (opts.area) where.push(`area = ${put(opts.area)}`);
+  if (opts.horizon) where.push(`life_goals.horizon = ${put(opts.horizon)}`);
+  if (opts.status) where.push(`life_goals.status = ${put(opts.status)}`);
+  if (opts.area) where.push(`life_goals.area = ${put(opts.area)}`);
 
-  const r = await pool.query<LifeGoal>(
-    `SELECT ${LIFE_GOAL_COLS} FROM life_goals
+  const r = await pool.query<LifeGoalWithWork>(
+    `SELECT ${LIFE_GOAL_COLS},
+            work.tasks_open, work.tasks_done_30d, work.minutes_30d,
+            work.last_moved_at
+       FROM life_goals
+       ${LIFE_GOAL_WORK}
      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-     ORDER BY CASE horizon WHEN 'quarterly' THEN 0 WHEN 'yearly' THEN 1 ELSE 2 END,
-              progress DESC, created_at ASC`,
+     ORDER BY CASE life_goals.horizon
+                WHEN 'quarterly' THEN 0 WHEN 'yearly' THEN 1 ELSE 2 END,
+              life_goals.progress DESC, life_goals.created_at ASC`,
     vals,
   );
   return r.rows;
@@ -831,6 +945,70 @@ async function allTickHistory(): Promise<TickRow[]> {
   return r.rows;
 }
 
+/**
+ * One habit measured against the felt rating.
+ *
+ * `mean_with` is the average `day_plans.subjective` of the RATED days on which
+ * the habit was ticked; `mean_without` the average of the rated days on which
+ * it was not. Both are null when that side has no days at all — a mean of zero
+ * days is not zero, and a chart that draws it as zero is a lie the size of the
+ * axis.
+ */
+export interface HabitFeltRow {
+  habit_id: string;
+  key: string;
+  label: string;
+  icon: string;
+  n_with: number;
+  n_without: number;
+  mean_with: number | null;
+  mean_without: number | null;
+  delta: number | null;
+  sufficient: boolean;
+}
+
+export interface HabitFelt {
+  /** Days in the window carrying a felt rating. */
+  rated_days: number;
+  /** Rated days needed before ANY row can be called sufficient. */
+  needed: number;
+  /** True when at least one row is sufficient — the tile's draw/don't-draw. */
+  sufficient: boolean;
+  rows: HabitFeltRow[];
+}
+
+/**
+ * Sufficiency, the honest version.
+ *
+ * The felt rating is the only signal the day score cannot derive, and on
+ * 2026-08-25 `day_plans.subjective` is non-null on exactly ZERO days. So the
+ * first job of this structure is to say "not yet" convincingly enough that
+ * nobody draws bars out of three data points. 20 rated days with 8 on each
+ * side is not a significance test — it is the floor below which the difference
+ * of two means is pure noise, and it is stated here rather than hidden in a
+ * chart component so both the API and the UI agree on the same threshold.
+ */
+export const HABIT_FELT_MIN_RATED_DAYS = 20;
+export const HABIT_FELT_MIN_SIDE = 8;
+
+export interface GoalsWeekMoved {
+  goal_id: string;
+  title: string;
+  horizon: string;
+  tasks_done: number;
+  minutes: number;
+}
+
+export interface GoalsWeek {
+  week_start: Day;
+  week_end: Day;
+  /** Every task completed in the week, linked or not. */
+  total_done: number;
+  /** …of which pointed at no life goal. The number that makes the tile honest. */
+  unlinked_done: number;
+  moved: GoalsWeekMoved[];
+}
+
 export interface DailyStats {
   window: { days: number; from: Day; to: Day };
   days: Array<{
@@ -851,6 +1029,10 @@ export interface DailyStats {
     streak: number;
     best: number;
     ticks30: Day[];
+    /** Ticks across the WHOLE requested window. `ticks30` stays exactly what it
+     *  was — the 30-day strip on the board reads it — but a 90-day matrix drawn
+     *  from a 30-day array is 60 days of false blanks. */
+    ticks: Day[];
   }>;
   said_vs_done: {
     committed: number;
@@ -861,6 +1043,143 @@ export interface DailyStats {
   };
   tasks: { done_by_day: Array<{ day: Day; n: number }>; open: number; stale: number };
   streak: { current: number; best: number };
+  habit_felt: HabitFelt;
+  goals_week: GoalsWeek;
+}
+
+/** Two decimals, or null passed straight through. */
+function round2(n: number | null): number | null {
+  return n === null ? null : Math.round(n * 100) / 100;
+}
+
+/**
+ * Which habits go with a good day — computed, not asserted.
+ *
+ * Pure so it can be tested without a database; `dailyStats` hands it the rows
+ * it already has. Ordering: sufficient rows first, biggest |delta| at the top
+ * (that is the answer to "which of these 18 matter"), ties broken by label;
+ * insufficient rows follow alphabetically, because ordering them by a delta
+ * nobody should trust would rank noise.
+ */
+export function computeHabitFelt(
+  days: ReadonlyArray<{ day: Day; subjective: number | null }>,
+  habits: ReadonlyArray<{ id: string; key: string; label: string; icon: string }>,
+  ticksByHabit: ReadonlyMap<string, readonly Day[]>,
+): HabitFelt {
+  const rated = days.filter(
+    (d): d is { day: Day; subjective: number } => typeof d.subjective === "number",
+  );
+  const ratedDays = rated.length;
+
+  const rows: HabitFeltRow[] = habits.map((h) => {
+    const ticked = new Set(ticksByHabit.get(h.id) ?? []);
+    const withVals: number[] = [];
+    const withoutVals: number[] = [];
+    for (const d of rated) {
+      (ticked.has(d.day) ? withVals : withoutVals).push(d.subjective);
+    }
+    const mean = (xs: number[]): number | null =>
+      xs.length === 0 ? null : xs.reduce((a, b) => a + b, 0) / xs.length;
+    const rawWith = mean(withVals);
+    const rawWithout = mean(withoutVals);
+    return {
+      habit_id: h.id,
+      key: h.key,
+      label: h.label,
+      icon: h.icon,
+      n_with: withVals.length,
+      n_without: withoutVals.length,
+      mean_with: round2(rawWith),
+      mean_without: round2(rawWithout),
+      delta:
+        rawWith === null || rawWithout === null ? null : round2(rawWith - rawWithout),
+      sufficient:
+        ratedDays >= HABIT_FELT_MIN_RATED_DAYS &&
+        withVals.length >= HABIT_FELT_MIN_SIDE &&
+        withoutVals.length >= HABIT_FELT_MIN_SIDE,
+    };
+  });
+
+  rows.sort((a, b) => {
+    if (a.sufficient !== b.sufficient) return a.sufficient ? -1 : 1;
+    if (a.sufficient && b.sufficient) {
+      const d = Math.abs(b.delta ?? 0) - Math.abs(a.delta ?? 0);
+      if (d !== 0) return d;
+    }
+    return a.label.localeCompare(b.label);
+  });
+
+  return {
+    rated_days: ratedDays,
+    needed: HABIT_FELT_MIN_RATED_DAYS,
+    sufficient: rows.some((r) => r.sufficient),
+    rows,
+  };
+}
+
+/**
+ * "Did this week move anything that matters" — grouped from the week's
+ * completed tasks.
+ *
+ * Pure, for the same reason as above. A row whose `goal_id` is null counts
+ * towards `unlinked_done` and appears in no group: the point of the tile is the
+ * ratio between what was finished and what was finished *towards something*,
+ * and folding the orphans into a bucket called "other" would hide exactly that.
+ * Groups are ordered by minutes, then task count, then title — minutes first
+ * because an hour is the scarce thing, not a checkbox.
+ */
+export function groupGoalsWeek(
+  from: Day,
+  to: Day,
+  rows: ReadonlyArray<{
+    goal_id: string | null;
+    goal_title: string | null;
+    goal_horizon: string | null;
+    minutes: number;
+  }>,
+): GoalsWeek {
+  const moved = new Map<string, GoalsWeekMoved>();
+  let unlinked = 0;
+
+  for (const row of rows) {
+    if (row.goal_id === null) {
+      unlinked++;
+      continue;
+    }
+    if (row.goal_title === null || row.goal_horizon === null) {
+      throw new Error(
+        `groupGoalsWeek: task links goal ${row.goal_id} but the join returned no ` +
+          `title/horizon for it — a dangling goal_id should be impossible under ` +
+          `0050's foreign key`,
+      );
+    }
+    const existing = moved.get(row.goal_id);
+    if (existing) {
+      existing.tasks_done++;
+      existing.minutes += row.minutes;
+    } else {
+      moved.set(row.goal_id, {
+        goal_id: row.goal_id,
+        title: row.goal_title,
+        horizon: row.goal_horizon,
+        tasks_done: 1,
+        minutes: row.minutes,
+      });
+    }
+  }
+
+  return {
+    week_start: from,
+    week_end: to,
+    total_done: rows.length,
+    unlinked_done: unlinked,
+    moved: [...moved.values()].sort(
+      (a, b) =>
+        b.minutes - a.minutes ||
+        b.tasks_done - a.tasks_done ||
+        a.title.localeCompare(b.title),
+    ),
+  };
 }
 
 export const STATS_DEFAULT_DAYS = 90;
@@ -869,8 +1188,11 @@ export const STATS_MAX_DAYS = 366;
 export async function dailyStats(days: number, today: Day): Promise<DailyStats> {
   const from = shiftDay(today, -(days - 1));
   const window = daysBack(today, days).reverse();
+  const weekFrom = weekStart(today);
+  const weekTo = shiftDay(weekFrom, 6);
 
-  const [habits, tickHistory, plans, plannedAgg, doneAgg, taskCounts] = await Promise.all([
+  const [habits, tickHistory, plans, plannedAgg, doneAgg, taskCounts, weekDone] =
+    await Promise.all([
     listHabits({ activeOnly: true }),
     allTickHistory(),
     pool.query<{
@@ -908,6 +1230,10 @@ export async function dailyStats(days: number, today: Day): Promise<DailyStats> 
          FROM day_tasks`,
       [STALE_AT],
     ),
+    // The goals rollup is the CURRENT Mon–Sun Berlin week, not the tail of the
+    // stats window: "did this week move anything that matters" is a question
+    // about this week whether the user is looking at 30 days or 90.
+    doneTasksInRange(weekFrom, weekTo),
   ]);
 
   const activeIds = new Set(habits.map((h) => h.id));
@@ -958,9 +1284,13 @@ export async function dailyStats(days: number, today: Day): Promise<DailyStats> 
   });
 
   const last30 = new Set(daysBack(today, 30));
+  const inWindow = new Set(window);
+  const windowTicks = new Map<string, Day[]>();
   const habitRows: DailyStats["habits"] = habits.map((h) => {
     const all = daysByHabit.get(h.id) ?? [];
     const ticks30 = all.filter((d) => last30.has(d));
+    const ticks = all.filter((d) => inWindow.has(d)).sort();
+    windowTicks.set(h.id, ticks);
     return {
       id: h.id,
       key: h.key,
@@ -971,6 +1301,7 @@ export async function dailyStats(days: number, today: Day): Promise<DailyStats> 
       streak: streakEndingToday(all, today),
       best: bestStreak(all),
       ticks30: ticks30.slice().sort(),
+      ticks,
     };
   });
 
@@ -1010,5 +1341,20 @@ export async function dailyStats(days: number, today: Day): Promise<DailyStats> 
       current: streakEndingToday(fulfilledDays, today),
       best: bestStreak(fulfilledDays),
     },
+    habit_felt: computeHabitFelt(
+      dayRows.map((d) => ({ day: d.day, subjective: d.subjective })),
+      habits,
+      windowTicks,
+    ),
+    goals_week: groupGoalsWeek(
+      weekFrom,
+      weekTo,
+      weekDone.map((t) => ({
+        goal_id: t.goal_id,
+        goal_title: t.goal_title,
+        goal_horizon: t.goal_horizon,
+        minutes: t.minutes,
+      })),
+    ),
   };
 }
