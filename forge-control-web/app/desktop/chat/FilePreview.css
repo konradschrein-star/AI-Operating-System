@@ -1,0 +1,166 @@
+/**
+ * FilePreview.css — the chat Files panel / /document renderer.
+ *
+ * Deliberately NOT an import of _ui/MediaDocumentViewer.css: that file styles
+ * the Library's 900-line inspector (edit mode, zoom, transport) and coupling
+ * the chat preview to it would drag the editor's chrome in behind it. The line
+ * gutter below is the same IDEA as `.mdv-code-container`, written out here so
+ * this component owns its own surface.
+ *
+ * Tokens only — every colour is a var() from theme.css, including the line
+ * highlight, which composes alpha over `--fg-accent-rgb` rather than picking a
+ * literal (see scripts/checks/no-raw-colours.cjs).
+ */
+
+/**
+ * How tall a preview may grow before it scrolls itself. 70vh is the split
+ * pane's long-standing contract; the full-window /document route owns more
+ * space than that and can raise it by setting the property on an ancestor,
+ * which is why this is a variable rather than a literal in three places.
+ */
+:root {
+  --fp-max-h: 70vh;
+}
+
+/* ── Text / markdown body ── */
+.fp-scroll {
+  padding: 16px;
+  max-height: var(--fp-max-h);
+  overflow-y: auto;
+}
+
+.fp-note {
+  font-size: 10.5px;
+  color: var(--fg-textFaint);
+  padding: 10px 16px 12px;
+}
+
+.fp-error {
+  padding: 20px 16px;
+  font-size: 11.5px;
+  color: var(--fg-bleed);
+}
+
+.fp-loading {
+  padding: 16px;
+  font-size: 11px;
+  color: var(--fg-textFaint);
+}
+
+/* ── Frontmatter meta strip (D3) ── */
+.fp-meta {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: baseline;
+  padding: 10px 16px;
+  background: var(--fg-bgGutter);
+  border-bottom: 1px solid var(--fg-borderSoft);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.fp-meta-key {
+  color: var(--fg-textFaint);
+  white-space: nowrap;
+}
+
+.fp-meta-val {
+  color: var(--fg-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fp-meta-line {
+  grid-column: 1 / -1;
+  color: var(--fg-accent);
+}
+
+/* ── Line-numbered code viewer ── */
+.fp-code-scroll {
+  max-height: var(--fp-max-h);
+  overflow: auto;
+  background: var(--fg-bgBody);
+  padding: 10px 0;
+}
+
+.fp-code-row {
+  display: flex;
+  align-items: flex-start;
+  min-width: 100%;
+  width: max-content;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.fp-code-row-hit {
+  background: rgba(var(--fg-accent-rgb), 0.16);
+}
+
+.fp-code-num {
+  flex: none;
+  position: sticky;
+  left: 0;
+  width: 46px;
+  padding: 0 12px 0 0;
+  text-align: right;
+  user-select: none;
+  color: var(--fg-textFaint);
+  background: var(--fg-bgBody);
+  border-right: 1px solid var(--fg-borderSoft);
+}
+
+.fp-code-row-hit .fp-code-num {
+  color: var(--fg-accent);
+  background: var(--fg-bgGutter);
+}
+
+.fp-code-text {
+  padding: 0 16px 0 12px;
+  white-space: pre;
+  color: var(--fg-text);
+}
+
+/* ── CSV table ── */
+.fp-csv-wrap {
+  max-height: var(--fp-max-h);
+  overflow: auto;
+}
+
+.fp-csv {
+  border-collapse: collapse;
+  font-size: 11px;
+  min-width: 100%;
+}
+
+.fp-csv th,
+.fp-csv td {
+  border-bottom: 1px solid var(--fg-borderSoft);
+  border-right: 1px solid var(--fg-borderSoft);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 320px;
+}
+
+.fp-csv th {
+  position: sticky;
+  top: 0;
+  background: var(--fg-bgGutter);
+  color: var(--fg-textHi);
+  font-weight: 600;
+  z-index: 1;
+}
+
+.fp-csv td {
+  color: var(--fg-text);
+}
+
+.fp-csv-num {
+  color: var(--fg-textFaint);
+  user-select: none;
+  text-align: right;
+  white-space: nowrap;
+}
