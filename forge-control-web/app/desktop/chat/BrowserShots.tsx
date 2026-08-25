@@ -798,6 +798,9 @@ export function RunShotsIndicator({
             e.stopPropagation();
             setOpen((v) => !v);
           }}
+          /* Addressable by run: check-takeover-e2e-browser.ts has to find THIS
+             run's indicator among however many rows the Live panel is showing. */
+          data-run-shots-indicator={dirId}
           className={`mono ${buttonClass}`}
           style={{
             background: buttonBg,
