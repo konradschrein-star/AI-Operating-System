@@ -85,6 +85,14 @@ tmux new-session -d -s refnav-probe \
    ./node_modules/.bin/tsx -e \"\$(cat /tmp/refnav-probe.mts)\""
 ```
 
+**These port numbers are not yours by right.** This box runs several project worktrees at
+once and every one of them stands up probes and `next` servers on adjacent ports; a
+sibling task has already watched a `curl` answer **200 with a plausible chat list** from
+someone else's stack on a port its own probe had failed to bind. So the checks below are
+IDENTITY assertions, not health checks: `count: 0` is your empty scratch database saying
+so. The check itself does the same thing again after seeding — it refuses to run unless
+`FORGE_API_URL` serves *the run it just inserted*.
+
 Two assertions before going further — they take five seconds and they are the
 difference between measuring the branch and measuring nothing:
 
@@ -195,7 +203,7 @@ Every assertion prints a named `PASS`/`FAIL` line:
 - `2g` — the panel header reads `1 selected`: selection *state* is right.
 - `2h` — the row for `03-quality.md` carries `vfl-row--selected`: selection is *visible*
   (PLAN D4).
-- `3b`/`3c` — the vault note, absolute.
+- `3b`/`3c` — the vault note, absolute: content rendered, and the row revealed.
 - `4a`/`4b` — the *same* note written relative, resolved through search (bug 2).
 - `5a`/`5b` — Ctrl-click opens **exactly one** page, at `/document?root=forge-src&…`.
 - `6a` — the unresolvable pill toasts `Couldn't find …` (bug 3). There is no stable
@@ -208,12 +216,28 @@ Every assertion prints a named `PASS`/`FAIL` line:
 defect as two — or, worse, hide a real one behind a green sibling. `2g` passing while
 `2h` fails is the entire content of PLAN D4, and no single assertion can say that.
 
-**Known measurement limit.** `3c` and `4b` pass partly because `Mentor/Profile` is a
-small directory: the list is virtualised, and a selected row is in the DOM only if it
-falls inside the rendered window. Add thirty notes to that folder and those two will
-start failing for the same reason `2h` does. That is correct behaviour from the
-instrument — it is D4 becoming visible in a second place — but do not read a green `3c`
-as evidence that reveal-on-open works.
+### "Revealed" is not "in the DOM"
+
+`2h` and `3c` do **not** ask whether `.vfl-row--selected` exists. They ask whether that
+row's rectangle lies inside its scroll container's rectangle. The first draft of this
+check asked only the DOM question, and `3c` went green on this screen:
+
+> breadcrumbs `Home/vault/Mentor/Profile`, preview showing Operating Manual, list showing
+> `About Me.md` and `Current Chapter.md` — and **no Operating Manual.md anywhere on it**.
+
+The row existed, carried the class, and sat below the fold of a two-row-tall box. An
+assertion that passes on a screen where the file Konrad just opened is invisible is
+worse than no assertion, because it will be cited as proof the feature works.
+
+Two failure modes, one requirement: `2h` fails because the row was never rendered
+(virtualised, outside the window), `3c` fails because it was rendered and never scrolled
+to. Both are D4.
+
+`6a` and `6b` are split for the same reason and in the opposite direction: `6a`'s timeout
+(`MISS_TIMEOUT_MS`, 240 s) is the harness's patience, `6b`'s budget (`MISS_BUDGET_MS`,
+8 s) is the UX bar. When they were one number at 90 s, the assertion started reporting
+"the miss is silent" on a run where the miss simply took 90.4 s — a harness giving up,
+dressed as a product defect.
 
 Screenshots land in `OUT_DIR` as `<UTC stamp>-<label>.png`, before **and** after every
 click, so a FAIL comes with a picture of the failure.
@@ -227,9 +251,8 @@ start from the Team tab, which is the only place the latch bug reproduces.
 
 ## 6. First results (2026-08-25, branch `project/ecacba29-test`)
 
-**Production build on 7803, three consecutive runs, byte-identical verdicts:
-18 of 21 assertions pass, exit 1.** Not flaky — the same three named FAILs every time,
-with the same values.
+**Production build on 7803, three consecutive runs, identical verdicts:
+17 of 21 assertions pass, exit 1.** Not flaky — the same four named FAILs every time.
 
 What passes is most of the feature, and it is worth stating plainly: pills are openable
 exactly when they name a placeable file and plain otherwise, a click from the Team tab
@@ -239,19 +262,27 @@ contents in the preview, the relative path resolves through search to the same f
 `/document?root=forge-src&path=docs%2Fplan%2F03-quality.md`, and a miss toasts instead of
 going quiet. **Bugs 1, 2 and 3 are all fixed, and this test now holds them fixed.**
 
-Three FAILs, three distinct defects, none of them owned by this task:
+Four FAILs, three distinct defects, none of them owned by this task:
 
 | assertion | measured | defect |
 | --- | --- | --- |
 | `2d-breadcrumbs-show-the-human-root-label` | `Home/forge-src/docs/plan` | The crumb shows the **internal root key**. `VaultFileList` renders `rootLabel ?? root`, and `rootLabel` comes from `roots`, which `loadRoots()` sets — but on a programmatic open the mount-time `loadDir(null, "")` is superseded by the open-request's directory load (`seqRef`), so it bails as stale and `roots` is never populated. Cosmetic, one line, real. |
-| `2h-opened-row-is-revealed-in-the-list` | `1 selected`, 0 selected rows of 7 rendered | **PLAN D4, photographed.** `VaultFileList` is virtualised (`@tanstack/react-virtual`): the selected entry's row is not in the DOM because nothing scrolls it into view. `2g` passes — the file *is* selected and its preview *is* on screen — so this is purely the reveal. |
-| `6b-miss-is-reported-fast-enough-to-feel-alive` | **29.9 s / 48.8 s / 29.7 s** against an 8 s budget | Resolution walks five roots serially and two of them are large trees. For half a minute after the click the console does nothing at all. This is PLAN's pending-state item, and it is worse than the plan assumed (`~1 s`). |
+| `2h-opened-row-is-revealed-in-the-list` | `1 selected`, 0 rows selected of 7 rendered | **PLAN D4, half one.** `VaultFileList` is virtualised (`@tanstack/react-virtual`) and `docs/plan` is long, so the selected row was never rendered at all. `2g` passes — the file *is* selected and its preview *is* on screen — so this is purely the reveal. |
+| `3c-vault-row-is-revealed-in-the-list` | selected row in the DOM, **0 visible** in the list box | **PLAN D4, half two.** Here the row *was* rendered and simply sits below the fold of a two-row-tall box: the panel shows `About Me.md` and `Current Chapter.md` while the file it just opened is out of sight. Same requirement, different mechanism — which is why the instrument measures rectangles, not classes. |
+| `6b-miss-is-reported-fast-enough-to-feel-alive` | **14.8 s / 159.3 s / 73.0 s** against an 8 s budget (and 29.7–90.4 s in five earlier runs) | Resolution walks five roots serially and two of them are large trees. For anywhere from a quarter of a minute to nearly three minutes after the click, the console does nothing at all. This is PLAN's pending-state item, and it is far worse than the plan assumed (`~1 s`). The spread tracks how loaded the box is. |
 
 Ownership: `FileExplorerPanel.tsx` / `VaultFileList.tsx` belong to the **panel**
 workstream (task `e462d94a-d6bc-484b-ad20-93e4c6c23b7b`, which already owns D4); the
 serial-search latency and its missing pending state belong to the **markdown** workstream
 (task `e99810f4-285a-45f4-9e44-6878bda3583c`). This document is the instrument that will
 tell them when they are done, not a bug list for the test author to fix.
+
+One inherited RED worth attributing before someone blames this round: `gates-808.sh`
+gate 9 (`dollar-sweep.sh`) fails on
+`forge-control-web/app/desktop/chat/code-path-link.ts:11`, where the header comment cites
+`` `spend.per_run_cap` `` as an example of a pill that must NOT be openable. It arrived
+with the R0 port commit `27ab8d5`; nothing in this task's write-set touches
+`forge-control-web/app` at all.
 
 **So the gate is RED at this branch point, deliberately.** It sits behind `--browser`, so
 the default `gates-808.sh` run is unaffected and stays green; it is skipped there, loudly

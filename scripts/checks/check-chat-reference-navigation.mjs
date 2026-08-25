@@ -167,8 +167,19 @@ const PILLS = {
  *  "is it on screen" is a discriminating question. Asserted absent before the
  *  click and present after — a check that can only pass one way round. */
 /** How long a click may take to say "I couldn't find that" before the console
- *  is, from Konrad's side of the screen, simply not responding. */
+ *  is, from Konrad's side of the screen, simply not responding. This is the
+ *  UX bar (assertion 6b), NOT the harness's patience. */
 const MISS_BUDGET_MS = Number(process.env.MISS_BUDGET_MS ?? 8000);
+
+/**
+ * The harness's patience (assertion 6a), which must be far beyond the bar or
+ * the two questions collapse back into one. Measured across five runs on a
+ * loaded box: 29.7 s, 48.8 s, 58.0 s, 64.6 s, 90.4 s — the miss walks five
+ * roots serially, two of them large trees, and gets slower as the box fills
+ * up. At 90 s the timeout itself started failing the run, which reports "the
+ * feature never told me" when what happened was "the harness gave up first".
+ */
+const MISS_TIMEOUT_MS = Number(process.env.MISS_TIMEOUT_MS ?? 240000);
 
 const CONTENT_MARKERS = {
   absForgeSrc: "Quality: test strategy and QA gates",
@@ -306,16 +317,44 @@ async function panelState(page) {
     const countText = Array.from(document.querySelectorAll("span"))
       .map((s) => (s.textContent ?? "").trim())
       .find((t) => /^\d+ selected$/.test(t));
+
+    /* "Revealed" means a human can see it, which is NOT the same as being in
+     * the DOM. The list scrolls inside a fixed-height box, so a selected row
+     * can sit hundreds of pixels below the fold with its class intact — that
+     * is what `Mentor/Profile` does: `About Me.md` and `Current Chapter.md`
+     * fill the visible box and the selected `Operating Manual.md` is out of
+     * sight. An assertion that only queried the class would go green on a
+     * screen where the file Konrad opened is nowhere to be found. So compare
+     * the row's rect against its scroll container's rect. */
+    const rows = Array.from(document.querySelectorAll(".vfl-row--selected"));
+    const revealed = rows.filter((row) => {
+      let box = row.parentElement;
+      while (box && !(box.scrollHeight > box.clientHeight + 4)) box = box.parentElement;
+      if (!box) return true; // nothing scrolls: if it is in the DOM it is on screen
+      const r = row.getBoundingClientRect();
+      const b = box.getBoundingClientRect();
+      return r.top >= b.top - 1 && r.bottom <= b.bottom + 1;
+    });
+
     return {
       breadcrumbs: document.querySelector(".vfl-breadcrumbs")?.textContent?.trim() ?? null,
       selectedCount: countText ? Number(countText.split(" ")[0]) : null,
-      selectedRows: Array.from(document.querySelectorAll(".vfl-row--selected")).map((r) =>
-        (r.textContent ?? "").trim(),
-      ),
+      selectedRows: rows.map((r) => (r.textContent ?? "").trim()),
+      revealedRows: revealed.map((r) => (r.textContent ?? "").trim()),
       rowsRendered: document.querySelectorAll(".vfl-row").length,
       bodyText: document.body.innerText,
     };
   });
+}
+
+/** One line of evidence for a reveal assertion: what is selected, what of that
+ *  is actually on screen, and out of how many rendered rows. */
+function revealDetail(state) {
+  return (
+    `selected in DOM = ${JSON.stringify(state.selectedRows)}, ` +
+    `visible in the list box = ${JSON.stringify(state.revealedRows)}, ` +
+    `${state.rowsRendered} rows rendered`
+  );
 }
 
 /** Poll for a condition instead of sleeping a fixed time — a toast lives ~4s
@@ -536,9 +575,9 @@ async function main() {
       );
       check(
         "2h-opened-row-is-revealed-in-the-list",
-        after.selectedRows.some((r) => r.includes("03-quality.md")),
-        `selected rows = ${JSON.stringify(after.selectedRows)} of ${after.rowsRendered} ` +
-          "rendered — the list is virtualised and nothing scrolls the entry into view (PLAN D4)",
+        after.revealedRows.some((r) => r.includes("03-quality.md")),
+        `${revealDetail(after)} — the list is virtualised and nothing scrolls the ` +
+          "entry into view (PLAN D4)",
       );
     }
 
@@ -566,9 +605,9 @@ async function main() {
         `breadcrumbs = ${JSON.stringify(after.breadcrumbs)}`,
       );
       check(
-        "3c-vault-row-is-selected",
-        after.selectedRows.some((r) => r.includes("Operating Manual.md")),
-        `selected rows = ${JSON.stringify(after.selectedRows)}`,
+        "3c-vault-row-is-revealed-in-the-list",
+        after.revealedRows.some((r) => r.includes("Operating Manual.md")),
+        revealDetail(after),
       );
     }
 
@@ -598,7 +637,7 @@ async function main() {
       check(
         "4b-relative-path-selects-the-same-file",
         after.selectedRows.some((r) => r.includes("Operating Manual.md")),
-        `selected rows = ${JSON.stringify(after.selectedRows)}`,
+        `${revealDetail(after)} — selection only; reveal is asserted by 3c`,
       );
     }
 
@@ -645,23 +684,20 @@ async function main() {
       // appears nowhere else in the console, which makes body text a
       // discriminating instrument here.
       //
-      // The budget is generous ON PURPOSE. Resolution walks five roots one
-      // after another, and two of them (`aios`, `forge-src`) are large trees —
-      // measured at 23-30 s to report a miss, right on the edge of a 25 s
-      // timeout, which made this assertion flap between runs. "Does it report
-      // at all" and "does it report soon enough to feel alive" are two
-      // different questions, so they are two assertions.
       const toasted = await waitFor(
         page,
         async () => (await page.evaluate(() => document.body.innerText)).includes("Couldn't find"),
-        { timeoutMs: 90000, stepMs: 200 },
+        { timeoutMs: MISS_TIMEOUT_MS, stepMs: 200 },
       );
       const elapsedMs = Date.now() - startedAt;
       await shot("e3-after-click-unresolvable");
       check(
         "6a-unresolvable-pill-toasts-instead-of-going-silent",
         toasted,
-        `pill ${PILLS.relMissing}, after ${(elapsedMs / 1000).toFixed(1)}s`,
+        toasted
+          ? `pill ${PILLS.relMissing}, after ${(elapsedMs / 1000).toFixed(1)}s`
+          : `nothing said "Couldn't find" within the harness's ${MISS_TIMEOUT_MS / 1000}s ` +
+            "patience — raise MISS_TIMEOUT_MS before concluding the miss is silent",
       );
       check(
         "6b-miss-is-reported-fast-enough-to-feel-alive",
