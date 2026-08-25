@@ -219,6 +219,22 @@ gate_sh "check-deep-link.ts — cross-surface navigation actually navigates" \
 gate_sh "verify-notification-gap-pins.mjs — fenced quotes + prose pins" \
   "node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs | tail -2"
 
+# ── aios-browser-takeover-live round 5 ─────────────────────────────────────
+# This gate guards the ONE route in the repo that answers without a NextAuth
+# session: nginx proxies /api/browser-takeover/ws/ straight past the Next
+# process to forge-control, because a Route Handler cannot host a WebSocket.
+# The thing on the far end is a Chrome holding Konrad's logged-in sessions.
+#
+# It is here because of round-4 review finding 1. The script existed, had 106
+# assertions, and was RUN BY NOTHING: gates-808.sh never invoked it and
+# check-instrument-typecheck.sh only COMPILES scripts/checks/*.ts. A log-
+# redaction fix landed on main, tripped the script's own allowlist, and sat RED
+# at main until a reviewer happened to run it by hand. A guard no gate executes
+# is a guard that goes stale unobserved — so it is executed here, every round.
+gate_sh "check-browser-takeover-ticket.ts — the unauthenticated-by-design socket" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-browser-takeover-ticket.ts | tail -3"
+
 # Needs a Postgres SERVER. It creates its own scratch database and issues no
 # statement against the one named in DATABASE_URL — but with no DSN at all there
 # is nothing to connect to, so it is SKIPPED rather than reported as passing.

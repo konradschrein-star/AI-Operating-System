@@ -262,12 +262,19 @@ app.route("/api/runs", runControl);
 const port = Number(process.env.PORT ?? 7700);
 const server = serve({ fetch: app.fetch, port, hostname: "127.0.0.1" });
 
-// Manual browser takeover (round 4/5): @hono/node-server's serve() never
-// registers a Node 'upgrade' listener, so a noVNC WebSocket handshake to
-// /api/uploads/(browser/:profile|:id)/vnc/* would otherwise be silently
-// destroyed by Node's default upgrade handling. handleBrowserTakeoverUpgrade
-// applies the same profile/port security checks as the HTTP proxy and, once
-// they pass, raw-pipes the socket to the loopback websockify instance.
+// Manual browser takeover: @hono/node-server's serve() never registers a Node
+// 'upgrade' listener, so a noVNC WebSocket handshake would otherwise be
+// silently destroyed by Node's default upgrade handling.
+//
+// THE ONLY UPGRADE ROUTE IS /api/browser-takeover/ws/<ticket>. The
+// /api/uploads/(browser/:profile|:id)/vnc/* arms this comment used to name
+// were deleted in c5ea5d0, precisely because they took a bare run id — and
+// nginx hands this process that path WITHOUT NextAuth in front of it, so a
+// bare id would have been an unauthenticated route onto a logged-in browser.
+// handleBrowserTakeoverUpgrade verifies the signed ticket (profile, port and
+// expiry all come out of the signature, never off the URL), re-checks the
+// 6900-6959 port allowlist, and only then raw-pipes the socket to the loopback
+// websockify instance. Everything else gets destroyed by the `!handled` arm.
 server.on("upgrade", (req, socket, head) => {
   handleBrowserTakeoverUpgrade(req, socket, head)
     .then((handled) => {

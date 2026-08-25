@@ -65,7 +65,6 @@ import {
   shotsNoun,
   stampToIso,
   uploadsDirId,
-  vncProxyUrl,
   type BrowserShotRef,
   type BrowserStateSummary,
   type StreamMode,
@@ -336,6 +335,9 @@ export function BrowserShots({
 }) {
   const [open, setOpen] = useState(false);
   const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
+  // Which pane the fullscreen viewer opens on. "Take Control" means the live
+  // browser, not a still with a second button to press.
+  const [fullscreenMode, setFullscreenMode] = useState<"screenshot" | "manual">("screenshot");
 
   const ordered = useMemo(() => newestFirst(refs), [refs]);
   const dirId = ordered[0]?.dirId ?? null;
@@ -494,8 +496,10 @@ export function BrowserShots({
                 {dirId && (
                   <button
                     type="button"
+                    data-take-control
                     onClick={(e) => {
                       e.stopPropagation();
+                      setFullscreenMode("manual");
                       setFullscreenIndex(0);
                     }}
                     style={{
@@ -517,7 +521,10 @@ export function BrowserShots({
             <ShotStrip
               shots={ordered}
               mode={mode}
-              onSelectShot={(idx) => setFullscreenIndex(idx)}
+              onSelectShot={(idx) => {
+                setFullscreenMode("screenshot");
+                setFullscreenIndex(idx);
+              }}
             />
           </div>
         )}
@@ -530,6 +537,7 @@ export function BrowserShots({
           dirId={dirId}
           mode={mode}
           state={browserState}
+          initialViewMode={fullscreenMode}
           onClose={() => setFullscreenIndex(null)}
         />
       )}
@@ -697,6 +705,8 @@ export function RunShotsIndicator({
 }) {
   const [open, setOpen] = useState(false);
   const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
+  // See the note on the same state in BrowserShots above.
+  const [fullscreenMode, setFullscreenMode] = useState<"screenshot" | "manual">("screenshot");
 
   const index = useShotIndex();
   const dirId = uploadsDirId(runId);
@@ -855,6 +865,7 @@ export function RunShotsIndicator({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  setFullscreenMode("screenshot");
                   setFullscreenIndex(0);
                 }}
                 style={{
@@ -890,8 +901,10 @@ export function RunShotsIndicator({
                 <span>{warning.detail}</span>
                 <button
                   type="button"
+                  data-take-control
                   onClick={(e) => {
                     e.stopPropagation();
+                    setFullscreenMode("manual");
                     setFullscreenIndex(0);
                   }}
                   style={{
@@ -922,7 +935,10 @@ export function RunShotsIndicator({
               <ShotStrip
                 shots={shots}
                 mode={mode}
-                onSelectShot={(idx) => setFullscreenIndex(idx)}
+                onSelectShot={(idx) => {
+                setFullscreenMode("screenshot");
+                setFullscreenIndex(idx);
+              }}
               />
             )}
           </div>
@@ -936,6 +952,7 @@ export function RunShotsIndicator({
           dirId={dirId}
           mode={mode}
           state={browserState}
+          initialViewMode={fullscreenMode}
           onClose={() => setFullscreenIndex(null)}
         />
       )}

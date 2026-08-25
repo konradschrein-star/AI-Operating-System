@@ -20,47 +20,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { tokens } from "../../tokens";
-import { takeoverTicketUrl, vncProxyUrl } from "../../desktop/chat/browser-shots";
-
-interface TicketBody {
-  ticket: string;
-  expires_at: string;
-  novnc_port: number;
-  profile: string;
-}
+import {
+  mintTakeoverTicket,
+  vncProxyUrl,
+  type TakeoverTicketBody,
+} from "../../desktop/chat/browser-shots";
 
 type Status =
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "ready"; body: TicketBody };
-
-async function mintTicket(runId: string): Promise<TicketBody> {
-  const mintUrl = takeoverTicketUrl(runId);
-  if (!mintUrl) {
-    throw new Error(`"${runId}" is not a valid run id (expected 12 lowercase hex characters)`);
-  }
-  let res: Response;
-  try {
-    res = await fetch(mintUrl, { headers: { accept: "application/json" }, cache: "no-store" });
-  } catch (err) {
-    throw new Error(`Could not reach forge-control to mint a ticket: ${(err as Error).message}`);
-  }
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) detail = body.error;
-    } catch {
-      // Response body wasn't JSON — fall back to the status line already captured.
-    }
-    throw new Error(`${res.status} ${detail}`);
-  }
-  const body = (await res.json()) as Partial<TicketBody>;
-  if (typeof body.ticket !== "string" || typeof body.profile !== "string") {
-    throw new Error("Ticket mint endpoint returned an unexpected response shape");
-  }
-  return body as TicketBody;
-}
+  | { kind: "ready"; body: TakeoverTicketBody };
 
 export function TakeoverClient({ runId }: { runId: string }) {
   const [status, setStatus] = useState<Status>({ kind: "loading" });
@@ -74,7 +43,7 @@ export function TakeoverClient({ runId }: { runId: string }) {
   useEffect(() => {
     let cancelled = false;
     setStatus((prev) => (prev.kind === "loading" ? prev : { kind: "loading" }));
-    mintTicket(runId)
+    mintTakeoverTicket(runId)
       .then((body) => {
         if (!cancelled) setStatus({ kind: "ready", body });
       })
