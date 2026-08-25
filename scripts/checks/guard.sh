@@ -162,7 +162,7 @@ run_check 1 "dollar-sweep" \
 # it is a static rule with no runtime (it reads files, starts nothing), it
 # costs milliseconds, and phase 1 runs in --fast — which is what `pnpm guard`
 # actually invokes (package.json:7). gates-808.sh is skip_check'ed in --fast
-# (line 232 below), so a gate placed there is invisible to the default guard,
+# (line 249 below), so a gate placed there is invisible to the default guard,
 # which is the same class of not-really-running this check exists to close.
 run_check 1 "instrument-execution" \
   "this artefact is executed by nothing: wire it into a runner, or ledger it in scripts/checks/execution-manifest.txt with a reason and an owner. Read that file's header first — a LIVE-ORPHAN (a live gate nothing runs) may NOT be ledgered; it goes in KNOWN_OPEN_FINDINGS in check-instrument-execution.ts and it is a conversation with Konrad. Full report: forge-control/node_modules/.bin/tsx scripts/checks/check-instrument-execution.ts" \
