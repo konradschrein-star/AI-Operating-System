@@ -47,6 +47,8 @@ import map from "./routes/map.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
 import { startVaultSyncTick } from "./lib/vault-sync-tick.ts";
+import { startCalendarSyncTick } from "./lib/calendar-sync-tick.ts";
+import { startGlucoseTick } from "./lib/glucose-tick.ts";
 import { startUsageSamplerTick } from "./lib/usage-sampler.ts";
 import mentor from "./routes/mentor.ts";
 import runControl from "./routes/run-control.ts";
@@ -292,6 +294,8 @@ startTelegramBridge();
 // Keeps hcp.knowledge_note in sync with the real on-disk Obsidian vault —
 // km-indexer.js only ever wrote embeddings, never the note registry.
 startVaultSyncTick();
+startCalendarSyncTick();
+startGlucoseTick();
 
 // 2026-08-02: Claude account health probing. Cheap tier (credential file +
 // last confirmed run) every 10 minutes. This is the half of the account system

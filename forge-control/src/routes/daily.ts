@@ -5,7 +5,7 @@
  *   POST   /api/daily/:day/plan           { intent?, big3? }  fluid draft editing
  *   POST   /api/daily/:day/commit         marks morning plan committed; idempotent
  *   POST   /api/daily/:day/goal/:goalId   { status, reason? }
- *   POST   /api/daily/:day/reflect        { subjective?:1..5, reflection? }
+ *   POST   /api/daily/:day/reflect        { subjective?:1..10, reflection? }
  *   POST   /api/daily/:day/habit/:habitId { done: boolean }
  *
  *   GET    /api/daily/tasks?view=today|week|backlog|all&area=&status=
@@ -19,8 +19,15 @@
  *   PATCH  /api/daily/goals/:id
  *   DELETE /api/daily/goals/:id
  *
- *   GET    /api/daily/calendar?start=...&end=...&max=...
+ *   GET    /api/daily/calendar?view=day|week&day=YYYY-MM-DD
+ *   GET    /api/daily/calendar?start=...&end=...&max=...   (bare dates OK, Berlin-resolved)
  *   POST   /api/daily/calendar/events     { summary, start, end, location?, description?, task_id? }
+ *   PATCH  /api/daily/calendar/events/:id { summary?, start?, end?, location?, description?, task_id? }
+ *   DELETE /api/daily/calendar/events/:id
+ *   POST   /api/daily/calendar/sync       { day?, view?: day|week, dry_run? }  GCal → tasks, idempotent
+ *   POST   /api/daily/gtasks/sync         { tasklist?, dry_run? }  Google Tasks ↔ board, both ways
+ *   POST   /api/daily/quick               { kind: todo|appointment, text }  one-line capture
+ *   GET    /api/daily/glucose?view=day|week&day=…   blood glucose for the grid overlay
  *
  *   GET    /api/daily/stats?days=90
  *   GET    /api/daily/habits
@@ -49,6 +56,7 @@ import {
   createTask,
   updateTask,
   deleteTask,
+  unlinkTasksFromEvent,
   rolloverTasks,
   listLifeGoals,
   getLifeGoal,
@@ -73,7 +81,16 @@ import { berlinDay, isDay, type Day } from "../lib/day-score.ts";
 import {
   listCalendarEvents,
   createCalendarEvent,
+  updateCalendarEvent,
+  deleteCalendarEvent,
+  normaliseWindowEdge,
+  dayWindow,
+  weekWindow,
 } from "../lib/calendar.ts";
+import { syncCalendarWindow, berlinDayOfInstant } from "../lib/calendar-sync.ts";
+import { syncGoogleTasks } from "../lib/gtasks-sync.ts";
+import { parseTodo, parseAppointment } from "../lib/quick-parse.ts";
+import { listReadings, latestReading } from "../db/glucose.ts";
 
 const r = new Hono();
 
@@ -117,17 +134,27 @@ function decorate<T extends { carried: number }>(task: T): T & { stale: boolean 
   return { ...task, stale: task.carried >= STALE_AT };
 }
 
+
 // ===========================================================================
 // Static paths first — see the header note on route order.
 // ===========================================================================
 
 // --- Google Calendar -------------------------------------------------------
 
+/**
+ * GET /api/daily/calendar
+ *
+ *   ?view=week&day=YYYY-MM-DD   → the Mon–Sun week containing `day`
+ *   ?view=day&day=YYYY-MM-DD    → that whole Berlin day
+ *   ?start=…&end=…              → an explicit window; bare dates are resolved
+ *                                 through Europe/Berlin, `end` inclusive
+ *
+ * The window that was actually asked of Google comes back in `window`, because
+ * "no events" and "wrong window" are indistinguishable to anyone reading the
+ * response — and the previous version of this route made exactly that mistake.
+ */
 r.get("/calendar", async (c) => {
-  const start = c.req.query("start");
-  const end = c.req.query("end");
   const maxRaw = c.req.query("max");
-
   let max: number | undefined = undefined;
   if (maxRaw !== undefined) {
     const parsed = Number(maxRaw);
@@ -137,12 +164,293 @@ r.get("/calendar", async (c) => {
     max = parsed;
   }
 
+  const view = c.req.query("view");
+  if (view !== undefined && view !== "day" && view !== "week") {
+    return c.json({ error: `view must be "day" or "week", got "${view}"` }, 400);
+  }
+
+  const rawDay = c.req.query("day");
+  if (rawDay !== undefined && !isDay(rawDay)) {
+    return c.json({ error: `day must be YYYY-MM-DD, got "${rawDay}"` }, 400);
+  }
+  const day: Day = rawDay ?? berlinDay();
+
+  let start: string | undefined;
+  let end: string | undefined;
+  let from: Day | undefined;
+  let to: Day | undefined;
+
+  if (view === "week") {
+    const w = weekWindow(day);
+    ({ start, end, from, to } = w);
+  } else if (view === "day") {
+    ({ start, end } = dayWindow(day));
+    from = day;
+    to = day;
+  } else {
+    start = normaliseWindowEdge(c.req.query("start"), "start");
+    end = normaliseWindowEdge(c.req.query("end"), "end");
+  }
+
   try {
-    const events = await listCalendarEvents({ start, end, max });
-    return c.json({ ok: true, count: events.length, events });
+    const events = await listCalendarEvents({ start, end, max: max ?? 250 });
+    return c.json({
+      ok: true,
+      count: events.length,
+      window: { start: start ?? null, end: end ?? null, from: from ?? null, to: to ?? null },
+      events,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Failed to fetch Google Calendar events: ${msg}` }, 502);
+  }
+});
+
+/** PATCH /api/daily/calendar/events/:id — move or retitle an event in place. */
+r.patch("/calendar/events/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await readBody(c);
+
+  const patch: Record<string, string> = {};
+  for (const field of ["summary", "start", "end", "location", "description"] as const) {
+    if (has(body, field)) {
+      if (typeof body[field] !== "string") {
+        return c.json({ error: `${field} must be a string` }, 400);
+      }
+      patch[field] = body[field] as string;
+    }
+  }
+  if (Object.keys(patch).length === 0) {
+    return c.json({ error: "at least one of summary, start, end, location, description" }, 400);
+  }
+
+  try {
+    const event = await updateCalendarEvent(id, patch);
+
+    // Keep a linked task's own copy of the time in step, or the board and the
+    // calendar disagree until the next full sync.
+    if (has(body, "task_id") && typeof body.task_id === "string" && UUID_RE.test(body.task_id)) {
+      const taskPatch: Record<string, unknown> = {};
+      if (patch.start) {
+        taskPatch.start_time = patch.start;
+        taskPatch.planned_day = berlinDayOfInstant(patch.start);
+      }
+      if (Object.keys(taskPatch).length > 0) {
+        await updateTask(body.task_id, taskPatch).catch(() => null);
+      }
+    }
+
+    return c.json({ ok: true, event });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Failed to update Google Calendar event: ${msg}` }, 502);
+  }
+});
+
+/** DELETE /api/daily/calendar/events/:id — also unlinks any task pointing at it. */
+r.delete("/calendar/events/:id", async (c) => {
+  const id = c.req.param("id");
+  try {
+    await deleteCalendarEvent(id);
+    await unlinkTasksFromEvent(id).catch(() => null);
+    return c.json({ ok: true, deleted: id });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Failed to delete Google Calendar event: ${msg}` }, 502);
+  }
+});
+
+/**
+ * POST /api/daily/calendar/sync — pull Google Calendar into the task board.
+ *
+ *   { day?: YYYY-MM-DD, view?: "day"|"week", dry_run?: boolean }
+ *
+ * Konrad's rule: "if in Google Calendar I enter a time slot, for example going
+ * to the doctor, it should automatically turn into a task." So every timed event
+ * in the window becomes a task, keyed on `gcal_event_id` — which makes the whole
+ * operation idempotent, and makes a moved event an UPDATE rather than a second
+ * task.
+ *
+ * All-day events are skipped on purpose: birthdays, public holidays and
+ * multi-day trips are not units of work, and importing them would bury the
+ * board on its first run. Cancelled events are skipped for the same reason.
+ */
+r.post("/calendar/sync", async (c) => {
+  const body = await readBody(c);
+
+  const rawDay = has(body, "day") ? body.day : undefined;
+  if (rawDay !== undefined && !isDay(rawDay)) {
+    return c.json({ error: `day must be YYYY-MM-DD, got ${JSON.stringify(rawDay)}` }, 400);
+  }
+  const day: Day = (rawDay as Day) ?? berlinDay();
+  const view = has(body, "view") ? body.view : "week";
+  if (view !== "day" && view !== "week") {
+    return c.json({ error: `view must be "day" or "week", got ${JSON.stringify(view)}` }, 400);
+  }
+  const dryRun = has(body, "dry_run") && body.dry_run === true;
+
+  try {
+    const r = await syncCalendarWindow({ day, view, dryRun });
+    return c.json({
+      ok: true,
+      dry_run: r.dry_run,
+      window: r.window,
+      events: r.events,
+      created: r.created.length,
+      updated: r.updated.length,
+      skipped: r.skipped.length,
+      detail: { created: r.created, updated: r.updated, skipped: r.skipped },
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Calendar sync failed: ${msg}` }, 502);
+  }
+});
+
+/**
+ * POST /api/daily/gtasks/sync — Google Tasks in both directions.
+ *
+ * Who wins is decided per row by the cached `gtask_updated` stamp, not by a
+ * clock comparison across two machines. See lib/gtasks-sync.ts.
+ */
+r.post("/gtasks/sync", async (c) => {
+  const body = await readBody(c);
+
+  const tasklist =
+    has(body, "tasklist") && typeof body.tasklist === "string"
+      ? (body.tasklist as string)
+      : undefined;
+  const dryRun = has(body, "dry_run") && body.dry_run === true;
+
+  try {
+    const r2 = await syncGoogleTasks({ tasklist, dryRun });
+    return c.json({
+      ok: true,
+      dry_run: r2.dry_run,
+      tasklist: r2.tasklist,
+      remote: r2.remote,
+      pushed_new: r2.pushed_new.length,
+      pushed_update: r2.pushed_update.length,
+      pulled_new: r2.pulled_new.length,
+      pulled_update: r2.pulled_update.length,
+      unchanged: r2.unchanged,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Google Tasks sync failed: ${msg}` }, 502);
+  }
+});
+
+/**
+ * POST /api/daily/quick — one-line capture, shared by every surface.
+ *
+ *   { kind: "todo",        text: "buy proxies @business !high ~90m due:friday" }
+ *   { kind: "appointment", text: "dentist tomorrow 14:00 90m" }
+ *
+ * The desktop composer, the Telegram bridge and the manager agent all land here
+ * rather than each growing their own grammar — the failure mode being that
+ * `/todo` means one thing on the phone and another on the desktop.
+ */
+r.post("/quick", async (c) => {
+  const body = await readBody(c);
+  const kind = has(body, "kind") ? body.kind : "todo";
+  const text = has(body, "text") && typeof body.text === "string" ? (body.text as string) : "";
+
+  if (!text.trim()) {
+    return c.json({ error: "text is required" }, 400);
+  }
+
+  if (kind === "todo") {
+    const parsed = parseTodo(text);
+    if (!parsed) return c.json({ error: "could not read a task out of that" }, 400);
+
+    const task = await createTask({
+      title: parsed.title,
+      area: parsed.area,
+      importance: parsed.importance,
+      planned_day: parsed.planned_day,
+      due_day: parsed.due_day,
+      est_min: parsed.est_min,
+    });
+    // Not synced to Google here on purpose: the 5-minute tick owns that, and
+    // doing it inline would make a capture wait on a network round trip.
+    return c.json({ ok: true, kind: "todo", task: decorate(task), applied: parsed.applied }, 201);
+  }
+
+  if (kind === "appointment") {
+    const parsed = parseAppointment(text);
+    if (!parsed) {
+      return c.json(
+        {
+          error:
+            'no time found — try "dentist tomorrow 14:00 90m" or "call Sem in 2h"',
+        },
+        400,
+      );
+    }
+    try {
+      const event = await createCalendarEvent({
+        summary: parsed.summary,
+        start: parsed.start,
+        end: parsed.end,
+      });
+      return c.json(
+        {
+          ok: true,
+          kind: "appointment",
+          event,
+          start: parsed.start,
+          end: parsed.end,
+          duration_min: parsed.durationMin,
+        },
+        201,
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `Failed to create calendar event: ${msg}` }, 502);
+    }
+  }
+
+  return c.json({ error: `kind must be "todo" or "appointment", got ${JSON.stringify(kind)}` }, 400);
+});
+
+/**
+ * GET /api/daily/glucose — readings for the week board's overlay.
+ *
+ * Same window grammar as /calendar, so the overlay and the grid can never
+ * disagree about which days they are drawing.
+ *
+ * Answers 200 with an empty array when nothing has been collected yet. An empty
+ * chart is a true statement about a sensor that has not reported; a 404 would
+ * read as a broken feature.
+ */
+r.get("/glucose", async (c) => {
+  const view = c.req.query("view");
+  if (view !== undefined && view !== "day" && view !== "week") {
+    return c.json({ error: `view must be "day" or "week", got "${view}"` }, 400);
+  }
+  const rawDay = c.req.query("day");
+  if (rawDay !== undefined && !isDay(rawDay)) {
+    return c.json({ error: `day must be YYYY-MM-DD, got "${rawDay}"` }, 400);
+  }
+  const day: Day = rawDay ?? berlinDay();
+  const w = view === "day" ? dayWindow(day) : weekWindow(day);
+
+  try {
+    const [readings, latest] = await Promise.all([
+      listReadings(w.start, w.end),
+      latestReading(),
+    ]);
+    return c.json({
+      ok: true,
+      window: { start: w.start, end: w.end },
+      count: readings.length,
+      latest,
+      readings,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Failed to read glucose: ${msg}` }, 500);
   }
 });
 
@@ -329,7 +637,7 @@ function validateTaskFields(body: Body): string | null {
     }
   }
   if (has(body, "importance") && body.importance !== null) {
-    const v = intInRange(body.importance, "importance", 0, 3);
+    const v = intInRange(body.importance, "importance", 0, 5);
     if (!v.ok) return `${v.error} (3 critical / 2 high / 1 normal / 0 low)`;
   }
   if (has(body, "status") && body.status !== null) {
@@ -398,7 +706,14 @@ r.patch("/tasks/:id", async (c) => {
   const patch: Parameters<typeof updateTask>[1] = {};
   if (has(body, "title")) patch.title = (body.title as string).trim();
   if (has(body, "area")) patch.area = body.area as string | null;
-  if (has(body, "importance")) patch.importance = body.importance as number;
+  if (has(body, "importance")) {
+    // PATCH had no range check at all, which is how the scale could drift
+    // silently before 0049 added a CHECK. Validate here so the caller gets a
+    // 400 rather than a constraint violation surfacing as a 500.
+    const v = intInRange(body.importance, "importance", 0, 5);
+    if (!v.ok) return c.json({ error: v.error }, 400);
+    patch.importance = v.value;
+  }
   if (has(body, "status")) patch.status = body.status as TaskStatus;
   if (has(body, "planned_day")) patch.planned_day = body.planned_day as Day | null;
   if (has(body, "due_day")) patch.due_day = body.due_day as Day | null;
@@ -694,7 +1009,7 @@ r.post("/:day/reflect", async (c) => {
   if (!guard.ok) return c.json({ error: guard.error }, 400);
   const body = await readBody(c);
   if (has(body, "subjective") && body.subjective !== null) {
-    const v = intInRange(body.subjective, "subjective", 1, 5);
+    const v = intInRange(body.subjective, "subjective", 1, 10);
     if (!v.ok) return c.json({ error: v.error }, 400);
   }
   if (has(body, "reflection") && body.reflection !== null && typeof body.reflection !== "string") {

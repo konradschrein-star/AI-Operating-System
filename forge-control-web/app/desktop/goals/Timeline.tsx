@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import {
-  fetchCalendarEvents,
+  fetchCalendarView,
   createCalendarEvent,
   createDayTask,
   updateDayTask,
@@ -107,13 +107,16 @@ export function Timeline({ day, tasks, taskActions, narrow }: TimelineProps) {
     scrollRef.current.scrollTop = targetHour * HOUR_HEIGHT;
   }, [day, isToday, now]);
 
-  // Fetch Google Calendar events for the day window
-  const startIso = `${day}T00:00:00Z`;
-  const endIso = `${day}T23:59:59Z`;
-
+  // Google Calendar events for this day.
+  //
+  // The window is resolved server-side in Europe/Berlin. It used to be built
+  // here as `${day}T00:00:00Z`..`${day}T23:59:59Z`, which asks for a UTC day:
+  // in summer that starts at 02:00 local and ends at 01:59 the NEXT morning, so
+  // an early event vanished from its own day and two hours of tomorrow appeared
+  // at the bottom of this one.
   const calendarQ = useQuery({
-    queryKey: ["calendar-events", day],
-    queryFn: () => fetchCalendarEvents(startIso, endIso),
+    queryKey: ["calendar-events", "day", day],
+    queryFn: () => fetchCalendarView("day", day),
     refetchInterval: 60_000,
     placeholderData: keepPreviousData,
   });

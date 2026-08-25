@@ -105,18 +105,34 @@ export function EmptyState({
 /* ── colour maps ─────────────────────────────────────────────────────────── */
 
 /** 3 critical / 2 high / 1 normal / 0 low (§2). */
+/**
+ * Konrad's six Notion levels (migration 0049), colour-coded so the scale is
+ * readable at a glance rather than a number you have to remember.
+ *
+ * The ramp is deliberate: red for the two that must happen today, amber for
+ * important, neutral for normal, and progressively greyer below — so the eye
+ * lands on the top of the list without reading a word.
+ */
+export const IMPORTANCE_SCALE: readonly {
+  value: number;
+  label: string;
+  short: string;
+  color: string;
+}[] = [
+  { value: 5, label: "ultra important", short: "ultra", color: "#ff4d4f" },
+  { value: 4, label: "really important", short: "really", color: "#ff9f43" },
+  { value: 3, label: "important", short: "important", color: "#f6bf26" },
+  { value: 2, label: "normal", short: "normal", color: "#4dabf7" },
+  { value: 1, label: "secondary", short: "secondary", color: "#8d99ae" },
+  { value: 0, label: "insignificant", short: "insignificant", color: "#5c6370" },
+];
+
 export function importanceColor(n: number): string {
-  if (n >= 3) return tokens.bleed;
-  if (n === 2) return tokens.warn;
-  if (n === 1) return tokens.info;
-  return tokens.textGhost;
+  return IMPORTANCE_SCALE.find((l) => l.value === n)?.color ?? tokens.textGhost;
 }
 
 export function importanceLabel(n: number): string {
-  if (n >= 3) return "critical";
-  if (n === 2) return "high";
-  if (n === 1) return "normal";
-  return "low";
+  return IMPORTANCE_SCALE.find((l) => l.value === n)?.short ?? "normal";
 }
 
 const AREA_COLORS: readonly string[] = [
@@ -128,9 +144,8 @@ const AREA_COLORS: readonly string[] = [
   tokens.stuck,
 ];
 
-/** `area` is free text (§2), so its colour is derived rather than mapped —
- *  a new area invented at the quick-add box gets a stable colour without a
- *  code change. */
+/** `area` is free text, so its colour is derived rather than mapped — a new
+ *  area invented at the quick-add box gets a stable colour with no code change. */
 export function areaColor(area: string): string {
   let h = 0;
   for (let i = 0; i < area.length; i++) h = (h * 31 + area.charCodeAt(i)) >>> 0;
