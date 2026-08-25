@@ -825,6 +825,80 @@ export async function recentLimitHits(days = 14, limit = 20): Promise<LimitHit[]
 }
 
 /**
+ * Un-terminate a run the STUCK WATCHDOG flipped by mistake, so the work it was
+ * doing resumes instead of failing its task and blocking its project.
+ *
+ * Measured 2026-08-25: the executor is ONE pm2 fork-mode process, so
+ * `heartbeat()` and `stuckWatchdogTick()` are two timers on one event loop.
+ * When the loop stalls past HEARTBEAT_STUCK_THRESHOLD_MS they race, and the
+ * watchdog winning writes `status = 'stuck'` on a run whose engine child is
+ * still working — 46 flips, 42 finished turns discarded, ≥ $83.01 thrown away.
+ * `scripts/ops/safe-restart.sh:11-13` has said so verbatim all along: "a run
+ * can sit in 'stuck' while its process is very much alive and working".
+ *
+ * Deliberately a SEPARATE function from `requeueRunAfterApiOverload` /
+ * `requeueRunAfterUsageWall` rather than a `kind` parameter on either, for the
+ * reason stated there and one more of its own. The three share this SQL today
+ * and are three different outages with three different policies, and they need
+ * SEPARATE attempt counters — sharing one would let a stale-heartbeat flip burn
+ * the retries a real quota wall needs, and would make each outage's give-up
+ * decision depend on the others' history. The extra reason here: this one's
+ * precondition is not `status = 'failed'` at all, so a shared body would have
+ * to branch on `kind` in its WHERE clause, which is exactly where a guard goes
+ * to die.
+ *
+ * THE GUARD IS THE WHOLE SAFETY ARGUMENT. `status = 'stuck' AND stuck_signal =
+ * 'heartbeat_stale'` is the only pair this may ever un-terminate, because
+ * `heartbeat_stale` is written by exactly ONE code path — the watchdog — and it
+ * is a GUESS about liveness. Everything else keeps its meaning: a 'cancelled'
+ * run was killed on purpose and must stay dead, a 'completed' one has already
+ * been reconciled, a 'failed' one belongs to the two functions above, and a
+ * `stuck_signal = 'timeout'` run is a real wall-clock decision that owns its own
+ * manual Resume path (PLAN.md §5 — deliberately out of scope, not overlooked).
+ *
+ * NO `wake_after`, unlike its two siblings: there is no outage to wait out. The
+ * watchdog was wrong about a stall that has already passed, so the work should
+ * resume at once — the next `claimNextRun()` is the right moment.
+ *
+ * Returns whether the row actually moved, so the caller can fall back to the
+ * ordinary failure path instead of assuming a park that never happened.
+ */
+export async function requeueRunAfterStuck(input: {
+  runId: string;
+  /** 1-based; persisted as metadata.stuck_recovery_attempts and read back by
+   *  the next reconcile to enforce STUCK_RECOVERY_MAX_ATTEMPTS. */
+  attempt: number;
+  /** Appended to the thread so the false alarm is visible in the run's
+   *  transcript — and, on resume, is the text the engine is handed. It tells
+   *  the agent to check what it already committed before redoing anything. */
+  note: string;
+}): Promise<boolean> {
+  const entry: ThreadEntry = {
+    role: "system",
+    content: input.note,
+    ts: new Date().toISOString(),
+    kind: "text",
+    meta: { stuck_recovery: true, stuck_recovery_attempt: input.attempt },
+  };
+  const r = await pool.query(
+    `UPDATE runs
+        SET status = 'queued',
+            wake_after = NULL,
+            completed_at = NULL,
+            stuck_signal = NULL,
+            thread = thread || $2::jsonb,
+            metadata = COALESCE(metadata, '{}'::jsonb) ||
+                       jsonb_build_object('stuck_recovery_attempts', $3::int),
+            updated_at = now()
+      WHERE id = $1
+        AND status = 'stuck'
+        AND stuck_signal = 'heartbeat_stale'`,
+    [input.runId, JSON.stringify([entry]), input.attempt],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
  * Park a run that died of a transient API overload (529/503) so the next tick
  * picks it up again, instead of the reconcile failing its task and blocking the
  * project over a busy server.
