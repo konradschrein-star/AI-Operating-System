@@ -107,7 +107,7 @@ forge-executor, and **no HTTP route writes it, ever** — the same no-PATCH ruli
 protects `write_set`. Note `:7700` is unauthenticated on loopback (GET `/api/projects` →
 200 from this worker shell), so "no route" is the whole defence at the API layer.
 
-**2. What dispatches the measurement.** `projectTick()` (`project-tick.ts:2909-2957`,
+**2. What dispatches the measurement.** `projectTick()` (`project-tick.ts:2909-2948`,
 called from `executor.ts:1864` every ~10 s), in a new step `settleContracts()` placed
 **after** `reconcileSettledTasks()` and **before** `closeFinishedProjects()`. It selects
 the *closable* set only — `status='active'`, no row `NOT IN ('done','cancelled')`
@@ -144,9 +144,9 @@ amended — the waiver is the disclosure the ruling asks for, and a renumbered m
 the API (§4.1), but it is loud: the close push names the waiver and its `by`.
 
 **4. How Konrad sees it broke.** Same three surfaces as R70, one message each, pushed
-once on the crossing and re-armed on clear (`r70Escalated` pattern, `:2854`):
+once on the crossing and re-armed on clear (`r70Escalated` pattern, `:2864`):
 `notifications` → Telegram (source `project`, `db/notifications.ts:39`); the manager
-chat when `origin_chat_id` is set (`managerChatRunId`, `db/projects.ts:2549`); and
+chat when `origin_chat_id` is set (`managerChatRunId`, `db/projects.ts:2551`); and
 `GET /api/projects/:id` → `metadata.contract.result`. The text distinguishes the two
 failures by shape, and so does `result.status`:
 
