@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "CANONICAL PreToolUse hook registration for every Claude CLI identity the",
+    "fleet spawns. This file is the SOURCE OF TRUTH; scripts/ops/install-hooks.sh",
+    "merges the `hooks` object below into each account's settings.json without",
+    "touching any other key.",
+    "",
+    "Hook registration is PER CLAUDE_CONFIG_DIR (memory: hook-registration-is-per-claude-config-dir).",
+    "A second enabled account whose settings.json lacks these entries runs",
+    "COMPLETELY UNGUARDED — which is the whole reason install-hooks.sh reads the",
+    "account list out of claude_accounts rather than assuming /root/.claude.",
+    "",
+    "Order inside a matcher is significant only in that BOTH hooks run and the",
+    "first non-zero exit wins; guard-service-restart.py is listed first because",
+    "it is the older, narrower, purely-local guard and answers without any HTTP",
+    "call at all.",
+    "",
+    "The command paths are the LIVE /opt/ai-os/scripts/<name> symlinks that",
+    "install-symlinks.sh points back into this repo. Do not rewrite them to a",
+    "worktree path: a worktree is deleted when its project finishes and the",
+    "hook would then silently vanish from every turn on the box."
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "/opt/ai-os/scripts/guard-service-restart.py" },
+          { "type": "command", "command": "/opt/ai-os/scripts/guard-autonomy.py" }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "/opt/ai-os/scripts/guard-protected-paths.py" }
+        ]
+      }
+    ]
+  }
+}

@@ -255,6 +255,29 @@ gate_sh "check-usage-fold.ts — standalone typecheck (outside forge-control's t
 gate_sh "pnpm test — forge-control unit suite" \
   "cd forge-control && pnpm test 2>&1 | grep -E '^# (tests|pass|fail)'"
 
+# The autonomy enforcement layer. These three hooks run BEFORE EVERY Bash,
+# Write and Edit call made by every agent on this box, so a regression in them
+# is a fleet-wide regression — which is exactly the class of thing this file
+# exists to keep visible. All three suites are self-contained: the classifier
+# assertions run in-process against the REPO copy of the hook (never
+# /opt/ai-os/scripts/..., which is the live file), and the exit-code contract
+# runs against a local stub HTTP server on an ephemeral port. Nothing here
+# contacts :7700 — a blocked case against the live API inserts a real
+# guardrail_trips row, so a gate that ran that way would pollute the audit log
+# on every green run.
+gate_sh "test-guard-autonomy.py — classifier matrix + exit-code contract" \
+  "python3 scripts/ops/test-guard-autonomy.py | tail -3"
+gate_sh "test-guard-service-restart.py" \
+  "python3 scripts/ops/test-guard-service-restart.py | tail -3"
+gate_sh "test-guard-protected-paths.py — the Write/Edit hole the Bash hooks cannot see" \
+  "python3 scripts/ops/test-guard-protected-paths.py | tail -3"
+# 2>&1 is load-bearing: check-ops-scripts.sh writes its FAIL lines to stderr,
+# so a bare `| tail -3` prints three passing section headers over a red exit
+# code and hides which check broke (memory: gates-808 `tail -6` hid gate 8's
+# FAILs the same way). The window is 8, wide enough for its FAIL lines.
+gate_sh "check-ops-scripts.sh — scripts/ops/ inventory, modes, hook registration" \
+  "scripts/checks/check-ops-scripts.sh 2>&1 | tail -8"
+
 gate_sh "psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard" \
   "node docs/plan/artifacts/phase800/psql-argv-leak.cjs | tail -4"
 gate_sh "nav-walk-sampling.cjs — round 807 finding 4, the arithmetic" \

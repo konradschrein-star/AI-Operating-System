@@ -52,12 +52,35 @@ FILES=(
   goal-files-pane.json
   goal-manager-split.json
   goal-operator-visibility.json
+  guard-service-restart.py
+  guard-autonomy.py
+  guard-protected-paths.py
+  test-guard-service-restart.py
+  test-guard-autonomy.py
+  test-guard-protected-paths.py
+  install-hooks.sh
+  hooks.settings.json
 )
 
 # git only tracks the executable bit (100644/100755) — it cannot represent
 # check-vps2-backup.sh's tighter 750 (group r-x, world none). Restore it here
 # on every install rather than relying on the checkout's mode.
 RESTRICTED_MODE_FILES=(check-vps2-backup.sh)
+
+# The three PreToolUse hooks are invoked by the Claude CLI as commands. A hook
+# that has lost its executable bit does not fail loudly — it fails as a hook
+# that did not run, which is indistinguishable from a box with no guard on it
+# at all. git DOES round-trip 755, so this is belt-and-braces rather than a
+# workaround; it costs one chmod and removes a silent-disable path.
+EXEC_MODE_FILES=(
+  guard-service-restart.py
+  guard-autonomy.py
+  guard-protected-paths.py
+  test-guard-service-restart.py
+  test-guard-autonomy.py
+  test-guard-protected-paths.py
+  install-hooks.sh
+)
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 fail=0
@@ -103,6 +126,9 @@ done
 if [ "$DRY_RUN" = 0 ]; then
   for f in "${RESTRICTED_MODE_FILES[@]}"; do
     chmod 750 "$REPO_ROOT/scripts/ops/$f"
+  done
+  for f in "${EXEC_MODE_FILES[@]}"; do
+    chmod 755 "$REPO_ROOT/scripts/ops/$f"
   done
 fi
 

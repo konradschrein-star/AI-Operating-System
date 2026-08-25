@@ -28,13 +28,16 @@ bad()  { echo "FAIL: $*" >&2; fail=1; }
 # own FILES array, which this check cross-references below.
 EXPECTED_EXEC=(
   safe-restart.sh claude-code-autoupdate.sh reap-orphan-agents.sh pg-backup.sh
-  fleet-watchdog.sh stalled-projects.sh check-corpus-backup.sh
+  fleet-watchdog.sh fleet-pulse.sh stalled-projects.sh check-corpus-backup.sh
   check-vps2-backup.sh prune-corpus-offbox.sh agy-dropout-stopgap.sh canvas
   deploy-goal-mode.sh deploy-retier.sh rebuild-web.sh install-symlinks.sh
+  guard-service-restart.py guard-autonomy.py guard-protected-paths.py
+  test-guard-service-restart.py test-guard-autonomy.py test-guard-protected-paths.py
+  install-hooks.sh
 )
 EXPECTED_NONEXEC=(
   goal-engine-v2.json goal-files-pane.json goal-manager-split.json
-  goal-operator-visibility.json README.md
+  goal-operator-visibility.json hooks.settings.json README.md
 )
 
 note "presence + permissions"
@@ -67,10 +70,24 @@ for f in "${EXPECTED_EXEC[@]}"; do
   rm -f /tmp/check-ops-scripts.$$.err
 done
 
+note "python syntax"
+for f in "${EXPECTED_EXEC[@]}"; do
+  case "$f" in *.py) ;; *) continue ;; esac
+  p="$OPS/$f"
+  [ -f "$p" ] || continue
+  python3 -m py_compile "$p" 2>/tmp/check-ops-scripts.$$.pyerr || \
+    bad "py_compile failed for scripts/ops/$f: $(cat /tmp/check-ops-scripts.$$.pyerr)"
+  rm -f /tmp/check-ops-scripts.$$.pyerr
+done
+
 note "install-symlinks.sh FILES list matches what's on disk"
 if [ -f "$OPS/install-symlinks.sh" ]; then
   installer_files="$(sed -n '/^FILES=(/,/^)/p' "$OPS/install-symlinks.sh" | grep -oE '^\s*[A-Za-z0-9._-]+\s*$' | tr -d ' ' | sort)"
-  disk_files="$(cd "$OPS" && ls -1 | grep -vE '^(install-symlinks\.sh|README\.md)$' | sort)"
+  # __pycache__ is generated, not managed: the three test suites import the
+  # hooks under test with importlib and CPython drops bytecode next to them.
+  # It is gitignored; excluding it here keeps a test run from turning this
+  # check red as a side effect of having been run.
+  disk_files="$(cd "$OPS" && ls -1 | grep -vE '^(install-symlinks\.sh|README\.md|__pycache__)$' | sort)"
   if [ "$installer_files" != "$disk_files" ]; then
     bad "install-symlinks.sh FILES array is out of sync with scripts/ops/ contents"
     diff <(echo "$installer_files") <(echo "$disk_files") >&2 || true
@@ -92,8 +109,56 @@ else
   bad "missing: scripts/ops/safe-restart.sh"
 fi
 
+note "hooks.settings.json is the canonical registration and matches the hooks on disk"
+# Asserted against the PARSED object, never grepped. hooks.settings.json carries
+# a `_comment` block that names all three scripts in prose, so a grep for
+# 'guard-autonomy.py' passes whether or not the entry exists — the shared
+# substring would make the check inert (memory: assertion-inert-shared-substring).
+HS="$OPS/hooks.settings.json"
+if [ -f "$HS" ]; then
+  python3 - "$HS" "$OPS" <<'PYEOF' || bad "hooks.settings.json does not match the hooks on disk (see above)"
+import json, os, sys
+path, ops = sys.argv[1], sys.argv[2]
+want = {
+    "Bash": ["/opt/ai-os/scripts/guard-service-restart.py",
+             "/opt/ai-os/scripts/guard-autonomy.py"],
+    "Write|Edit|MultiEdit": ["/opt/ai-os/scripts/guard-protected-paths.py"],
+}
+try:
+    doc = json.load(open(path))
+except json.JSONDecodeError as exc:
+    print(f"  hooks.settings.json is not valid JSON: {exc}"); sys.exit(1)
+
+groups = doc.get("hooks", {}).get("PreToolUse")
+if not isinstance(groups, list):
+    print("  hooks.PreToolUse is missing or not a list"); sys.exit(1)
+
+got = {}
+for g in groups:
+    got.setdefault(g.get("matcher"), []).extend(h.get("command") for h in g.get("hooks", []))
+
+rc = 0
+if got != want:
+    print(f"  registration mismatch:\n    want {want}\n    got  {got}")
+    rc = 1
+# Every registered command must resolve to a file that actually exists in this
+# directory. The live path is a symlink into here (install-symlinks.sh), so a
+# hook registered under a name nothing ships is a hook that never runs.
+for cmds in want.values():
+    for c in cmds:
+        local = os.path.join(ops, os.path.basename(c))
+        if not os.path.isfile(local):
+            print(f"  registered command has no file in scripts/ops/: {c}"); rc = 1
+        elif not os.access(local, os.X_OK):
+            print(f"  registered command is not executable: {c}"); rc = 1
+sys.exit(rc)
+PYEOF
+else
+  bad "missing: scripts/ops/hooks.settings.json"
+fi
+
 if [ "$fail" = 0 ]; then
-  echo "PASS: scripts/ops/ is complete, modes are correct, syntax is clean, installer is in sync, safe-restart.sh guards are present"
+  echo "PASS: scripts/ops/ is complete, modes are correct, syntax is clean, installer is in sync, safe-restart.sh guards are present, hook registration matches disk"
 else
   echo "one or more checks FAILED — see above" >&2
 fi
