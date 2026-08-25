@@ -851,7 +851,7 @@ export const FLEET_CODE_DEFAULT_TIER: FleetTaskTier = "gemini";
  * What each tier actually dispatches on, and what it is for.
  *
  * ── WHY THE MODEL ID IS SPELLED OUT ──────────────────────────────────────
- * This picker chooses which model spends Konrad's money. It used to read
+ * This picker chooses which model the fleet is billed for. It used to read
  * "junior — Claude 3.5 Sonnet" and "fast — Claude 3.5 Haiku" while
  * `TIER_MODELS` (forge-control/src/lib/project-tick.ts) dispatched
  * `claude-sonnet-5` and `claude-haiku-4-5-20251001` — a whole model generation
