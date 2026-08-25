@@ -97,12 +97,27 @@ import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
 import {
   requeueRunAfterUsageWall,
   requeueRunAfterApiOverload,
+  requeueRunAfterStuck,
 } from "../db/runs.ts";
 import {
   classifyApiOverload,
   planApiOverloadRetry,
   API_OVERLOAD_MAX_RETRIES,
 } from "./api-overload.ts";
+/* The stuck-run pair, and the reason neither is re-implemented here:
+ * `sessionProcessAlive` is THE liveness instrument (one /proc walk, shared with
+ * the watchdog), and stuck-recovery.ts is the pure decision table. Both live in
+ * lib/ and import nothing from executor.ts — projectTick() is CALLED from
+ * executor.ts:1864, so importing back would close a module cycle and a
+ * top-level const on either side of one crashes at boot rather than at test
+ * time (that has happened here: browser-takeover ↔ takeover-ticket). */
+import { sessionProcessAlive } from "./run-liveness.ts";
+import {
+  classifyStuck,
+  planStuckRecovery,
+  stuckResumeNote,
+  STUCK_RECOVERY_MAX_ATTEMPTS,
+} from "./stuck-recovery.ts";
 import { queueNotification, lastNotificationAt } from "../db/notifications.ts";
 
 const AGENTS_DIR = process.env.AGENTS_DIR ?? "/root/.claude/agents";
@@ -2498,6 +2513,169 @@ export async function deferForApiOverload(
   return true;
 }
 
+/**
+ * A run the STUCK WATCHDOG flipped is not a run whose work failed.
+ *
+ * Measured 2026-08-25: the executor is ONE pm2 fork-mode process, so
+ * `heartbeat()` (5s per in-flight run) and `stuckWatchdogTick()` are two timers
+ * on one event loop sharing one pg pool. When the loop stalls past
+ * HEARTBEAT_STUCK_THRESHOLD_MS the two come due together and race; the watchdog
+ * winning writes `status = 'stuck'` on a run whose engine child is still
+ * working, and — because `heartbeat()` only writes `WHERE status = 'running'` —
+ * that flip used to be a one-way trapdoor. 46 flips, 42 finished turns
+ * discarded, ≥ $83.01 of already-paid work, 5 tasks at the attempt cap, 4
+ * projects blocked and 18 tasks wedged 07:03–12:00 UTC with the fleet idle.
+ * Every one of the 35 stuck rows on the live DB carried
+ * `stuck_signal = 'heartbeat_stale'` — the watchdog's own marker, a GUESS about
+ * liveness rather than a decision. `scripts/ops/safe-restart.sh:11-13` has said
+ * so verbatim all along; this function is where project-tick stops disagreeing
+ * with it.
+ *
+ * Mirrors `deferForUsageWall` / `demoteAfterEngineFailure` /
+ * `deferForApiOverload` in shape and in contract: returns true when the caller
+ * must `continue`, false to fall through to the ordinary failure path. Every
+ * `false` lands on the old behaviour (task failed, project blocked, Konrad
+ * told), so returning false is ALWAYS safe — which is what makes the watchdog
+ * keep working on a run that really is dead.
+ *
+ * The two unconditional refusals, each for its own reason:
+ *  - not 'stuck' — a `failed`/`cancelled` run belongs to the three siblings and
+ *    to the ordinary path. This equality is also half of the disjointness
+ *    argument for the ordering (see the call site).
+ *  - no run row — nothing to requeue.
+ *
+ * Then the decision table, which is `planStuckRecovery` in ./stuck-recovery —
+ * pure, so every route through it is reachable in a test. This function keeps
+ * the I/O and the reporting:
+ *
+ *  | signal + liveness                            | here                    | task      | project  |
+ *  | -------------------------------------------- | ----------------------- | --------- | -------- |
+ *  | heartbeat_stale + process ALIVE              | hold: write nothing     | 'running' | 'active' |
+ *  | heartbeat_stale + gone + attempts left       | requeueRunAfterStuck    | 'running' | 'active' |
+ *  | heartbeat_stale + gone + attempts exhausted  | give up → false         | 'failed'  | blocked  |
+ *  | 'timeout' or anything else                   | give up → false         | 'failed'  | blocked  |
+ *
+ * THE PROJECT-STATUS TERM GATES `resume` ONLY, AND IT SITS BELOW THE PLAN.
+ * The three siblings check `projectAcceptsWork` up front because every action
+ * they can take is a re-queue: for them "the project is not accepting work"
+ * and "do not start this" are the same sentence. This function has an action
+ * they do not — `hold`, which starts nothing, spends nothing, and merely
+ * declines to lie about a task whose process is still running — so the up-front
+ * placement was a resume-only argument applied to both, and it was wrong. On a
+ * blocked/paused/cancelled project it hard-failed a demonstrably ALIVE run and
+ * burned its attempt; the child then finished and landed through completeRun's
+ * reclaim, leaving `run = 'completed'` carrying real work beside
+ * `task = 'failed'` — PERMANENTLY, because `listSettledRunningTasks` only ever
+ * re-reads `pt.status = 'running'`. That is the original defect surviving
+ * inside its own fix. So:
+ *  - `hold` holds regardless of project status. A queued run is invisible to
+ *    project status, but a run that is ALREADY RUNNING is not queued — the
+ *    money is spent either way, and holding is self-terminating: liveness is
+ *    re-proven every tick, so the moment the process dies the same row falls to
+ *    `resume`, which is gated, and then to `give_up`.
+ *  - `resume` keeps the siblings' refusal verbatim in effect: the executor's
+ *    claim loop knows about runs, not projects, so re-queuing one on a project
+ *    that is not accepting work would smuggle billable work past the gate.
+ *
+ * ORDER OF THE TWO READS. `classifyStuck` first, and the /proc walk ONLY for a
+ * `heartbeat_stale` row. This is not a micro-optimisation: `readEngineCmdlines`
+ * is a SERIAL `await readFile` over every pid on the box (749 measured live,
+ * docs/plan/evidence/stuck-heartbeat-latency.md flags its unquantified cost as
+ * the leading remaining suspect for the >90s gaps), and this function runs on
+ * the SAME event loop whose stalls cause the flips. Paying for it on a row the
+ * policy gives up on regardless would be adding latency to the bug. It is
+ * provably free of behaviour change and pinned by a test:
+ * `planStuckRecovery` ignores `processAlive` entirely unless
+ * `kind === "heartbeat_stale"`. The price of moving the project term below it
+ * is that a `heartbeat_stale` row on a non-active project now pays for that
+ * walk before being refused; that is bounded by the number of stuck rows on
+ * dead projects and is what buys the correctness above.
+ */
+export async function deferForStuckRun(
+  task: SettledRunningTask,
+  project: Project | null,
+): Promise<boolean> {
+  if (task.run_status !== "stuck" || !task.run_id) return false;
+
+  const kind = classifyStuck(task.run_stuck_signal);
+  /* `false` here means "no evidence of life", never "proven dead" — a run with
+   * no cc_session_id never reached saveCcSession, and a FIRST-turn claude child
+   * carries no session id in its argv at all (the CLI mints it; only
+   * `--resume <id>` puts it there). lib/run-liveness.ts states that asymmetry,
+   * and it is why executor.ts's completeRun reclaim (COMPLETABLE_STATUS_SQL) is
+   * the required other half of this fix rather than a belt to this brace. */
+  const alive =
+    kind === "heartbeat_stale" && task.run_session_id
+      ? await sessionProcessAlive(task.run_session_id)
+      : false;
+
+  const plan = planStuckRecovery({
+    kind,
+    processAlive: alive,
+    priorAttempts: task.stuck_recovery_attempts,
+  });
+
+  if (plan.action === "hold") {
+    console.warn(
+      `[project-tick] run ${task.run_id} of ${task.role} task ${task.id} (round ${task.round}) ` +
+        `is flagged 'stuck' but its engine process is demonstrably ALIVE (session ` +
+        `${task.run_session_id}) — the watchdog mistook a latency stall for a dead run; its ` +
+        `completion will land on its own — task NOT failed, project NOT blocked`,
+    );
+    return true;
+  }
+
+  if (plan.action === "give_up") {
+    console.warn(
+      `[project-tick] task ${task.id} (${task.role} · ${task.title}) sits in 'stuck' ` +
+        `(signal ${task.run_stuck_signal ?? "null"}) — ${plan.reason}; falling back to the ` +
+        `normal failure path`,
+    );
+    return false;
+  }
+
+  /* `resume` — and ONLY `resume` — is a re-queue, so this is where the
+   * siblings' project-status refusal belongs. Above the plan it also caught
+   * `hold`, which failed a live run and burned its attempt; see the docstring.
+   * Past this point the engine process is known GONE (a live one is held, and
+   * `planStuckRecovery` returns `resume` only for `processAlive: false`). */
+  if (!project || !projectAcceptsWork(project.status)) {
+    console.warn(
+      `[project-tick] run ${task.run_id} of task ${task.id} was flipped to 'stuck' and its ` +
+        `engine process is gone, but its project is ${project?.status ?? "unreadable"} — ` +
+        `failing it rather than re-queuing work on a project that is not accepting any`,
+    );
+    return false;
+  }
+
+  const resumed = await requeueRunAfterStuck({
+    runId: task.run_id,
+    attempt: plan.attempt,
+    note: stuckResumeNote({ attempt: plan.attempt }),
+  });
+  if (!resumed) {
+    // The row was no longer 'stuck'/'heartbeat_stale' when the write landed —
+    // completeRun reclaimed it, Konrad cancelled it, or another path moved it
+    // between listSettledRunningTasks() and here. Do NOT pretend the resume
+    // happened: that would leave the task 'running' behind a run nobody is
+    // going to claim.
+    console.warn(
+      `[project-tick] task ${task.id}: run ${task.run_id} was no longer a stale-heartbeat ` +
+        `'stuck' row when the resume went to write — falling back to the normal failure path`,
+    );
+    return false;
+  }
+
+  console.warn(
+    `[project-tick] stale-heartbeat flip — resumed the SAME run ${task.run_id} for ${task.role} ` +
+      `task ${task.id} (round ${task.round}, attempt ${plan.attempt}/` +
+      `${STUCK_RECOVERY_MAX_ATTEMPTS}, same worktree and session so it can see its own ` +
+      `commits) — ${plan.reason} — task NOT failed, project NOT blocked — ${project.name} · ` +
+      `${task.title}`,
+  );
+  return true;
+}
+
 /** Notification source for the engine-fallback push, and how long one push
  *  speaks for. Its own source string so `lastNotificationAt` dedups it
  *  against ITSELF and not against the usage-wall pushes — two different
@@ -2668,6 +2846,19 @@ async function reconcileSettledTasks(): Promise<void> {
       const project = await getProject(task.project_id).catch(() => null);
       const name = project?.name ?? task.project_id;
       if (task.run_status !== "completed") {
+        // A run the stuck WATCHDOG flipped is not a run whose work failed: the
+        // flip is a guess about liveness made by a timer racing the heartbeat
+        // on one event loop. Held while its process is alive, resumed as the
+        // SAME run when it is gone, and only then allowed to fail.
+        //
+        // FIRST of the four, and the placement provably cannot matter: all
+        // three guards below return false unless `run_status === 'failed'`
+        // (their first line is an equality on it), and this one returns false
+        // unless `run_status === 'stuck'`. Disjoint predicates — at most one of
+        // the four can ever fire for a given task, whatever the order. That is
+        // asserted in project-tick-stuck.test.ts rather than left as a claim,
+        // because it is what makes moving this line safe.
+        if (await deferForStuckRun(task, project)) continue;
         // R860: a run killed by the subscription's usage wall is parked behind
         // runs.wake_after and retried on its own — the task stays 'running' and
         // the project stays 'active'. Everything else falls through unchanged.

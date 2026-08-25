@@ -292,6 +292,19 @@ gate_sh "reproduce-cleanliness — re-running a protocol leaves the tree untouch
    echo \"before: \$before\"; echo \"after:  \$after\"; \
    [ \"\$before\" = \"\$after\" ] && { echo 'PASS — tree untouched'; exit 0; } || { echo 'FAIL — tree changed'; exit 1; }"
 
+# Needs a THROWAWAY Postgres (never content_forge — the harness itself refuses
+# to run against a URL naming it). Same posture as check-usage-fold.ts above:
+# SKIPPED, loudly, rather than reported as passing, when no such database has
+# been provisioned. docs/plan/evidence/stuck-trapdoor-proof.md names the one
+# this project provisioned and left in place.
+if [ -n "${DRYRUN_DATABASE_URL:-}" ]; then
+  gate_sh "stuck-trapdoor-dryrun.mts — watchdog flip/hold + COMPLETABLE_STATUS_SQL reclaim, against a real Postgres" \
+    "cd forge-control && ./node_modules/.bin/tsx ../docs/plan/evidence/stuck-trapdoor-dryrun.mts | tail -25"
+else
+  skip "stuck-trapdoor-dryrun.mts — watchdog flip/hold + COMPLETABLE_STATUS_SQL reclaim" \
+    "DRYRUN_DATABASE_URL is unset; this gate needs a THROWAWAY Postgres database (never content_forge) — see docs/plan/evidence/stuck-trapdoor-proof.md"
+fi
+
 echo
 echo "================================================================================"
 echo " SUMMARY — $n gates"

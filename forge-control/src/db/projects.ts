@@ -2054,11 +2054,34 @@ export async function roundIsComplete(
 /** Tasks whose run has settled but whose task row hasn't been reconciled yet
  *  — the other half of the project-tick loop.
  *
- *  'stuck' counts as settled. It is a terminal state for the TASK even though
- *  the run itself stays resumable: the watchdog only flips a run to 'stuck'
- *  after 90s without a heartbeat, i.e. the engine process is gone or hung.
- *  Before this, such a task sat 'running' forever with no owner and the
- *  project could never close or wedge — it just went quiet (E4). */
+ *  'stuck' counts as settled — it must be VISIBLE here, because before that
+ *  such a task sat 'running' forever with no owner and the project could
+ *  never close or wedge; it just went quiet (E4). But visible is not the same
+ *  as dead, and the sentence that used to stand here said otherwise:
+ *
+ *      "the watchdog only flips a run to 'stuck' after 90s without a
+ *       heartbeat, i.e. the engine process is gone or hung."
+ *
+ *  THAT SENTENCE WAS THE BUG, IN PROSE. The "i.e." does not follow. The
+ *  executor is ONE pm2 fork-mode process, so `heartbeat()` (5s per in-flight
+ *  run) and `stuckWatchdogTick()` are two timers on one event loop sharing one
+ *  pg pool; when the loop stalls past HEARTBEAT_STUCK_THRESHOLD_MS they come
+ *  due together and race, and the watchdog winning flips a run whose claude
+ *  child is still working. Measured 2026-08-25: 46 flips, 42 finished turns
+ *  discarded, ≥ $83.01 of already-paid work — and every one of the 35 stuck
+ *  rows on the live DB carried `stuck_signal = 'heartbeat_stale'`, the
+ *  watchdog's own marker, i.e. a GUESS about liveness rather than a decision.
+ *
+ *  `scripts/ops/safe-restart.sh:11-13` has said the opposite of the old
+ *  sentence, verbatim, all along:
+ *
+ *      "Status is NOT a reliable signal: a run can sit in 'stuck' while its
+ *       process is very much alive and working"
+ *
+ *  So a consumer of this row may NOT read `run_status = 'stuck'` as "the work
+ *  failed". `stuck_signal` and a liveness check decide that, which is why the
+ *  three columns below are projected — see lib/project-tick.ts's
+ *  `deferForStuckRun` and lib/stuck-recovery.ts for the decision table. */
 export interface SettledRunningTask extends ProjectTask {
   run_status: RunStatus;
   /** Last ASSISTANT message — the verdict text. */
@@ -2072,6 +2095,24 @@ export interface SettledRunningTask extends ProjectTask {
    *  (529/503). Its own counter, NOT shared with the usage wall: two different
    *  outages must not spend each other's retries. */
   api_overload_attempts: number;
+  /** `runs.stuck_signal` — free-text varchar(64), NULL for every run that was
+   *  never flipped. Only `'heartbeat_stale'` (the watchdog's guess) is
+   *  recoverable; `'timeout'` is a real decision owning its own manual Resume
+   *  path. lib/stuck-recovery.ts's `classifyStuck` reads it into a closed set. */
+  run_stuck_signal: string | null;
+  /** Times this run has already been resumed after a stale-heartbeat flip. Its
+   *  OWN counter, shared with NEITHER of the two above: three different outages
+   *  must not spend each other's retries, and each one's give-up decision must
+   *  not depend on the others' history. Same reason spelled out at
+   *  db/runs.ts's `requeueRunAfterApiOverload`. */
+  stuck_recovery_attempts: number;
+  /** `runs.metadata.cc_session_id` — the id `sessionProcessAlive()` looks for
+   *  in /proc. Projected here rather than fetched by a second query per stuck
+   *  task: the caller runs inside the executor's single event loop, which is
+   *  the very thing whose stalls cause these flips. NULL for a run that never
+   *  reached `saveCcSession`, which is "no evidence of life", not "dead" —
+   *  lib/run-liveness.ts states that asymmetry. */
+  run_session_id: string | null;
 }
 
 export async function listSettledRunningTasks(): Promise<SettledRunningTask[]> {
@@ -2081,7 +2122,10 @@ export async function listSettledRunningTasks(): Promise<SettledRunningTask[]> {
             ${LAST_ASSISTANT_TEXT} AS last_text,
             ${LAST_ERROR_TEXT} AS last_error,
             COALESCE((r.metadata->>'usage_wall_attempts')::int, 0) AS usage_wall_attempts,
-            COALESCE((r.metadata->>'api_overload_attempts')::int, 0) AS api_overload_attempts
+            COALESCE((r.metadata->>'api_overload_attempts')::int, 0) AS api_overload_attempts,
+            r.stuck_signal AS run_stuck_signal,
+            COALESCE((r.metadata->>'stuck_recovery_attempts')::int, 0) AS stuck_recovery_attempts,
+            r.metadata->>'cc_session_id' AS run_session_id
        FROM project_tasks pt
        JOIN runs r ON r.id = pt.run_id
       WHERE pt.status = 'running'
