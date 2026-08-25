@@ -913,6 +913,8 @@ export interface RunDetail extends RunSummary {
   stuck_signal: string | null;
   started_at: string | null;
   completed_at: string | null;
+  from?: number;
+  total?: number;
 }
 
 export const fetchChatList = async (
@@ -1035,48 +1037,105 @@ export const archiveAllChats = async (): Promise<number> => {
  *  bare `RunDetail` unchanged. */
 export type RunDelta = Omit<RunDetail, "prompt"> & { prompt?: string };
 
+export interface FetchChatOptions {
+  since?: number;
+  before?: number;
+  limit?: number;
+}
+
 export function fetchChat(id: string): Promise<RunDetail>;
 export function fetchChat(
   id: string,
   since: number,
 ): Promise<{ run: RunDelta; from: number; total: number }>;
-export async function fetchChat(id: string, since?: number) {
-  const suffix = since !== undefined ? `?since=${since}` : "";
+export function fetchChat(
+  id: string,
+  options: FetchChatOptions,
+): Promise<{ run: RunDelta; from: number; total: number }>;
+export async function fetchChat(
+  id: string,
+  optionsOrSince?: number | FetchChatOptions,
+): Promise<RunDetail | { run: RunDelta; from: number; total: number }> {
+  let suffix = "";
+  if (typeof optionsOrSince === "number") {
+    suffix = `?since=${optionsOrSince}`;
+  } else if (optionsOrSince !== undefined) {
+    const params = new URLSearchParams();
+    if (optionsOrSince.since !== undefined)
+      params.set("since", String(optionsOrSince.since));
+    if (optionsOrSince.before !== undefined)
+      params.set("before", String(optionsOrSince.before));
+    if (optionsOrSince.limit !== undefined)
+      params.set("limit", String(optionsOrSince.limit));
+    const qs = params.toString();
+    if (qs) suffix = `?${qs}`;
+  }
   const r = await getJson<{ run: RunDelta; from: number; total: number }>(
     `/chat/${id}${suffix}`,
   );
-  return since === undefined ? (r.run as RunDetail) : r;
+  if (optionsOrSince === undefined) {
+    return { ...(r.run as RunDetail), from: r.from, total: r.total };
+  }
+  return r;
 }
 
 /** Poll a chat's thread incrementally: request only what forge-control
- *  hasn't already shown the cached `prev` (thread.length entries — the
+ *  hasn't already shown the cached `prev` (computed tail cursor `(prev.from ?? 0) + prev.thread.length` — the
  *  KNOWN LEAD in this project's brief: an open long chat was re-shipping its
  *  whole ~2.1 MB thread on every poll), then splice the delta back in.
  *
- *  No `prev` (first mount, or the cache entry was evicted): falls back to a
- *  full fetch. `from !== prev.thread.length`: the server recovered to a full
- *  fetch on its own (`since` didn't match its live total — e.g. `/compact`
- *  shortened the thread between polls) — trusting the stale local count and
- *  appending anyway would duplicate every entry the cache still holds, so
- *  the full replacement thread wins outright.
+ *  `getPrev` is a THUNK, not a snapshot value, and is called twice: once
+ *  before the network request (to size the `since` cursor) and once again
+ *  right after the response lands, to re-read whatever is in the cache at
+ *  that moment. This closes a race a snapshot argument cannot: the fetch
+ *  spans a network round trip, and `AssistantThread`'s backward-pagination
+ *  handlers (`handleShowOlder`/`handleShowAll`) write to the same cache key
+ *  synchronously via `qc.setQueryData`. A merge built from a `prev` captured
+ *  before that write would return a stale object that this queryFn's own
+ *  return value then overwrites the cache with — silently erasing the
+ *  older turns that were just prepended. Re-reading at merge time picks up
+ *  that write instead of clobbering it. (Prepending older turns changes
+ *  `prev.from` and `prev.thread.length` but not their sum, so the tail this
+ *  delta was requested against is still valid against the re-read value.)
  *
- *  Delta responses (`from === prev.thread.length`) omit the static `prompt`
- *  field to save steady-state bandwidth (~86% savings). The client preserves
- *  `prev.prompt` across delta merges. If an empty delta arrives, `prev.thread`'s
- *  array reference is kept (no new render for a thread that didn't change); a
- *  non-empty one is appended. */
+ *  No `prev` (first mount, or the cache entry was evicted before the
+ *  request even started): falls back to a full fetch. `from !== tail`: the
+ *  server recovered to a fresh bounded snapshot on its own (`since` didn't
+ *  match its live total — e.g. `/compact` shortened the thread between
+ *  polls) — trusting the stale local count and appending anyway would
+ *  duplicate every entry the cache still holds, so the full replacement
+ *  thread wins outright.
+ *
+ *  Delta responses (`from === tail`) omit the static `prompt` field to save
+ *  steady-state bandwidth (~86% savings). The client preserves the cached
+ *  `prompt` across delta merges. If an empty delta arrives, the cached
+ *  `thread`'s array reference is kept (no new render for a thread that
+ *  didn't change); a non-empty one is appended. */
 export async function fetchChatDelta(
   id: string,
-  prev: RunDetail | undefined,
+  getPrev: () => RunDetail | undefined,
 ): Promise<RunDetail> {
+  const prev = getPrev();
   if (prev === undefined) return fetchChat(id);
-  const { run, from } = await fetchChat(id, prev.thread.length);
-  if (from !== prev.thread.length) return run as RunDetail;
+  const tail = (prev.from ?? 0) + prev.thread.length;
+  const { run, from, total } = await fetchChat(id, { since: tail });
+  const latest = getPrev() ?? prev;
+  if (from !== tail) return { ...(run as RunDetail), from, total };
   const prompt =
-    "prompt" in run && run.prompt !== undefined ? run.prompt : prev.prompt;
+    "prompt" in run && run.prompt !== undefined ? run.prompt : latest.prompt;
   const thread =
-    run.thread.length === 0 ? prev.thread : [...prev.thread, ...run.thread];
-  return { ...prev, ...run, prompt, thread };
+    run.thread.length === 0 ? latest.thread : [...latest.thread, ...run.thread];
+  return { ...latest, ...run, prompt, thread, from: latest.from ?? 0, total };
+}
+
+/** Fetch older historical turns before index `before` (default limit: 60 turns).
+ *  Used for backward pagination when scrolling up or clicking "show older". */
+export async function fetchChatOlder(
+  id: string,
+  before: number,
+  limit = 60,
+): Promise<{ run: RunDelta; from: number; total: number }> {
+  return fetchChat(id, { before, limit });
 }
 
 /** Which project — if any — this chat started. Shape of
