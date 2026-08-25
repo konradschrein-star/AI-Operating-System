@@ -240,15 +240,62 @@ describe("failure ordering", () => {
     assert.deepEqual(rec.order, ["updateRule:fs.destructive", "notify", "audit:rule.update"]);
   });
 
-  test("a broken audit table still pings Konrad, and fails loudly", async () => {
-    // The change has already landed in guardrail_rules by this point. Silence
-    // would be the worst outcome; a 500 next to a delivered notification is the
-    // honest one. `queueNotification` itself never throws (db/notifications.ts).
+  test("a broken audit table still pings Konrad, and says so in the body", async () => {
+    // The change has already landed in `guardrail_rules` by this point. Round 1
+    // let the audit error propagate, so the caller saw a 500 for a rule change
+    // that had really happened — the console then rendered "failed" over a guard
+    // that was genuinely off. The status code now describes the MUTATION and the
+    // `audit` field describes the LOG, separately, because they really did have
+    // different outcomes. `queueNotification` never throws (db/notifications.ts).
     auditThrows = true;
     const res = await post("/rules/fs.destructive", { enabled: false });
-    assert.equal(res.status, 500);
+    assert.equal(res.status, 200, "the rule change happened; do not report it as failed");
+    const body = (await res.json()) as {
+      rule: unknown;
+      audit: string;
+      audit_error?: string;
+    };
+    assert.ok(body.rule, "the patched rule is still returned");
+    assert.equal(body.audit, "failed");
+    assert.match(
+      body.audit_error ?? "",
+      /guardrail_rule_changes/,
+      "the reason is reported, not swallowed",
+    );
     assert.equal(rec.notes.length, 1, "Konrad is told even when the log is broken");
     assert.deepEqual(rec.audits, [], "and the row genuinely did not land");
+  });
+
+  test("a broken audit table on a trip resolve reports the same way", async () => {
+    auditThrows = true;
+    const res = await post(`/trips/${KNOWN_TRIP}/resolve`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { resolved: boolean; audit: string };
+    assert.equal(body.resolved, true, "resolveTrip committed; the body must say so");
+    assert.equal(body.audit, "failed");
+    assert.equal(rec.notes.length, 1);
+  });
+
+  test("the happy path carries audit:'ok', so a caller can tell them apart", async () => {
+    const patched = await post("/rules/fs.destructive", { enabled: false });
+    assert.equal(patched.status, 200);
+    assert.equal(((await patched.json()) as { audit: string }).audit, "ok");
+
+    const resolved = await post(`/trips/${KNOWN_TRIP}/resolve`);
+    assert.equal(resolved.status, 200);
+    assert.equal(((await resolved.json()) as { audit: string }).audit, "ok");
+    assert.equal(rec.audits.length, 2);
+  });
+
+  test("a FAILED mutation is still a failure — the audit field never rescues it", async () => {
+    // The discrimination that matters: `audit` reports the LOG, and must not be
+    // readable as "the change went through". A 404 keeps its 404 and writes
+    // neither a notification nor an audit row.
+    auditThrows = true;
+    const res = await post("/rules/no-such-rule", { enabled: false });
+    assert.equal(res.status, 404);
+    assert.deepEqual(rec.notes, []);
+    assert.deepEqual(rec.audits, []);
   });
 });
 

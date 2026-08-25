@@ -5,22 +5,30 @@
 # in scripts/ops/, and safe-restart.sh still carries the two guards that were
 # built and measured the hard way (self-exclusion, single-instance lock).
 #
-# This checks the REPO'S copies only — it never touches /opt/ai-os/scripts or
-# any live host state, so it is safe to run from a build task under the
-# worktree-only policy. Verifying the actual host install (symlinks in place,
-# safe-restart.sh run against a real pm2 service) is a deploy/verify-task job.
+# This checks the REPO'S copies only. The one exception is the permission check
+# below, which READS (never writes) the symlink at $TARGET_DIR to decide whether
+# this checkout is the installed one — a single `readlink`, no mutation, safe
+# from a build task under the worktree-only policy. Verifying the actual host
+# install (symlinks in place, safe-restart.sh run against a real pm2 service)
+# is still a deploy/verify-task job.
 #
 # Usage:  scripts/checks/check-ops-scripts.sh
+# Env:    FORGE_OPS_TARGET_DIR — where install-symlinks.sh puts its symlinks.
+#         Defaults to install-symlinks.sh's own TARGET_DIR (/opt/ai-os/scripts).
+#         Overridden by scripts/checks/prove-ops-mode-bites.sh, which stands up
+#         a scratch install so the mode assertion can be watched failing.
 # Exit:   0 — every check passed
 #         1 — something is missing, mismodes, or the guard logic regressed
 
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OPS="$REPO/scripts/ops"
+TARGET_DIR="${FORGE_OPS_TARGET_DIR:-/opt/ai-os/scripts}"
 fail=0
 
 note() { echo "-- $*"; }
 bad()  { echo "FAIL: $*" >&2; fail=1; }
+skip() { echo "SKIP: $*"; }
 
 # Managed files: the shell/canvas scripts + JSON payloads + the two docs.
 # Kept as a literal list (not derived) so this check can tell an intentional
@@ -54,9 +62,35 @@ done
 # check-vps2-backup.sh must stay tighter than the rest — it embeds VPS2's SSH
 # monitor invocation. git can only round-trip 644/755, so an installer or a
 # careless `chmod` regressing it to world-readable would be silent otherwise.
+#
+# WHERE THAT ASSERTION IS TRUE, AND WHERE IT CANNOT BE.
+# A fresh `git clone` or `git worktree add` materialises this file as 755 —
+# git stores 100755 and has no way to record 750. Asserting 750 unconditionally
+# therefore made this check RED in EVERY checkout on the box, which mattered the
+# moment round 1 wired it into scripts/checks/gates-808.sh: a latent assertion
+# nobody ran became the shared suite's permanent `RED: 1` for every project,
+# unrelated to any of their work (memory: inherited-assertion-newly-wired-is-
+# not-inherited-red).
+#
+# The mode is only meaningful where install-symlinks.sh has been run, because
+# that is what sets it: it symlinks $TARGET_DIR/<f> -> <repo>/scripts/ops/<f>
+# and then chmods the REPO file to 750. So "the installed copy" and "this
+# checkout" are the same inode exactly when the symlink resolves back here —
+# that, not a hardcoded path, is the discriminator.
+#
+# This is location-awareness, not a softened assertion. On the installed
+# checkout the check still demands 750 and still fails at 755; the failing
+# transcript is scripts/checks/prove-ops-mode-bites.sh, which stands up a
+# scratch $TARGET_DIR and watches it go red.
 if [ -f "$OPS/check-vps2-backup.sh" ]; then
   mode="$(stat -c '%a' "$OPS/check-vps2-backup.sh")"
-  [ "$mode" = "750" ] || bad "check-vps2-backup.sh mode is $mode, expected 750"
+  link="$TARGET_DIR/check-vps2-backup.sh"
+  if [ -L "$link" ] && [ "$(readlink -f "$link")" = "$(readlink -f "$OPS/check-vps2-backup.sh")" ]; then
+    [ "$mode" = "750" ] || \
+      bad "check-vps2-backup.sh mode is $mode, expected 750 — this checkout is the one installed at $TARGET_DIR; re-run scripts/ops/install-symlinks.sh"
+  else
+    skip "check-vps2-backup.sh mode is $mode — not asserting 750: $TARGET_DIR/check-vps2-backup.sh does not link back to this checkout, so nothing has ever set the mode here (git stores 100755 and cannot carry 750)"
+  fi
 fi
 
 note "shell syntax"

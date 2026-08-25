@@ -205,6 +205,78 @@ OUTBOUND_HOST_RE = re.compile(
 )
 
 
+HEREDOC_OP_RE = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def heredoc_marker(line: str):
+    """`(dash, marker)` for the first REAL heredoc redirection on this line.
+
+    "Real" is the whole point, and it is why this is a left-to-right scan rather
+    than one `re.search` over the raw line. Three shapes carry the characters
+    `<<` and start no heredoc at all:
+
+        echo "see << NOTE"       -- inside a quoted string; just text
+        echo $((1 << 3))         -- an arithmetic left shift
+        cat <<< "$s"             -- a here-STRING, whose body is on the line
+
+    The old regex matched all three, and because the caller then discarded every
+    line up to a marker that never comes, `echo "see << NOTE"` followed by a
+    recursive delete classified as NOTHING: exit 0, no audit line, no trip row.
+    Bash runs both lines. Measured against the live hook and the repo copy alike
+    (memory: strip-heredocs-swallows-the-rest-of-the-command).
+
+    Quote state is tracked because that is the only thing that distinguishes the
+    first case, and `$((` depth because it is the only thing that distinguishes
+    the second: after `<<` in `$((x << n))` the token `n` is a perfectly good
+    heredoc marker name. The marker's own quoting must BALANCE (`<<'EOF'`,
+    `<<"EOF"` or bare `<<EOF`); a lone quote is not a heredoc introducer, and
+    being strict here fails toward classifying more input, which is the safe
+    direction for a sanitiser sitting in front of a security classifier.
+    """
+    i, n = 0, len(line)
+    quote = None
+    arith = 0
+    while i < n:
+        ch = line[i]
+        if quote is not None:
+            if ch == "\\" and quote == '"':
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            i += 1
+            continue
+        if line.startswith("$((", i):
+            arith += 1
+            i += 3
+            continue
+        if arith and line.startswith("))", i):
+            arith -= 1
+            i += 2
+            continue
+        if line.startswith("<<", i):
+            if line.startswith("<<<", i):
+                i += 3          # here-string: body is on this line, nothing to skip
+                continue
+            if arith:
+                i += 2          # `x << n` inside $(( … ))
+                continue
+            m = HEREDOC_OP_RE.match(line, i)
+            if m:
+                return m.group(1), m.group(3)
+            i += 2
+            continue
+        i += 1
+    return None
+
+
 def strip_heredocs(cmd: str) -> str:
     """Remove heredoc BODIES, keeping the command lines around them.
 
@@ -221,24 +293,37 @@ def strip_heredocs(cmd: str) -> str:
     the prose ended the body early and the remaining note lines were classified
     as commands. Only `<<-` strips leading TABS (not spaces), so only `<<-`
     accepts an indented marker here.
+
+    THIS FUNCTION DROPS INPUT, WHICH MAKES IT THE DANGEROUS KIND OF PRE-FILTER.
+    Two rules keep it honest, both added in round 5 after the round-4 review:
+
+    1. Only a real heredoc introducer opens a body -- see `heredoc_marker`.
+    2. When the marker line never arrives, the remaining lines are KEPT and
+       classified, not discarded. An unterminated heredoc is a command bash
+       itself rejects, so there is no legitimate shape to protect there; the
+       only thing the old behaviour protected was the evasion.
     """
     out, lines = [], cmd.split("\n")
     i = 0
     while i < len(lines):
         line = lines[i]
         out.append(line)
-        m = re.search(r"<<(-?)\s*[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?", line)
+        hd = heredoc_marker(line)
         i += 1
-        if not m:
+        if hd is None:
             continue
-        dash, marker = m.group(1), m.group(2)
-        while i < len(lines):
-            candidate = lines[i].lstrip("\t") if dash else lines[i]
+        dash, marker = hd
+        j, found = i, -1
+        while j < len(lines):
+            candidate = lines[j].lstrip("\t") if dash else lines[j]
             if candidate == marker:
+                found = j
                 break
-            i += 1
-        if i < len(lines):
-            i += 1  # drop the closing marker too
+            j += 1
+        if found >= 0:
+            i = found + 1  # drop the body AND the closing marker
+        # else: no terminator anywhere -- leave `i` alone so the outer loop
+        # appends (and the caller classifies) every remaining line.
     return "\n".join(out)
 
 
@@ -366,18 +451,79 @@ def substitution_bodies(cmd: str):
 # routine. Scanned from the raw string once, then passed down every recursion.
 # ---------------------------------------------------------------------------
 
+# A whole statement that is nothing but `NAME=<literal>`.
+#
+# Both halves of that sentence are load-bearing:
+#
+# * <literal> excludes `$`, a backtick and a backslash outside single quotes, so
+#   the value this hook reads is the value bash will use. Inside `'…'` a `$` is
+#   literal to bash too, so it is allowed there.
+# * "a whole statement" -- terminated by `;`, `&&`, `|`, a newline, `)` or the
+#   end of the string -- is what separates a shell VARIABLE from a per-command
+#   ENV PREFIX. `SC=/tmp/x; rm -rf $SC` deletes /tmp/x; `SC=/tmp/x rm -rf $SC`
+#   passes SC in rm's environment and expands `$SC` from the CALLER's scope,
+#   which this hook cannot see. Resolving the second shape would be an evasion:
+#   `SC=/tmp/safe rm -rf $SC` with SC=/opt/content-forge exported.
+LITERAL_ASSIGN_RE = re.compile(
+    r"""(?:^|(?<=[;&|\n(]))\s*
+        ([A-Za-z_][A-Za-z0-9_]*)=
+        (?:"([^"$`\\]*)"|'([^'`]*)'|([^\s;&|<>()"'`$\\]*))
+        \s*(?=$|[;&|\n)])
+    """,
+    re.X,
+)
+
+
 def scan_context(cmd: str) -> dict:
     mktemp_vars = set()
     for m in re.finditer(
         r"([A-Za-z_][A-Za-z0-9_]*)=[\"']?(?:\$\(\s*mktemp|`\s*mktemp)", cmd
     ):
         mktemp_vars.add(m.group(1))
+
+    # Literal assignments made IN this command, so a target written `$SC` can be
+    # judged on the value that is plainly visible two words earlier instead of
+    # being blocked as unresolvable. This is the round-4 review's finding 6: the
+    # live guard blocked `SC=/tmp/…; rm -rf $SC` (trip 5c9fc766) -- a false
+    # positive on exactly the /tmp scratch cleanup the routine-path list exists
+    # to allow, and the shape that gets a guard switched off.
+    #
+    # REASSIGNMENT POISONS THE ENTRY. `SC=/tmp/x; …; SC=/opt/content-forge; rm
+    # -rf $SC` has two values and this scanner has no order of operations, so
+    # the only safe answer is "unresolvable" -- back to rule 5, blocked.
+    literal_at = {}
+    for m in LITERAL_ASSIGN_RE.finditer(cmd):
+        value = next((v for v in m.groups()[1:] if v is not None), "")
+        literal_at[m.start(1)] = value
+
+    # EVERY assignment occurrence is enumerated, then each is asked whether the
+    # strict pattern above claimed that exact position. A name assigned a
+    # literal once and something opaque elsewhere must come out unresolvable,
+    # which is why this is keyed on position and not on the name.
+    values: dict = {}
+    unresolvable = set()
+    for m in re.finditer(r"(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=", cmd):
+        name, pos = m.group(1), m.start(1)
+        if pos in literal_at:
+            values.setdefault(name, set()).add(literal_at[pos])
+        else:
+            unresolvable.add(name)
+    literal_vars = {
+        name: vals.pop()
+        for name, vals in values.items()
+        if name not in unresolvable and len(vals) == 1
+    }
+
     created_dbs = set()
     for m in re.finditer(
         r"CREATE\s+DATABASE\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?([A-Za-z0-9_$]+)", cmd, re.I
     ):
         created_dbs.add(m.group(1).lower())
-    return {"mktemp_vars": mktemp_vars, "created_dbs": created_dbs}
+    return {
+        "mktemp_vars": mktemp_vars,
+        "literal_vars": literal_vars,
+        "created_dbs": created_dbs,
+    }
 
 
 def _var_name(target: str):
@@ -400,8 +546,25 @@ def is_routine_path(p: str, cwd: str, ctx: dict) -> bool:
     var = _var_name(p)
     if var is not None:
         # Rule 4: the same command created it, so removing it is cleanup.
+        if var in ctx["mktemp_vars"]:
+            return True
+        # Rule 4b: the same command ASSIGNED it a literal, so the value is not
+        # invisible at all -- judge the value. Only the bare `$SC` / `${SC}`
+        # forms qualify: `${SC:-/opt/x}` and `${SC%/foo}` are the variable put
+        # through an operator this hook does not evaluate, and resolving those
+        # to the plain value would be reading a different string than bash runs.
+        if p in ("$" + var, "${" + var + "}"):
+            literal = ctx["literal_vars"].get(var)
+            if literal is not None:
+                # One hop only. A literal that is itself `$OTHER` gets no second
+                # lookup -- `_var_name` will match it, `mktemp_vars` will not
+                # contain it, and `literal_vars` is emptied for the recursion,
+                # so it lands on rule 5 and stays blocked.
+                return is_routine_path(
+                    literal, cwd, {**ctx, "literal_vars": {}}
+                )
         # Rule 5: any other variable stays blocked -- the value is invisible here.
-        return var in ctx["mktemp_vars"]
+        return False
 
     # Rule 2: a relative target means "inside cwd"; resolve it before judging.
     if not p.startswith("/"):
@@ -583,10 +746,19 @@ def classify_segment(words, cwd: str, ctx: dict, depth: int):
     return match_rules(head, rest, words, cwd, ctx, unknown_targets)
 
 
+# `-c` anywhere in a short-option CLUSTER, not just at its end. The previous
+# pattern anchored `c` to the end of the token, so `bash -cx 'rm -rf /opt/x'`
+# -- valid bash, same semantics as `bash -xc` -- returned None, `classify_segment`
+# returned None with it, and the headline wrapper CATCH was defeated by one
+# transposed letter. `--` still cannot match: `[a-zA-Z]` does not accept `-`,
+# so `--command` and every long option are unaffected.
+SHELL_C_RE = re.compile(r"^-[a-zA-Z]*c[a-zA-Z]*$")
+
+
 def _shell_c_argument(rest):
-    """The script string of `sh -c <s>` / `bash -lc <s>`, or None."""
+    """The script string of `sh -c <s>` / `bash -lc <s>` / `bash -cx <s>`, or None."""
     for i, tok in enumerate(rest):
-        if re.match(r"^-[a-zA-Z]*c$", tok) and i + 1 < len(rest):
+        if SHELL_C_RE.match(tok) and i + 1 < len(rest):
             return rest[i + 1]
     return None
 

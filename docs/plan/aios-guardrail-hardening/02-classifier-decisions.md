@@ -508,14 +508,22 @@ of this task's write-set.
 
 Recorded so the next round starts from a list rather than from scratch.
 
-1. **`test-guard-autonomy.py` has no cases for the four rules added during this
-   task** — newline segmentation, the `2>&1` fd prefix, `cd`-tracking, and the
+1. ~~**`test-guard-autonomy.py` has no cases for the four rules added during this
+   task**~~ — newline segmentation, the `2>&1` fd prefix, `cd`-tracking, and the
    `browser-profiles/scratch` exception. That file is owned by the previous task
    and is not in this task's write-set, so it was left untouched rather than
    edited. The evidence in §2 and §4 is reproducible but lives in `/tmp` probes,
    not in the committed suite. **This is the highest-value follow-up in this
    document:** the newline bug was a silent full-fleet evasion that a green
    140-case suite did not notice.
+
+   **CLOSED in round 5** (fix cycle 1, round-4 blocker B3). All four families are
+   in the committed suite — 140 → 188 cases — and the newline rule is now
+   discriminated by 11 of them. The proof that they are not decorative is
+   `scripts/checks/prove-guard-bites.sh`: seven real behaviour reverts, each
+   turning the suite red, subject md5 unchanged across the run. Reverting
+   `punctuation_chars` to the stock set (M2, the revert round 4 found the suite
+   green under) now fails 11 cases.
 2. **Non-Bash tools** (`Write`, `Edit`, MCP) still bypass `guard-autonomy.py`
    entirely. `guard-protected-paths.py` closes the narrow, high-value part of
    that hole — the hook files, `/opt/ai-os/scripts/`, and `/root/.claude/`

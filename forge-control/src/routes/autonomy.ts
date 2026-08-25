@@ -22,8 +22,24 @@ import { guardrail } from "../middleware/guardrail.ts";
  * quiet path is back. Round-0 finding P1-1 is exactly that shape.
  *
  * ORDER MATTERS: notify first, audit second. `queueNotification` never throws;
- * `recordRuleChange` does. So a broken audit table costs a 500 and a log line,
- * never Konrad's notification about a change that has already landed.
+ * `recordRuleChange` does. So a broken audit table never costs Konrad the
+ * notification about a change that has already landed.
+ *
+ * AND THE STATUS CODE TELLS THE TRUTH ABOUT WHAT LANDED. Round 1 let the audit
+ * failure propagate, so a caller got a 500 for a rule change that was already
+ * committed in `guardrail_rules` — the console then rendered "failed" over a
+ * guard that really had been switched off, which is the most dangerous possible
+ * lie for this particular surface. It is not hypothetical: the table arrives
+ * with migration 0051, and the live database does not have it yet, so a restart
+ * ordered before the migration makes EVERY toggle take this path.
+ *
+ * So the mutation's own outcome is the status code, and the audit's outcome is
+ * a separate, explicit field: `audit: "ok" | "failed"` with `audit_error` when
+ * it failed. A caller that ignores the field sees a 200 for a change that did
+ * happen; a caller that reads it knows the log is broken. The alternative —
+ * transacting the audit row with the mutation — would mean a broken audit table
+ * BLOCKING Konrad from turning a guardrail off, which is the failure direction
+ * this control plane must never have.
  */
 
 /** Everything these handlers touch outside their own process, injected so the
@@ -61,6 +77,37 @@ export function tripResolveNotice(
   return `🛡 guardrail trip ${tripId.slice(0, 8)} resolved (source ${source})`;
 }
 
+/** What the audit write did, reported beside the mutation's own outcome. */
+export type AuditOutcome =
+  | { audit: "ok" }
+  | { audit: "failed"; audit_error: string };
+
+/**
+ * Write the audit row, and turn a failure into a reportable outcome instead of
+ * an exception. Never swallows it silently — the reason is logged AND returned
+ * in the response body.
+ *
+ * The `input` type is `recordRuleChange`'s first parameter rather than a
+ * hand-written duplicate, so a change to the audit shape is a compile error
+ * here instead of a runtime surprise.
+ */
+async function auditOutcome(
+  record: typeof recordRuleChange,
+  input: Parameters<typeof recordRuleChange>[0],
+): Promise<AuditOutcome> {
+  try {
+    await record(input);
+    return { audit: "ok" };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(
+      `[autonomy] audit row NOT written for ${input.kind} ` +
+        `(${input.rule_id ?? input.trip_id ?? "?"}): ${message}`,
+    );
+    return { audit: "failed", audit_error: message };
+  }
+}
+
 export function createAutonomyRouter(deps: AutonomyRouterDeps): Hono {
   const r = new Hono();
 
@@ -80,13 +127,13 @@ export function createAutonomyRouter(deps: AutonomyRouterDeps): Hono {
       ruleChangeNotice(id, body, source),
       NOTIFY_SOURCE,
     );
-    await deps.recordRuleChange({
+    const audit = await auditOutcome(deps.recordRuleChange, {
       kind: "rule.update",
       rule_id: id,
       patch: body,
       source,
     });
-    return c.json({ rule });
+    return c.json({ rule, ...audit });
   });
 
   // Generic check endpoint — any caller (forge-executor, HCP, a Hermes worker
@@ -124,12 +171,12 @@ export function createAutonomyRouter(deps: AutonomyRouterDeps): Hono {
 
     const source = normalizeChangeSource(c.req.header("x-forge-source"));
     await deps.queueNotification(tripResolveNotice(id, source), NOTIFY_SOURCE);
-    await deps.recordRuleChange({
+    const audit = await auditOutcome(deps.recordRuleChange, {
       kind: "trip.resolve",
       trip_id: id,
       source,
     });
-    return c.json({ resolved: true });
+    return c.json({ resolved: true, ...audit });
   });
 
   // Demo: a no-op "agent action" endpoint gated by the destructive category.
