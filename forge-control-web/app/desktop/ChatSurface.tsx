@@ -53,6 +53,7 @@ import {
 } from "./chat/pollBudget";
 import { effortRamp } from "./chat/effort-ramp";
 import { FileExplorerPanel } from "./chat/FileExplorerPanel";
+import { subscribeOpenFile } from "./chat/open-file-bus";
 import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
 import {
   findSlash,
@@ -710,6 +711,21 @@ export function ChatSurface({
     "team",
     (v): v is "team" | "files" => v === "team" || v === "files",
   );
+  // Clicking a file path in a message opens it in the Files panel. The panel
+  // does the navigating — it owns that state; this makes the panel VISIBLE so
+  // there is something to navigate in. Both halves matter: on the Team tab the
+  // explorer is not even mounted, and a collapsed sidebar shows neither tab,
+  // so without these two lines the click lands somewhere Konrad cannot see and
+  // reads as nothing happening.
+  useEffect(
+    () =>
+      subscribeOpenFile(() => {
+        setPanelTab("files");
+        setPanelCollapsed(false);
+      }),
+    [setPanelTab, setPanelCollapsed],
+  );
+
   const [search, setSearch] = useState("");
   const [searchScope, setSearchScope] = useState<"open" | "all">("all");
   const [deleteTarget, setDeleteTarget] = useState<RunSummary | null>(null);

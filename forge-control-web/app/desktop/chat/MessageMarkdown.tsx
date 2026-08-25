@@ -1,10 +1,140 @@
 "use client";
 
-import { memo } from "react";
+import { memo, type MouseEvent as ReactMouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { tokens } from "../../tokens";
+import { searchFiles, fetchFileRoots } from "../../api";
 import { rehypeForgeAllowlist, safeHref } from "./rehype-forge-allowlist";
+import {
+  codeText,
+  detectPath,
+  documentHref,
+  type PathTarget,
+  type RootKey,
+} from "./code-path-link";
+import { requestOpenFile } from "./open-file-bus";
+import { toast } from "../_ui/Toasts";
+
+/** Ctrl on everything except Apple hardware, where the chord is ⌘. */
+function modifierLabel(): string {
+  if (typeof navigator === "undefined") return "Ctrl";
+  return /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)
+    ? "⌘"
+    : "Ctrl";
+}
+
+/** Roots searched for a bare filename, in the order Konrad is likeliest to
+ *  mean. The vault first: most references in chat are to his own notes; the
+ *  source trees last, because a bare `page.tsx` matches in a dozen places
+ *  there and a vault note of the same name is almost certainly what was
+ *  meant. */
+const SEARCH_ROOTS: readonly RootKey[] = [
+  "vault",
+  "workspace",
+  "uploads",
+  "forge-src",
+  "aios",
+];
+
+/**
+ * The roots the API actually serves right now, fetched once and cached.
+ *
+ * The prefix table in code-path-link.ts is a static map, and the server's ROOTS
+ * is the truth. They go out of step for real: `aios` and `forge-src` were added
+ * to both on 2026-08-25, but forge-control only picks up a route change on
+ * restart — and a restart waits for the fleet to go quiet. In that window the
+ * UI would confidently open /document on a root the API has never heard of and
+ * render "(failed to load)". Asking is cheaper than guessing.
+ */
+let rootsPromise: Promise<Set<string>> | null = null;
+function knownRoots(): Promise<Set<string>> {
+  if (!rootsPromise) {
+    rootsPromise = fetchFileRoots()
+      .then((rs) => new Set(rs.map((r) => r.key)))
+      // A failed lookup must not disable the feature — assume the mapping is
+      // right and let the viewer report its own error if it isn't.
+      .catch(() => new Set<string>());
+  }
+  return rootsPromise;
+}
+
+/**
+ * Turn a detected path into a concrete (root, path). An exact target is
+ * already there; a bare name is placed by asking the search API, vault first.
+ */
+async function resolveTarget(
+  target: PathTarget,
+): Promise<{ root: string; path: string } | null> {
+  if (target.kind === "exact") {
+    const live = await knownRoots();
+    if (live.size > 0 && !live.has(target.root)) {
+      toast(
+        `Can't open ${target.label} yet`,
+        "info",
+        `The "${target.root}" file root isn't live on this server yet.`,
+      );
+      return null;
+    }
+    return { root: target.root, path: target.path };
+  }
+  for (const root of SEARCH_ROOTS) {
+    try {
+      // SEARCH BY FILENAME, NOT BY THE PATH. `/files/search` matches with
+      // `name.toLowerCase().includes(q)` against each entry's NAME — so a
+      // query containing a slash can never match anything. Measured: clicking
+      // `Mentor/Profile/Operating Manual.md` sent q=the whole path, got zero
+      // hits, and the click did nothing. The directory part is not thrown
+      // away though: it is what picks the right file out of the results below.
+      const { entries } = await searchFiles(root, "", target.label);
+      const files = entries.filter((e) => !e.isDir);
+      const wantPath = target.query.toLowerCase();
+      const hit =
+        // The author wrote a path: honour it exactly, then as a suffix
+        // ("Profile/OPEN-QUESTIONS.md" should beat a same-named file
+        // elsewhere in the root).
+        files.find((e) => e.path.toLowerCase() === wantPath) ??
+        files.find((e) => e.path.toLowerCase().endsWith(`/${wantPath}`)) ??
+        // Bare name: exact filename beats a substring match — searching
+        // "Operator Log.md" also returns "AI OS Operator Log.md".
+        files.find((e) => e.name.toLowerCase() === target.label.toLowerCase()) ??
+        files[0];
+      if (hit) return { root, path: hit.path };
+    } catch {
+      // Try the next root; a search failure is not worth a dialog.
+    }
+  }
+  return null;
+}
+
+/**
+ * Plain click: show the file in the right sidebar's Files panel, keeping the
+ * chat you were reading on screen. Konrad's UI model puts selection on the
+ * left and views on the right — a new tab throws the conversation away, which
+ * is the exact thing this feature exists to avoid.
+ *
+ * Ctrl/Cmd-click keeps the browser's universal "open elsewhere" meaning and
+ * goes to the full-window /document viewer.
+ */
+async function openPathTarget(
+  target: PathTarget,
+  where: "panel" | "tab",
+): Promise<void> {
+  const hit = await resolveTarget(target);
+  if (!hit) {
+    // NEVER silent. The first live test of this feature failed exactly here:
+    // the click fired, both searches went out, neither matched, and nothing
+    // whatsoever happened on screen — which reads as "the feature is broken"
+    // and is indistinguishable from a dead handler. A miss has to say so.
+    toast(`Couldn't find ${target.label}`, "info", "Not in any indexed file root.");
+    return;
+  }
+  if (where === "tab") {
+    window.open(documentHref(hit.root, hit.path), "_blank", "noopener");
+    return;
+  }
+  requestOpenFile(hit);
+}
 
 /**
  * Render an assistant / system message as markdown. v1.6 phase 4.
@@ -162,6 +292,11 @@ export const MessageMarkdown = memo(function MessageMarkdown({
             // Fenced block: parent <pre> sets background; we just keep mono.
             const inline = !className;
             if (inline) {
+              // Ctrl/Cmd-click opens a referenced file in the /document
+              // viewer. `detectPath` is deliberately narrow — see
+              // code-path-link.ts on why a dead click is worse than no
+              // affordance. Non-path pills fall through unchanged.
+              const target = detectPath(codeText(children));
               return (
                 <code
                   style={{
@@ -172,7 +307,34 @@ export const MessageMarkdown = memo(function MessageMarkdown({
                     padding: "1px 5px",
                     borderRadius: 4,
                     color: "var(--v2-accent-secondary)",
+                    ...(target
+                      ? {
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                          textDecorationStyle: "dotted" as const,
+                          textUnderlineOffset: 2,
+                          textDecorationColor: "rgba(var(--v2-accent-rgb), 0.5)",
+                        }
+                      : null),
                   }}
+                  {...(target
+                    ? {
+                        "data-openable-path": "true",
+                        title: `click to open ${target.label} in the Files panel · ${modifierLabel()}-click for a new tab`,
+                        onClick: (e: ReactMouseEvent<HTMLElement>) => {
+                          // A click that is really a text selection (the user
+                          // dragged across the pill) must not navigate.
+                          const sel = window.getSelection();
+                          if (sel && !sel.isCollapsed) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void openPathTarget(
+                            target,
+                            e.ctrlKey || e.metaKey ? "tab" : "panel",
+                          );
+                        },
+                      }
+                    : null)}
                   {...props}
                 >
                   {children}

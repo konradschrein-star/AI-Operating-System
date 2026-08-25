@@ -27,6 +27,13 @@ import {
 } from "../../api";
 import { VaultFileList, VPS_FILE_DRAG_MIME } from "./VaultFileList";
 import { FilePreview } from "./FilePreview";
+import {
+  subscribeOpenFile,
+  consumePendingOpenFile,
+  clearPendingOpenFile,
+  splitRel,
+  type OpenFileRequest,
+} from "./open-file-bus";
 
 export { VPS_FILE_DRAG_MIME };
 
@@ -180,6 +187,67 @@ function FileExplorerPanelImpl({
   useEffect(() => {
     void loadDir(null, "");
   }, [loadDir]);
+
+  /* ── Open-a-file requests from a clicked path in a chat message ────────────
+   *
+   * Two steps, because they cannot be one: navigating to the directory is a
+   * fetch, and the entry we want to select only exists once that fetch has
+   * landed. So the request parks in `pendingOpen`, and the effect below
+   * consumes it when `entries` next matches the directory it asked for.
+   *
+   * Search mode is cleared first: the preview pane refuses to render while
+   * `isSearching` is true, so a request arriving during a search would
+   * otherwise select the file and show nothing. */
+  const [pendingOpen, setPendingOpen] = useState<{
+    root: string;
+    parentRel: string;
+    name: string;
+  } | null>(null);
+
+  const handleOpenRequest = useCallback(
+    ({ root, path }: OpenFileRequest) => {
+      clearPendingOpenFile();
+      const { parentRel, name } = splitRel(path);
+      setQuery("");
+      setSearchResults(null);
+      setSearchSelected([]);
+      setPendingOpen({ root, parentRel, name });
+      setCurrentRoot(root);
+      setCurrentRel(parentRel);
+      void loadDir(root, parentRel);
+    },
+    [loadDir],
+  );
+
+  useEffect(
+    () => subscribeOpenFile(handleOpenRequest),
+    [handleOpenRequest],
+  );
+
+  /* This panel is UNMOUNTED while the sidebar sits on the Team tab, so a click
+   * that switches the tab dispatches before this component exists. Take the
+   * request it left behind. Mount-only: the deps are empty on purpose. */
+  useEffect(() => {
+    const missed = consumePendingOpenFile();
+    if (missed) handleOpenRequest(missed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!pendingOpen) return;
+    // Only act once the loaded directory IS the requested one — otherwise a
+    // slower earlier load could satisfy the request with the wrong folder.
+    if (currentRoot !== pendingOpen.root || currentRel !== pendingOpen.parentRel) return;
+    const entry = entries.find((e) => !e.isDir && e.name === pendingOpen.name);
+    if (!entry) {
+      // The directory arrived and the file is not in it: drop the request
+      // rather than leaving it armed to fire on some later navigation.
+      if (!loading) setPendingOpen(null);
+      return;
+    }
+    setSelected([{ root: pendingOpen.root, parentRel: pendingOpen.parentRel, entry }]);
+    setPendingOpen(null);
+  }, [pendingOpen, entries, currentRoot, currentRel, loading]);
 
   const handleDescend = useCallback((entry: FileEntry) => {
     if (!entry.isDir) return;

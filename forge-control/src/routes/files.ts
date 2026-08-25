@@ -25,16 +25,58 @@ const CC_WORKSPACE = process.env.CC_WORKSPACE ?? "/opt/ai-os/workspace";
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "/opt/ai-os/uploads";
 const MEDIA_DIR = process.env.FORGE_MEDIA_DIR ?? "/opt/content-forge/media";
 
-/* The four trees the LIBRARY surface browses. `uploads` and `media` are the
+const AIOS_DIR = process.env.AIOS_DIR ?? "/opt/ai-os";
+const FORGE_SRC_DIR = process.env.FORGE_SRC_DIR ?? "/opt/forge-ai-os";
+
+/* The trees the LIBRARY surface browses. `uploads` and `media` are the
  * artefact stores every run and every render already writes to — they were
  * reachable only through /api/uploads/:id/:name and /api/media before, i.e.
- * only if you already knew the id. */
-const ROOTS: Record<string, { dir: string; label: string }> = {
+ * only if you already knew the id.
+ *
+ * `aios` and `forge-src` were added 2026-08-25 for one concrete reason: an
+ * agent's messages constantly name files in them (`guard-autonomy.py`,
+ * `MessageMarkdown.tsx`), and clicking such a path in chat resolved to nothing
+ * because the file sat outside every root. Measured before the fix: 13 path
+ * pills in one thread, most of them source files, all silently unopenable.
+ *
+ * ── readOnly, and the mistake that made it necessary ──────────────────────
+ * Those two roots shipped with a comment asserting THIS ROUTER IS READ-ONLY.
+ * That was false. `PUT /write` (line ~411) has been on main since ad35016 and
+ * takes a `root` — the assertion came from a grep for `r.post(` and `r.get(`
+ * that never looked for `r.put(`. For about an hour, /opt/ai-os and
+ * /opt/forge-ai-os — the OS's own source and scripts, this file included —
+ * were writable by anything that could reach the console API.
+ *
+ * So the flag is real now and `PUT /write` enforces it. A root that exists to
+ * make source files READABLE from chat must not become an editor for them:
+ * the blast radius of a bad write here is the control plane itself. */
+const ROOTS: Record<string, { dir: string; label: string; readOnly?: true }> = {
   vault: { dir: VAULT_DIR, label: "Obsidian Vault" },
   workspace: { dir: CC_WORKSPACE, label: "Agent Workspace" },
   uploads: { dir: UPLOAD_DIR, label: "Run Artefacts & Uploads" },
   media: { dir: MEDIA_DIR, label: "Content Forge Media" },
+  aios: { dir: AIOS_DIR, label: "AI OS (scripts & state)", readOnly: true },
+  "forge-src": {
+    dir: FORGE_SRC_DIR,
+    label: "forge-control source",
+    readOnly: true,
+  },
 };
+
+/* Directories a recursive search must not descend into. Without this, adding
+ * `forge-src` would mean walking its node_modules on every keystroke-driven
+ * search; `workspace` already had the same exposure through its per-project
+ * git worktrees, so this fixes a live cost as well as a new one. Dotfiles are
+ * skipped separately, which is what keeps `.git` and `.next` out. */
+const SEARCH_SKIP_DIRS = new Set([
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  "__pycache__",
+  "venv",
+  "target",
+]);
 
 const MIME_BY_EXT: Record<string, string> = {
   ".png": "image/png",
@@ -92,7 +134,13 @@ async function resolveInRoot(rootKey: string, rel: string): Promise<{ abs: strin
 
 r.get("/roots", (c) =>
   c.json({
-    roots: Object.entries(ROOTS).map(([key, v]) => ({ key, label: v.label })),
+    // `readOnly` is advertised so the LIBRARY viewer can hide its edit toggle
+    // instead of offering a save that /write will refuse with a 403.
+    roots: Object.entries(ROOTS).map(([key, v]) => ({
+      key,
+      label: v.label,
+      ...(v.readOnly ? { readOnly: true as const } : {}),
+    })),
   }),
 );
 
@@ -232,7 +280,9 @@ async function searchDir(
         mtime: st.mtime.toISOString(),
       });
     }
-    if (st.isDirectory()) await searchDir(rootDir, realRoot, entryRel, query, out);
+    if (st.isDirectory() && !SEARCH_SKIP_DIRS.has(name)) {
+      await searchDir(rootDir, realRoot, entryRel, query, out);
+    }
   }
 }
 
@@ -395,6 +445,17 @@ r.put("/write", async (c) => {
   }
   if (body.baseMtime !== undefined && typeof body.baseMtime !== "number") {
     return c.json({ error: "baseMtime must be a number (ms since epoch)" }, 400);
+  }
+  // Refuse BEFORE resolveInRoot: a read-only root should answer the same way
+  // whether or not the path inside it happens to exist, so this cannot be used
+  // to probe for files.
+  if (ROOTS[rootKey]?.readOnly) {
+    return c.json(
+      {
+        error: `root '${rootKey}' is read-only — it exists so agents' file references are readable from chat, not editable`,
+      },
+      403,
+    );
   }
 
   let abs: string;

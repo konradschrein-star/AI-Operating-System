@@ -203,6 +203,9 @@ gate_sh "check-dismiss-peek.tsx — the way back out of a dismissal, both surfac
 gate_sh "check-team-rows.ts — flatten, hiddenRows, frozen time" \
   "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-rows.ts | tail -2"
 
+gate_sh "check-code-path-link.ts — detectPath: what's an openable file pill" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-code-path-link.ts | tail -3"
+
 gate_sh "check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)" \
   "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-confirm.ts | tail -2"
 
