@@ -690,7 +690,10 @@ export function PlanKanban({
           )}
 
           {state === "loading" && <Note>{enabled ? "loading plan…" : "no chat open"}</Note>}
-          {state === "unlinked" && <Note>no project linked to this chat</Note>}
+          {/* `state === "unlinked"` renders NOTHING here (round 1875): the
+              missing-link sentence is a fact about the CHAT, not about this
+              zone, and printing it in both zones put it on the panel twice.
+              ChatTeamPanel keeps the one copy. */}
           {state === "empty" && <Note>no plan yet — this project has no tasks</Note>}
 
           {groups.map((group) => (

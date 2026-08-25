@@ -142,6 +142,7 @@ import {
   type FlatTeam,
 } from "./teamRows";
 import { ResponseNowContext, TeamRowView } from "./TeamRow";
+import { LiveSessionsStrip } from "./LiveSessionsStrip";
 import { PlanKanban } from "./PlanKanban";
 import { ResizeHandle, useResizablePanel } from "../_ui/ResizableSplit";
 import {
@@ -890,6 +891,13 @@ export function ChatTeamPanel({
                 gets a real choice instead. One project: nothing renders, as
                 before. */}
             {(data?.candidates?.length ?? 0) > 1 && (
+              /* DENSITY (round 1875). The manager chat had 29 candidates when
+                 this was measured, and a wrapped row of that many chips is
+                 about ten lines — some 200px of a 260px panel given to a
+                 control nobody uses twice a day, with the tree pushed under
+                 the fold. It now caps at roughly three rows and scrolls, which
+                 changes nothing about what it offers and returns the panel to
+                 the rows. */
               <div
                 data-project-switcher
                 style={{
@@ -899,6 +907,8 @@ export function ChatTeamPanel({
                   flexWrap: "wrap",
                   alignItems: "center",
                   gap: 4,
+                  maxHeight: 62,
+                  overflowY: "auto",
                 }}
               >
                 <span
@@ -908,9 +918,12 @@ export function ChatTeamPanel({
                     "the liveliest one; pick another to see its team and its board."
                   }
                   style={{
+                    /* One type scale for every zone label in this panel:
+                       PROJECT · LIVE SESSIONS · TEAM · PLAN all read at 9px /
+                       0.1em / textFaint. This one was 0.08em. */
                     fontSize: 9,
                     color: tokens.textFaint,
-                    letterSpacing: "0.08em",
+                    letterSpacing: "0.1em",
                     marginRight: 2,
                   }}
                 >
@@ -1016,6 +1029,65 @@ export function ChatTeamPanel({
                 … — the rows below are still the previous project’s
               </Note>
             )}
+
+            {/* ── LIVE SESSIONS, pinned above the tree ─────────────────────
+                Konrad: "I need to see the claude/agy/codex sessions doing
+                work." One row per non-settled node — engine, model, task,
+                what it is doing right now, elapsed — out of the SAME response
+                the tree below renders from. It issues no request of its own;
+                the surface's 40 req/min ceiling (../chat/pollBudget) is
+                untouched.
+
+                Outside `data-team-scroll` on purpose: it is the answer to
+                "what is happening", and an answer you have to scroll back up
+                to find is not pinned. It bounds its own height and scrolls
+                internally past five rows, so a busy project cannot push the
+                tree off the panel.
+
+                It renders for an UNLINKED chat too — the manager row is a
+                live Claude session whether or not a project claims the chat,
+                and that is exactly the row Konrad is looking for there. */}
+            <LiveSessionsStrip data={data} onOpenNode={handleOpenNode} />
+
+            {/* The tree keeps its own name now that something sits above it.
+                Three labelled zones — LIVE SESSIONS · TEAM · PLAN — in one
+                type scale and one padding, so the panel reads as a stack of
+                answers rather than as a wall of rows. */}
+            <div
+              data-team-header
+              style={{
+                flex: "none",
+                padding: "6px 10px 4px",
+                display: "flex",
+                alignItems: "baseline",
+                gap: 8,
+              }}
+            >
+              <span
+                className="mono"
+                title={
+                  "Every agent this chat's project has run, settled ones " +
+                  "included, as an org chart. The live ones are also listed " +
+                  "above."
+                }
+                style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.1em" }}
+              >
+                TEAM
+              </span>
+              <span style={{ flex: 1 }} />
+              <span
+                data-team-row-count={rows.length}
+                className="mono"
+                title="rows on this tree, dismissed ones excluded"
+                style={{
+                  fontSize: 9.5,
+                  color: rows.length > 0 ? tokens.textMuted : tokens.textGhost,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {rows.length}
+              </span>
+            </div>
 
             <div
               data-team-scroll
