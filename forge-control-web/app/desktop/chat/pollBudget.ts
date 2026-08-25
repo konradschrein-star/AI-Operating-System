@@ -62,6 +62,37 @@ export const SHOTS_INDEX_POLL_MS = 30_000;
  *  while the modal is open. 12 req/min (5s) while open, 0 req/min when closed. */
 export const SHOTS_FULLSCREEN_POLL_MS = 5_000;
 
+/** The fleet activity feed (`live/AgentActivity`) on the /live surface, where
+ *  it is the surface's reason to exist and the freshest thing on the page.
+ *  15 req/min.
+ *
+ *  It was a bare `refetchInterval: 4_000` literal inside the component until
+ *  the sidebar's scope toggle gave the CHAT surface a way to mount it. A poll
+ *  this file cannot see is a poll this file does not govern — the exact failure
+ *  the header above describes — so it moved here rather than being counted by
+ *  hand in a comment. /live has no ceiling of its own; this constant exists so
+ *  that the chat surface's ceiling can be computed from real numbers. */
+export const AGENTS_POLL_MS = 4_000;
+
+/** The same feed mounted in the CHAT surface's right sidebar, in Konrad's
+ *  "everything running" scope. 7.5 req/min — deliberately half of /live's rate.
+ *
+ *  WHY IT IS SLOWER, and why /live is not. In "everything running" the team
+ *  tree (`TEAM_POLL_MS`, 6 req/min) and the plan zone (`PLAN_POLL_MS`,
+ *  2 req/min) are unmounted, so the feed is buying 8 req/min of budget. At
+ *  /live's 4s it would cost 15 and put the degraded surface at ~39 — inside the
+ *  ceiling by one request, with nothing left for the next round. At 8s it costs
+ *  7.5, so the swap is net -0.5 req/min and the committed 32 req/min degraded
+ *  total does not move up. The operator ruled on this directly
+ *  (cost, not the s-word `dollar-sweep.sh` greps for: this is a REQUEST budget,
+ *  and that gate's primary pattern would flag the money verb in this prose)
+ *  (2026-08-25): take the interval as a prop, mount the sidebar at 8s, leave
+ *  /live at 4s, do not re-argue the ceiling to buy headroom.
+ *
+ *  A sidebar rail 260px wide showing a whole box's worth of runs is a glance
+ *  surface, not the thing you watch a tool call land on; /live is that. */
+export const SIDEBAR_AGENTS_POLL_MS = 8_000;
+
 /** The committed whole-surface ceiling, in requests per minute, with every
  *  panel open. Measured by `docs/plan/artifacts/phase600/nav-walk.cjs:310`
  *  (P3) at rest, at depth 1 and at depth 2 — not by arithmetic. */
