@@ -1084,31 +1084,48 @@ export async function fetchChat(
  *  KNOWN LEAD in this project's brief: an open long chat was re-shipping its
  *  whole ~2.1 MB thread on every poll), then splice the delta back in.
  *
- *  No `prev` (first mount, or the cache entry was evicted): falls back to a
- *  full fetch. `from !== tail`: the server recovered to a fresh bounded
- *  snapshot on its own (`since` didn't match its live total — e.g. `/compact`
- *  shortened the thread between polls) — trusting the stale local count and
- *  appending anyway would duplicate every entry the cache still holds, so
- *  the full replacement thread wins outright.
+ *  `getPrev` is a THUNK, not a snapshot value, and is called twice: once
+ *  before the network request (to size the `since` cursor) and once again
+ *  right after the response lands, to re-read whatever is in the cache at
+ *  that moment. This closes a race a snapshot argument cannot: the fetch
+ *  spans a network round trip, and `AssistantThread`'s backward-pagination
+ *  handlers (`handleShowOlder`/`handleShowAll`) write to the same cache key
+ *  synchronously via `qc.setQueryData`. A merge built from a `prev` captured
+ *  before that write would return a stale object that this queryFn's own
+ *  return value then overwrites the cache with — silently erasing the
+ *  older turns that were just prepended. Re-reading at merge time picks up
+ *  that write instead of clobbering it. (Prepending older turns changes
+ *  `prev.from` and `prev.thread.length` but not their sum, so the tail this
+ *  delta was requested against is still valid against the re-read value.)
+ *
+ *  No `prev` (first mount, or the cache entry was evicted before the
+ *  request even started): falls back to a full fetch. `from !== tail`: the
+ *  server recovered to a fresh bounded snapshot on its own (`since` didn't
+ *  match its live total — e.g. `/compact` shortened the thread between
+ *  polls) — trusting the stale local count and appending anyway would
+ *  duplicate every entry the cache still holds, so the full replacement
+ *  thread wins outright.
  *
  *  Delta responses (`from === tail`) omit the static `prompt` field to save
- *  steady-state bandwidth (~86% savings). The client preserves `prev.prompt`
- *  across delta merges. If an empty delta arrives, `prev.thread`'s array
- *  reference is kept (no new render for a thread that didn't change); a
- *  non-empty one is appended. */
+ *  steady-state bandwidth (~86% savings). The client preserves the cached
+ *  `prompt` across delta merges. If an empty delta arrives, the cached
+ *  `thread`'s array reference is kept (no new render for a thread that
+ *  didn't change); a non-empty one is appended. */
 export async function fetchChatDelta(
   id: string,
-  prev: RunDetail | undefined,
+  getPrev: () => RunDetail | undefined,
 ): Promise<RunDetail> {
+  const prev = getPrev();
   if (prev === undefined) return fetchChat(id);
   const tail = (prev.from ?? 0) + prev.thread.length;
   const { run, from, total } = await fetchChat(id, { since: tail });
+  const latest = getPrev() ?? prev;
   if (from !== tail) return { ...(run as RunDetail), from, total };
   const prompt =
-    "prompt" in run && run.prompt !== undefined ? run.prompt : prev.prompt;
+    "prompt" in run && run.prompt !== undefined ? run.prompt : latest.prompt;
   const thread =
-    run.thread.length === 0 ? prev.thread : [...prev.thread, ...run.thread];
-  return { ...prev, ...run, prompt, thread, from: prev.from ?? 0, total };
+    run.thread.length === 0 ? latest.thread : [...latest.thread, ...run.thread];
+  return { ...latest, ...run, prompt, thread, from: latest.from ?? 0, total };
 }
 
 /** Fetch older historical turns before index `before` (default limit: 60 turns).

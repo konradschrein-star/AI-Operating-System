@@ -1396,7 +1396,9 @@ function FloorTile({
   const runQ = useQuery({
     queryKey: ["chat", "run", runId],
     queryFn: () =>
-      fetchChatDelta(runId, qc.getQueryData<RunDetail>(["chat", "run", runId])),
+      fetchChatDelta(runId, () =>
+        qc.getQueryData<RunDetail>(["chat", "run", runId]),
+      ),
     // ./chat/pollBudget, same two periods every chat transcript in this
     // codebase polls at — see CHAT_DETAIL_FALLBACK_POLL_MS for why they
     // may not drift apart.
@@ -1510,7 +1512,9 @@ function TaskDetail({
   const runQ = useQuery({
     queryKey: ["chat", "run", runId],
     queryFn: () =>
-      fetchChatDelta(runId!, qc.getQueryData<RunDetail>(["chat", "run", runId])),
+      fetchChatDelta(runId!, () =>
+        qc.getQueryData<RunDetail>(["chat", "run", runId]),
+      ),
     enabled: !!runId,
     // ./chat/pollBudget, same two periods every chat transcript in this
     // codebase polls at — see CHAT_DETAIL_FALLBACK_POLL_MS for why they

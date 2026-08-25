@@ -48,6 +48,7 @@ import {
 import type { RunDelta, ChatQueryParams } from "../../forge-control/src/routes/chat.ts";
 import type { RunDetail, ThreadEntry } from "../../forge-control/src/db/runs.ts";
 import { getUploadsCacheTag, listAllRuns } from "../../forge-control/src/lib/uploads-index.ts";
+import { fetchChatDelta, type RunDetail as ApiRunDetail } from "../../forge-control-web/app/api.ts";
 import { isTreeSettled } from "../../forge-control-web/app/desktop/team/ChatTeamPanel.tsx";
 import type { TeamNode, TeamResponse } from "../../forge-control-web/app/desktop/team/teamApi.ts";
 import {
@@ -684,6 +685,115 @@ check("all nodes settled -> tree is settled", isTreeSettled(makeTestTeamResponse
 
 console.log("\n── 7. Uploads index ETag & cache tag verification ──────────────────");
 
+/** Round 4 review finding #1 (ChatSurface.tsx:794, api.ts:1099-1112):
+ *  the delta poll's queryFn used to capture `prev` once, before the network
+ *  round trip, and merge against that closure-captured snapshot when the
+ *  response landed — silently clobbering a concurrent write from
+ *  AssistantThread's backward-pagination handlers (`handleShowOlder`/
+ *  `handleShowAll`), which write to the same cache key synchronously via
+ *  `qc.setQueryData` while the poll's `fetch` is still in flight.
+ *
+ *  This drives the REAL `fetchChatDelta` (not a local pure-function stand-in)
+ *  against a hand-controlled `fetch` mock so the network response resolves
+ *  only after we've mutated what `getPrev()` returns — reproducing the exact
+ *  interleaving the reviewer described. Before the fix (`prev` captured once,
+ *  used for the merge) this test fails: the prepended older turns and the
+ *  moved cursor are overwritten wholesale by the poll's stale-based replace.
+ *  After the fix (`getPrev()` re-invoked right before merging) it passes. */
+async function raceConditionRegression(): Promise<void> {
+  console.log("\n── 8. Race regression: backward pagination vs. in-flight delta poll ──");
+
+  function makeEntry(role: ApiRunDetail["thread"][number]["role"], content: string): ApiRunDetail["thread"][number] {
+    return { role, content, ts: "2026-08-24T00:00:00.000Z" };
+  }
+
+  function makeApiFixture(threadLength: number, from: number, total: number): ApiRunDetail {
+    return {
+      id: "race-test-run",
+      title: "race regression fixture",
+      status: "running",
+      worker: "claude",
+      budget_usd: "10.00",
+      spent_usd: "1.25",
+      created_at: "2026-08-24T00:00:00.000Z",
+      updated_at: "2026-08-24T00:00:00.000Z",
+      last_heartbeat_at: "2026-08-24T00:00:00.000Z",
+      message_count: total,
+      last_message_preview: "",
+      last_role: "assistant",
+      archived: false,
+      metadata: {},
+      prompt: "race regression fixture prompt",
+      thread: Array.from({ length: threadLength }, (_, i) => makeEntry("assistant", `seed-${i}`)),
+      parent_run_id: null,
+      stuck_signal: null,
+      started_at: "2026-08-24T00:00:00.000Z",
+      completed_at: null,
+      from,
+      total,
+    };
+  }
+
+  // Cached state before the poll starts: tail = from(40) + thread.length(60) = 100.
+  let cache: ApiRunDetail | undefined = makeApiFixture(60, 40, 100);
+
+  let resolveFetch!: (res: Response) => void;
+  const fetchGate = new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  });
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = (((url: string) => {
+    capturedUrl = String(url);
+    return fetchGate;
+  }) as unknown) as typeof fetch;
+
+  try {
+    const deltaPromise = fetchChatDelta("race-test-run", () => cache);
+
+    // Simulate handleShowOlder: a synchronous qc.setQueryData that prepends
+    // 10 older turns and moves the cursor back, WHILE the poll's fetch above
+    // is still pending. Tail is invariant under a backward prepend
+    // (30 + 70 === 40 + 60 === 100), so this write is exactly the scenario
+    // the fix's doc comment describes as still valid against the requested cursor.
+    const older = Array.from({ length: 10 }, (_, i) => makeEntry("user", `older-${i}`));
+    cache = { ...cache!, thread: [...older, ...cache!.thread], from: 30 };
+
+    // Now let the network resolve: 5 new entries appended past tail 100.
+    const newEntries = Array.from({ length: 5 }, (_, i) => makeEntry("assistant", `new-${i}`));
+    const { thread: _discardedThread, prompt: _discardedPrompt, ...metaRest } = makeApiFixture(0, 100, 105);
+    resolveFetch(
+      new Response(
+        JSON.stringify({ run: { ...metaRest, thread: newEntries }, from: 100, total: 105 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const merged = await deltaPromise;
+
+    checkTrue(
+      "race: request was built from the pre-write tail (since=100)",
+      capturedUrl.includes("since=100"),
+      capturedUrl,
+    );
+    check("race: merged thread length is 70 (prepended) + 5 (appended), not 60 + 5", merged.thread.length, 75);
+    check("race: merged cursor keeps the prepend's from=30, not the stale prev's from=40", merged.from, 30);
+    check("race: merged total reflects the server's fresh total", merged.total, 105);
+    checkTrue(
+      "race: the 10 prepended older turns survived the poll's merge",
+      merged.thread.slice(0, 10).every((e, i) => e.content === `older-${i}`),
+      JSON.stringify(merged.thread.slice(0, 12).map((e) => e.content)),
+    );
+    checkTrue(
+      "race: the 5 newly-appended turns landed after the prepend + original 60",
+      merged.thread.slice(70).every((e, i) => e.content === `new-${i}`),
+      JSON.stringify(merged.thread.slice(70).map((e) => e.content)),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 async function runAsyncChecks(): Promise<void> {
   const tagInitial = getUploadsCacheTag();
   checkTrue("uploads index cache tag is non-empty quoted string", typeof tagInitial === "string" && tagInitial.startsWith('"') && tagInitial.endsWith('"'));
@@ -692,6 +802,8 @@ async function runAsyncChecks(): Promise<void> {
   const tagComputed = getUploadsCacheTag();
   checkTrue("uploads index computed tag is valid quoted string", typeof tagComputed === "string" && tagComputed.startsWith('"') && tagComputed.endsWith('"'));
   check("subsequent getUploadsCacheTag returns stable cached tag", getUploadsCacheTag(), tagComputed);
+
+  await raceConditionRegression();
 
   /* ════════════════════════════════════════════════════════════════════════════
    * SUMMARY

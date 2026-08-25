@@ -154,3 +154,40 @@ Both exit non-zero on any failure. `check-chat-pagination-browser.ts` also
 both packages, production build, unit suite, and every project-specific
 check). See the run's own log for the current pass/fail table; this project
 added no new gate, only the two check scripts above and this document.
+
+## Round 4 fix cycle (reviewer findings)
+
+1. **Race condition — backward pagination clobbered by a concurrent delta
+   poll.** `fetchChatDelta` (`forge-control-web/app/api.ts`) used to capture
+   `prev` once, before the network round trip, then build its return value
+   — which React Query commits verbatim as the new cache entry — from that
+   closure-captured snapshot. `AssistantThread`'s `handleShowOlder`/
+   `handleShowAll` write to the same `["chat","run",id]` cache key
+   synchronously mid-flight (`qc.setQueryData`), and a poll response landing
+   after that write silently overwrote the just-prepended older turns and
+   the moved cursor. Fixed by making `fetchChatDelta`'s second argument a
+   thunk (`getPrev: () => RunDetail | undefined`) invoked twice: once before
+   the request (to size the `since` cursor) and again right after the
+   response lands, to merge against whatever is in the cache at that moment
+   instead of the stale snapshot. All five call sites
+   (`ChatSurface.tsx`, `ProjectsSurface.tsx` ×2, `MentorAgentDeck.tsx`,
+   `AgentChatView.tsx`) were updated to pass a thunk. Regression test:
+   `check-chat-delta.ts` §8 drives the real `fetchChatDelta` (not a stand-in)
+   against a hand-controlled `fetch` mock that mutates the cache mid-flight,
+   reproducing the exact interleaving; verified to fail against the
+   pre-fix code before confirming it passes against the fix.
+2. **Undeclared write — `chat-pagination-browser.json`.** Accepted as a
+   generated-artifact exception rather than a write_set correction: the
+   file is the browser harness's own evidence output, rewritten by
+   `check-chat-pagination-browser.ts` on every single run (documented above,
+   "Reproduction"). It is a side effect of running an already-declared file,
+   not independently authored content — the same category as a coverage
+   report or a screenshot a check script saves. No project_tasks row edit
+   was made from this build task, in keeping with the worktree-only policy
+   (live-DB writes belong to a briefed deploy/verify task).
+3. **Minor — `fae58daa` over-declared `ChatSurface.tsx`.** Bookkeeping-only,
+   noted here for the record; no code change needed (over-declaring a file
+   that was never written is not a hazard).
+4. **`chat.ts:1551`'s hardcoded SSE snapshot window (`60`) now shares
+   `DEFAULT_CHAT_WINDOW`** with `parseLimitParam`'s default, so the two
+   paths cannot drift apart on a future change.

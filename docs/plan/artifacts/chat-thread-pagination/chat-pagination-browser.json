@@ -1,5 +1,5 @@
 {
-  "measuredAt": "2026-08-24T23:40:32.007Z",
+  "measuredAt": "2026-08-25T00:22:59.903Z",
   "environment": "Real headless Chrome / Playwright. Part A: scripted fetch() against the worktree's own chat router (in-process). Part B: real forge-control-web /desktop app (next dev) driven end to end, pointed at the same worktree router through the real /api/proxy route handler — network captured via page.on('response'), not scripted.",
   "verdict": "PASS",
   "failures": 0,
@@ -29,7 +29,7 @@
         "backwardPageFrom": 2357
       },
       "partB": {
-        "landedUrl": "http://127.0.0.1:46759/desktop",
+        "landedUrl": "http://127.0.0.1:36321/desktop",
         "initialDecodedBytes": 85222,
         "initialThreadCount": 60,
         "steadyPollCount": 6,
@@ -73,7 +73,7 @@
         "backwardPageFrom": 1791
       },
       "partB": {
-        "landedUrl": "http://127.0.0.1:46759/desktop",
+        "landedUrl": "http://127.0.0.1:36321/desktop",
         "initialDecodedBytes": 65396,
         "initialThreadCount": 60,
         "steadyPollCount": 6,

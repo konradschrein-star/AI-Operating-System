@@ -75,6 +75,11 @@ import {
 
 const r = new Hono();
 
+/** Default page/window size shared by the HTTP delta route's `parseLimitParam`
+ *  and the SSE snapshot fallback (below) — one constant so a future change to
+ *  the default can't desync the two paths (round 4 review finding #3). */
+const DEFAULT_CHAT_WINDOW = 60;
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1548,7 +1553,7 @@ r.get("/:id/events", (c) => {
           });
           if (!(await send("append", payload))) break;
         } else {
-          const from = Math.max(0, thread.length - 60);
+          const from = Math.max(0, thread.length - DEFAULT_CHAT_WINDOW);
           const snapshotRun = {
             ...run,
             thread: thread.slice(from),
@@ -1576,7 +1581,7 @@ export interface ChatQueryParams {
 
 export function parseLimitParam(
   raw: string | undefined,
-  defaultLimit = 60,
+  defaultLimit = DEFAULT_CHAT_WINDOW,
   maxLimit = 500,
 ): number {
   if (raw === undefined || raw === "") return defaultLimit;
