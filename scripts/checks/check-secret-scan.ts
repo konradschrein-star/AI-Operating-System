@@ -105,11 +105,69 @@ const SAFE_MARKERS =
 
 // A DSN's password segment: postgres(ql)://user:PASSWORD@host
 const DSN_RE = /postgres(?:ql)?:\/\/[^\s"'\\/]+:([^\s"'\\@]+)@/g;
-// A shell PGPASSWORD assignment: PGPASSWORD=value or PGPASSWORD='value'.
-// The value excludes backslash too — a real password is never written with
-// one here, but a JSON-escaped shell script quoting `\"$VAR\"` is, and that
-// is not a credential, just a script that reads one at runtime.
-const PGPASSWORD_RE = /PGPASSWORD=(['"]?)([^\s'"\\]+)\1/g;
+/** A shell password assignment. Was `PGPASSWORD=` exactly; widened to any
+ *  `*PASSWORD=` variable because `preflight-deploy.sh:41` spells it
+ *  `PG_PASSWORD="${PGPASSWORD:-<live credential>}"` — no `PGPASSWORD=`
+ *  substring anywhere on the line, so the old pattern matched NOTHING and the
+ *  file scanned clean while carrying the production password. */
+const PASSWORD_ASSIGN_RE = /\b[A-Z][A-Z0-9_]*PASSWORD[ \t]*=(?![=~])[ \t]*(['"]?)([^\s'"\\]+)\1/g;
+
+/** Shortest value this check will call a credential.
+ *
+ *  Widening `PGPASSWORD=` to `*PASSWORD=` caught the real miss
+ *  (`PG_PASSWORD="${PGPASSWORD:-<live>}"`) and also lit up
+ *  `test-guard-autonomy.py:787`, a destructive-command TEST FIXTURE whose
+ *  string is `PGPASSWORD=x bash`. `x` is not a credential and never will be.
+ *
+ *  This is a deliberate, bounded trade: a committed password of 7 characters
+ *  or fewer passes this scan. Every real credential in this repo's history is
+ *  18-30 chars (`content_forge_prod`, the leaked 30-char `content_forge`
+ *  password), and Postgres deployments here do not issue short ones. The cost
+ *  of the alternative is concrete and already measured: a scan with five false
+ *  positives is one nobody wires into a gate, which is how a live credential
+ *  sat unflagged on main for three days. */
+const MIN_CREDENTIAL_LENGTH = 8;
+
+/** Reduce `${VAR:-default}` to `default` before judging it, repeatedly.
+ *
+ *  THIS IS THE HOLE THAT LET THE LIVE PASSWORD THROUGH, and it is worth being
+ *  explicit about because the check looked correct. `SAFE_MARKERS` whitelists
+ *  `${` — a script READING a credential at runtime is the opposite of
+ *  committing one — and it separately whitelists any value containing the
+ *  substring `PASSWORD`. `${PGPASSWORD:-90d4…}` trips BOTH. So the exact shape
+ *  that commits a credential, a parameter expansion whose DEFAULT is the
+ *  secret, was doubly exempt. `fixtures/preflight-c1-fixture.sh:37` carried the
+ *  production `content_forge` password past this scan for that reason.
+ *
+ *  A bare `${VAR}` / `$(cmd)` / `$VAR` stays safe — there is no default to
+ *  unwrap, so those return unchanged and hit SAFE_MARKERS as before. Nested
+ *  defaults (`${A:-${B:-literal}}`) unwrap until a literal or a bare reference
+ *  is left, which is why this loops rather than testing once. */
+function unwrapShellDefault(value: string): string {
+  let v = value;
+  for (let i = 0; i < 8; i++) {
+    const m = /^\$\{[A-Za-z_][A-Za-z0-9_]*:[-=?+]([\s\S]*)\}$/.exec(v);
+    if (!m) return v;
+    v = m[1];
+  }
+  return v;
+}
+
+/** Is this captured segment worth judging at all?
+ *
+ *  An EMPTY default is the single most common shape in this repo's ops
+ *  scripts: `export PGPASSWORD="${PGPASSWORD:-${DB_PASSWORD:-}}"` in
+ *  `safe-restart.sh:36`, `recover-stuck-task.sh:67` and the p6-deploy
+ *  transcript that quotes them. It unwraps to `""` — which no SAFE_MARKER
+ *  matches, so without this it reads as an unlabelled secret. It is the
+ *  opposite: a script declaring it has NO baked-in password and will take one
+ *  from the environment or go without. */
+function isCredentialCandidate(raw: string, minLength: number): boolean {
+  const v = unwrapShellDefault(raw).trim();
+  if (v.length === 0) return false;
+  if (v.length < minLength) return false;
+  return !SAFE_MARKERS.test(v);
+}
 
 function trackedFiles(): string[] {
   const out = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf8" });
@@ -210,15 +268,22 @@ for (const file of selectedFiles(ARGV)) {
   // WHAT FIRES IS DECIDED HERE; WHAT IS PRINTED IS DECIDED BY `mask()`. Keep
   // those two apart — every `SAFE_MARKERS.test` below reads the RAW captured
   // segment, never a masked one, so redaction cannot change the verdict.
+  // `unwrapShellDefault` runs BEFORE the verdict, so `${VAR:-secret}` is judged
+  // on `secret` rather than on the expansion that wraps it. It never runs
+  // before `mask()` — what is printed still redacts the raw matched text.
   const suspects: string[] = [];
+  // A DSN password gets NO length floor — `postgres://u:abc@host` is a
+  // credential at any length, and the surrounding `://…@` is unambiguous.
+  // Only the far looser `*PASSWORD=` shape, which also matches prose and test
+  // fixtures, needs one.
   for (const m of content.matchAll(DSN_RE)) {
-    if (!SAFE_MARKERS.test(m[1])) {
+    if (isCredentialCandidate(m[1], 1)) {
       suspects.push(`line ${lineOf(content, offsetOf(m))}  DSN password  ${mask(m[0], m[1])}`);
     }
   }
-  for (const m of content.matchAll(PGPASSWORD_RE)) {
-    if (!SAFE_MARKERS.test(m[2])) {
-      suspects.push(`line ${lineOf(content, offsetOf(m))}  PGPASSWORD  ${mask(m[0], m[2])}`);
+  for (const m of content.matchAll(PASSWORD_ASSIGN_RE)) {
+    if (isCredentialCandidate(m[2], MIN_CREDENTIAL_LENGTH)) {
+      suspects.push(`line ${lineOf(content, offsetOf(m))}  password assignment  ${mask(m[0], m[2])}`);
     }
   }
 
