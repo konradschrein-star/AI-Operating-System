@@ -975,6 +975,7 @@ by this round's own sweep and fixed rather than filed.
 | corpus, redaction markers normalised | **0 heredoc-consumer verdicts change** (see J.4) |
 | robustness sweep, 16 adversarial inputs | 0 raised; 15 under 0.4s; the 16th is J.3 |
 | bash execution proof, 7 shapes | every constructed MUST_BLOCK shape really runs |
+| `bash scripts/checks/gates-808.sh --strict` | **31 gates, 29 EXECUTED, 2 SKIPPED-by-design, RED: 0**, exit 0, at `5d210c3` |
 
 Nothing contacted `:7700`; nothing wrote a `guardrail_trips` row. Layer A and
 the corpus driver call `classify()` in-process (pure — no HTTP, no audit line);
@@ -1051,4 +1052,16 @@ review, round 6's blocker 1, and round 8's blocker 1.
 
 Not touched: `/opt/forge-ai-os` (the live checkout), the live database, pm2, the
 live hook at `/opt/ai-os/scripts/guard-autonomy.py`, `guardrail_trips`,
-`db/migrations/`.
+`db/migrations/`. Verified after the commit: `git -C /opt/forge-ai-os status
+--porcelain` empty, and the live hook still md5 `4689f012…` against this
+worktree's `573d3af4…`.
+
+## J.7 Left for the deploy task
+
+**F3 is live right now.** The quadratic is in the deployed
+`/opt/ai-os/scripts/guard-autonomy.py` (md5 `4689f012…`) and has been since the
+hook was wired on 08-25, so every agent on this box is one long command word
+away from a 40-second stall. It is fixed on this branch and cannot be fixed
+from a build task — `install-hooks.sh` and the live copy belong to the deploy
+phase. Reported to the manager chat at the time of measurement rather than held
+to this report.
