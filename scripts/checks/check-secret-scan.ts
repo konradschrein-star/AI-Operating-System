@@ -63,9 +63,19 @@ const SKIP_EXTENSIONS = new Set([
  *  `${VAR}` and `$(cmd)` and then flags the third spelling of the same thing.
  *  `PGPASSWORD="$DOCPW"` is a script READING a credential at run time, which
  *  is the opposite of committing one. Anchored, so `$VARsomething-else` and
- *  `pw$X` keep failing. */
+ *  `pw$X` keep failing.
+ *
+ *  `^stub$` \u2014 THE UNIT-TEST STUB SHAPE. `project-tick-stuck.test.ts:55` pins
+ *  `DATABASE_URL = "postgresql://stub:stub@127.0.0.1:1/stub_never_content_forge"`
+ *  so the module under test cannot reach a real database \u2014 port 1, and a
+ *  database name that says so. That is the header's "new placeholder shape
+ *  nobody taught this script yet", and it was this check's ONLY false
+ *  positive. It mattered more than one noisy line: a scan that cries wolf on a
+ *  correct file is a scan nobody wires into a gate, and this one sat in zero
+ *  gates while a live credential sat on main. Anchored like its neighbours \u2014
+ *  `stubborn` and `stub123` are passwords, not placeholders, and keep failing. */
 const SAFE_MARKERS =
-  /^\*+$|^\$[A-Za-z_][A-Za-z0-9_]*$|[<>]|[\u2039\u203A]|\$[{(]|\u2026|PASSWORD|SYNTHETIC|REDACTED|FAKE|PLACEHOLDER|^PASS$|^USER$|^content_forge_prod$/i;
+  /^\*+$|^\$[A-Za-z_][A-Za-z0-9_]*$|[<>]|[\u2039\u203A]|\$[{(]|\u2026|PASSWORD|SYNTHETIC|REDACTED|FAKE|PLACEHOLDER|^PASS$|^USER$|^stub$|^content_forge_prod$/i;
 
 // A DSN's password segment: postgres(ql)://user:PASSWORD@host
 const DSN_RE = /postgres(?:ql)?:\/\/[^\s"'\\/]+:([^\s"'\\@]+)@/g;
