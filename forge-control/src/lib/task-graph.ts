@@ -60,6 +60,51 @@
 import type { TaskStatus } from "../db/projects.ts";
 
 /* ------------------------------------------------------------------------- *
+ * The status vocabulary the scheduler decides on
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The statuses that END a task's life. Written once, HERE, because until
+ * 2026-08-25 it was written six times in SQL and every one of them said only
+ * `'done'`.
+ *
+ * `cancelled` is terminal but is NOT success. The distinction is the whole
+ * point of the status existing: a cancelled row must stop holding the graph
+ * back (that is terminality), and must never be counted as work that happened
+ * (that is not-success). So the two claims of achievement in db/projects.ts —
+ * closeFinishedProjects() and roundIsComplete() — additionally require that at
+ * least one row actually finished. A project whose every task was cancelled is
+ * abandoned, not done, and saying "🏁 round complete" for a group nobody
+ * carried is the same lie one scope down.
+ *
+ * Before 0046_task_status_cancelled.sql the status was unwritable (the CHECK
+ * constraint predated the type), so operators retired duplicate rows by setting
+ * them `blocked` and renaming the title to `[RETIRED as duplicate] …`. A
+ * `blocked` row is NOT terminal, so each one silently wedged every round above
+ * it — `aios-goals-day-system` and `os-usable-for-work` both died that way.
+ *
+ * WHY IT LIVES IN THIS MODULE AND NOT IN db/projects.ts, WHERE IT WAS BORN.
+ * It was defined next to the SQL that consumes it, and `graphReady()` went on
+ * comparing against the bare string `"done"` — so for one day the promoter
+ * treated a cancelled dependency as satisfied while the pure rule it is
+ * declared to mirror treated it as blocking. Two definitions of terminality is
+ * the defect; the only question was which side owns the surviving one. It
+ * cannot be db/projects.ts: this module may not VALUE-import from `db/*` (the
+ * header above, and NF3 in task-graph-replay.test.ts), because db/projects.ts
+ * value-imports `selectClaimable` from here and runs `new Pool(...)` at module
+ * scope, so the reverse import would close a runtime ESM cycle across that pool
+ * and drag Postgres into a suite that runs with Postgres stopped. Ownership
+ * therefore inverts: the pure leaf defines it, db/projects.ts RE-EXPORTS it,
+ * and no new module edge exists — `db → lib` was already there.
+ *
+ * WHAT DOES NOT CONSUME IT, deliberately: `stillOpen()` and `isTerminal()` in
+ * db/projects.ts build SQL strings and cannot read a TypeScript array without a
+ * codegen step nobody wants. Their drift guard is the `\w+\.status <> 'done'`
+ * census in project-status-reconcile.test.ts, not this constant.
+ */
+export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = ["done", "cancelled"];
+
+/* ------------------------------------------------------------------------- *
  * The row, as the scheduler sees it
  * ------------------------------------------------------------------------- */
 
@@ -177,8 +222,19 @@ export function legacyRoundReady(task: GraphTask, all: readonly GraphTask[]): bo
 }
 
 /**
- * Graph rule (R11). Ready when every id in `depends_on` names a task that is
- * `done`; an empty array is trivially satisfied and promotes immediately.
+ * Graph rule (R11). Ready when every id in `depends_on` names a task that has
+ * reached a TERMINAL status (`TERMINAL_TASK_STATUSES` — `done` or `cancelled`);
+ * an empty array is trivially satisfied and promotes immediately.
+ *
+ * TERMINAL, NOT SUCCESSFUL, and the difference is deliberate (2026-08-25). A
+ * `cancelled` dependency is never going to become `done`, so reading it as
+ * unsatisfied means the dependent waits forever — and cancelling is a human
+ * decision that the work will not be carried, not an accident to defend
+ * against. `failed` is NOT terminal and still holds its dependents: a failed
+ * task is expected to be retried or fixed, and releasing its dependents would
+ * hand a reviewer a tree its builder never finished. This function is declared
+ * authoritative over the statement that mirrors it, so it reads the SAME set
+ * `promoteReadyTasks()`'s `stillOpen()` tests, from the same definition above.
  *
  * Throws `GraphIntegrityError` on a CORRUPT `depends_on` (R14). Never `false`,
  * never `true`: a vanished dependency reading as satisfied is the
@@ -222,16 +278,21 @@ export function legacyRoundReady(task: GraphTask, all: readonly GraphTask[]): bo
  * second term a frozen row promotes the moment its frozen deps drain, straight
  * past a fix chain numbered far below it; today's engine holds it. So:
  *
- *     ready = every dep is done
+ *     ready = every dep is terminal
  *             AND NOT ∃ o ∈ byId : o.round < task.round
- *                                  ∧ o.status !== 'done'
+ *                                  ∧ o.status ∉ TERMINAL_TASK_STATUSES
  *                                  ∧ (task.graph_frozen ∨ o.depends_on === null)
+ *
+ * The straddle term reads the SAME terminal set as R11, for the same reason and
+ * against the same SQL (`stillOpen("l")` in `promoteReadyTasks()`): a retired
+ * row in an earlier round used to hold back every round above it, which is
+ * precisely how `aios-goals-day-system` and `os-usable-for-work` wedged.
  *
  * TWO KINDS OF ROW GET HELD, AND THE DISJUNCT IS WHY (E4, round 242):
  *
- *  - A FROZEN candidate (`graph_frozen`, R71) is held behind ANY non-`done`
+ *  - A FROZEN candidate (`graph_frozen`, R71) is held behind ANY still-open
  *    lower-round row, whatever that row's own provenance. Its closure was
- *    computed against a SNAPSHOT, so "every dep is done" is a statement about a
+ *    computed against a SNAPSHOT, so "every dep is terminal" is a statement about a
  *    task list that no longer exists; the round it was born under is the only
  *    ordering it ever declared, and this term replays it. That covers a fix
  *    chain the OLD engine inserted in the deploy gap (F13) and one the NEW
@@ -283,7 +344,7 @@ export function legacyRoundReady(task: GraphTask, all: readonly GraphTask[]): bo
  *   2. a corrupt `depends_on` — an id absent from `byId`, or an id twice →
  *      THROW (R14). Integrity beats scheduling, so it precedes both remaining
  *      terms; never `false`, never `true`.
- *   3. every dep `done`         → otherwise `false`
+ *   3. every dep terminal       → otherwise `false`
  *   4. the straddle term (R69)  → otherwise `false`
  *
  * PRECONDITION 1: `readyRule(task) === "graph"`. A `depends_on` of `null` is the
@@ -355,10 +416,12 @@ export function graphReady(task: GraphTask, byId: ReadonlyMap<string, GraphTask>
     );
   }
 
-  // 3. R11 — every dep done. An empty array is trivially satisfied.
+  // 3. R11 — every dep TERMINAL. An empty array is trivially satisfied. Not
+  //    `!== "done"`: that literal is what diverged from the promoter, which
+  //    tests `stillOpen()` — NOT IN ('done', 'cancelled') — on this exact term.
   for (const id of deps) {
     // Non-null by step 2: every id was just proved present.
-    if (byId.get(id)!.status !== "done") return false;
+    if (!TERMINAL_TASK_STATUSES.includes(byId.get(id)!.status)) return false;
   }
 
   // 4. R69 — the straddle term (E3, §9.2, F13; widened by E4, §9.3, round 242).
@@ -371,7 +434,7 @@ export function graphReady(task: GraphTask, byId: ReadonlyMap<string, GraphTask>
   //    TODO(R12-retire)
   const frozen = task.graph_frozen;
   for (const other of byId.values()) {
-    if (other.round >= task.round || other.status === "done") continue;
+    if (other.round >= task.round || TERMINAL_TASK_STATUSES.includes(other.status)) continue;
     if (frozen || other.depends_on === null) return false;
   }
 
