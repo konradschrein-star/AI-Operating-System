@@ -574,6 +574,34 @@ async function runBrowserHarness(): Promise<void> {
     const sessionCookie = await mintSessionCookie(baseUrl);
     const STEADY_WINDOW_MS = 25_000;
 
+    // Warm up `/desktop` and `/api/proxy/[...path]` BEFORE the timed measurement.
+    // Per browser-harness-cold-next-dev-starves-navigation.md: a freshly started
+    // `next dev` compiles /desktop on first hit (measured elsewhere at 136s) —
+    // any fixed-deadline wait for "the first response" placed before that compile
+    // finishes reads as a product failure when it is only a cold cache. Throw this
+    // navigation away and let the timed run below hit warm, already-compiled routes.
+    console.log("Warming next dev (/desktop, /api/proxy/chat) before timed measurement...");
+    const warmCookieOpts = sessionCookie.secure
+      ? [{ name: sessionCookie.name, value: sessionCookie.value, url: baseUrl, secure: true, sameSite: "Lax" as const }]
+      : [
+          {
+            name: sessionCookie.name,
+            value: sessionCookie.value,
+            domain: "127.0.0.1",
+            path: "/",
+            httpOnly: true,
+            secure: false,
+            sameSite: "Lax" as const,
+          },
+        ];
+    const warmContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await warmContext.addCookies(warmCookieOpts);
+    const warmPage = await warmContext.newPage();
+    await warmPage.goto(`${baseUrl}/desktop`, { waitUntil: "load", timeout: 180_000 });
+    await warmPage.waitForTimeout(5_000);
+    await warmContext.close();
+    console.log("Warm-up complete — routes compiled, starting timed measurement.");
+
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     if (sessionCookie.secure) {
       await context.addCookies([
@@ -721,10 +749,10 @@ async function runBrowserHarness(): Promise<void> {
     console.log(`  Observed rest rate:    ${(observedRateBpm / 1024).toFixed(2)} KB/min payload bytes`);
     console.log(`  Screenshot path:       ${screenshotPath}`);
 
-    const artifactsDir = path.join(REPO_ROOT, "docs/plan/artifacts/chat-list-etag");
+    const artifactsDir = path.join(REPO_ROOT, "docs/plan/artifacts/aios-chat-list-etag");
     if (!fs.existsSync(artifactsDir)) fs.mkdirSync(artifactsDir, { recursive: true });
 
-    const evidencePath = path.join(artifactsDir, "chat-list-etag-browser.json");
+    const evidencePath = path.join(artifactsDir, "measurement.json");
     const evidenceData = {
       measuredAt: new Date().toISOString(),
       environment:
