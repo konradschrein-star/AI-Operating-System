@@ -52,18 +52,27 @@ import { fetchChatDelta, type RunDetail as ApiRunDetail } from "../../forge-cont
 import { isTreeSettled } from "../../forge-control-web/app/desktop/team/ChatTeamPanel.tsx";
 import type { TeamNode, TeamResponse } from "../../forge-control-web/app/desktop/team/teamApi.ts";
 import {
+  AGENTS_POLL_MS,
   CHAT_DETAIL_FALLBACK_POLL_MS,
   CHAT_DETAIL_LIVE_POLL_MS,
   CHAT_LIST_POLL_MS,
   CHAT_SURFACE_REQ_PER_MIN_CEILING,
   PLAN_POLL_MS,
   SHOTS_INDEX_POLL_MS,
+  SIDEBAR_AGENTS_POLL_MS,
   TEAM_POLL_MS,
 } from "../../forge-control-web/app/desktop/chat/pollBudget.ts";
 import {
   SECRETS_FALLBACK_POLL_MS,
   secretsPollInterval,
 } from "../../forge-control-web/app/desktop/chat/secretLive.ts";
+/* The sidebar scope toggle's own predicate — the one ChatSurface arms the fleet
+ * feed's query from. Section 5b spends it, and check-sidebar-scope.ts owns the
+ * rest of that module's behaviour. */
+import {
+  SIDEBAR_SCOPE_DEFAULT,
+  scopePolls,
+} from "../../forge-control-web/app/desktop/team/sidebar-scope.ts";
 
 let failures = 0;
 
@@ -559,6 +568,13 @@ check("CHAT_DETAIL_FALLBACK_POLL_MS is 4s", CHAT_DETAIL_FALLBACK_POLL_MS, 4_000)
 check("TEAM_POLL_MS is 10s", TEAM_POLL_MS, 10_000);
 check("PLAN_POLL_MS is 30s", PLAN_POLL_MS, 30_000);
 check("SHOTS_INDEX_POLL_MS is 30s", SHOTS_INDEX_POLL_MS, 30_000);
+/* The fleet feed's two periods. `AGENTS_POLL_MS` was a bare `refetchInterval:
+ * 4_000` inside AgentActivity until the sidebar's scope toggle gave the CHAT
+ * surface a way to mount that component — 15 req/min this file could not see,
+ * and therefore could not govern. It is /live's number and stays 4s;
+ * `SIDEBAR_AGENTS_POLL_MS` is what the chat sidebar mounts it at. */
+check("AGENTS_POLL_MS is 4s (/live's fleet feed)", AGENTS_POLL_MS, 4_000);
+check("SIDEBAR_AGENTS_POLL_MS is 8s (the chat sidebar's)", SIDEBAR_AGENTS_POLL_MS, 8_000);
 check("SECRETS_FALLBACK_POLL_MS is 60s", SECRETS_FALLBACK_POLL_MS, 60_000);
 check("committed ceiling is 40 req/min", CHAT_SURFACE_REQ_PER_MIN_CEILING, 40);
 check("secrets poll costs nothing while its stream is up", secretsPollInterval(true), false);
@@ -588,6 +604,42 @@ const drilledDetailReqPerMin = perMin(CHAT_DETAIL_FALLBACK_POLL_MS);
 const totalDrilledDegradedReqPerMin =
   panelsReqPerMin + drilledDetailReqPerMin + secretsReqPerMin;
 
+/* ── "EVERYTHING RUNNING" (the sidebar's scope toggle) ─────────────────────
+ *
+ * Konrad's toggle (vault `AI OS/Spec - Manager Chat UI v3.md`, addendum
+ * 2026-08-25) swaps the right sidebar between the open chat's team panel and
+ * /live's fleet feed. It is a SWAP, not an addition: in "everything running"
+ * `ChatTeamPanel` and `PlanKanban` are unmounted, so TEAM_POLL_MS (6 req/min)
+ * and PLAN_POLL_MS (2 req/min) stop and the fleet feed's poll starts.
+ *
+ * At /live's own 4s that trade is 15 in for 8 out — net +7, taking the degraded
+ * surface from 32 to 39 req/min. Under the ceiling by one request, with nothing
+ * left over, which is not a budget so much as a coincidence. So the sidebar
+ * mounts the feed at SIDEBAR_AGENTS_POLL_MS (8s, 7.5 req/min) and /live keeps
+ * 4s: the swap is net -0.5 req/min and the committed degraded total does not
+ * move up at all. Both branches are asserted below, the second as the
+ * counterfactual it is. */
+const sidebarFleetReqPerMin = perMin(SIDEBAR_AGENTS_POLL_MS);   // 7.5 req/min
+const liveFleetReqPerMin = perMin(AGENTS_POLL_MS);              // 15 req/min
+
+/** Panels in "everything running": the rail's list and the shot index survive
+ *  the swap; team and plan do not exist in this scope. */
+const fleetScopePanelsReqPerMin =
+  runListReqPerMin + shotsReqPerMin + sidebarFleetReqPerMin;    // 15.5 req/min
+
+const totalFleetScopeHealthyReqPerMin =
+  fleetScopePanelsReqPerMin + healthyDetailReqPerMin;           // 18.5 req/min
+const totalFleetScopeDegradedReqPerMin =
+  fleetScopePanelsReqPerMin + degradedDetailReqPerMin + secretsReqPerMin; // 31.5
+
+/** The counterfactual: the same swap with the feed left at /live's 4s. Not a
+ *  live value — the whole point is that the sidebar does NOT mount it there. */
+const wouldBeDegradedAtLiveRateReqPerMin =
+  runListReqPerMin + shotsReqPerMin + liveFleetReqPerMin +
+  degradedDetailReqPerMin + secretsReqPerMin;                   // 39 req/min
+
+/* The counterexample, and the one number here that is deliberately a LITERAL:
+ * 3s detail + 6s team is history (41 req/min), not live values. */
 const PREV_DEGRADED_DETAIL_POLL_MS = 3_000;
 const PREV_TEAM_POLL_MS = 6_000;
 const prevPanelsReqPerMin =
@@ -621,6 +673,60 @@ check(
 );
 
 checkTrue("previous 3s fallback violated ceiling (> 40 req/min)", prevTotalDegradedReqPerMin > 40);
+
+console.log(`\nSidebar scope "everything running" (team + plan unmounted, /api/agents at ${SIDEBAR_AGENTS_POLL_MS / 1000}s):`);
+console.log(`  Healthy:  ${totalFleetScopeHealthyReqPerMin} req/min (List ${runListReqPerMin} + Detail ${healthyDetailReqPerMin} + Shots ${shotsReqPerMin} + Fleet ${sidebarFleetReqPerMin})`);
+console.log(`  Degraded: ${totalFleetScopeDegradedReqPerMin} req/min (List ${runListReqPerMin} + Detail ${degradedDetailReqPerMin} + Shots ${shotsReqPerMin} + Fleet ${sidebarFleetReqPerMin} + Secrets ${secretsReqPerMin}) — vs ${totalDegradedReqPerMin} scoped to this chat`);
+console.log(`  Counterfactual at /live's ${AGENTS_POLL_MS / 1000}s: ${wouldBeDegradedAtLiveRateReqPerMin} req/min (net +${wouldBeDegradedAtLiveRateReqPerMin - totalDegradedReqPerMin} over the scoped surface)`);
+
+check(
+  "everything-running healthy rate equals 18.5 req/min",
+  totalFleetScopeHealthyReqPerMin,
+  18.5,
+);
+check(
+  "everything-running degraded rate equals 31.5 req/min",
+  totalFleetScopeDegradedReqPerMin,
+  31.5,
+);
+checkTrue(
+  "everything-running is under the committed ceiling",
+  totalFleetScopeDegradedReqPerMin <= CHAT_SURFACE_REQ_PER_MIN_CEILING,
+);
+/* THE ASSERTION THIS ROUND EXISTS FOR. Flipping the toggle must not make the
+ * surface cost more than it did scoped to one chat. A future edit that speeds
+ * the sidebar's feed up to /live's rate goes red HERE, not in production. */
+checkTrue(
+  "flipping to everything-running does not raise the surface's request rate",
+  totalFleetScopeDegradedReqPerMin <= totalDegradedReqPerMin,
+);
+checkTrue(
+  "the sidebar's fleet feed is strictly slower than /live's",
+  SIDEBAR_AGENTS_POLL_MS > AGENTS_POLL_MS,
+);
+/* The counterfactual, stated so the choice is legible rather than folded into
+ * a constant: at /live's 4s the same swap would have cost 7 req/min MORE than
+ * the scoped surface — inside the ceiling, but spending headroom the last two
+ * nights of payload work bought. */
+checkTrue(
+  "at /live's rate the swap would have cost the surface more, not less",
+  wouldBeDegradedAtLiveRateReqPerMin > totalDegradedReqPerMin,
+);
+/* And the default scope — where Konrad spends nearly all his time — costs the
+ * fleet feed NOTHING. `scopePolls` is the gate ChatSurface computes
+ * `fleetEnabled` from and the same predicate that decides whether the component
+ * is mounted at all, so asserting it here is asserting the zero, not restating
+ * an arithmetic identity: if it ever returned true for the default, the
+ * surface's real degraded cost would be 32 + 7.5 and this line would be the
+ * one that noticed. */
+check("the default scope is the non-polling one", scopePolls(SIDEBAR_SCOPE_DEFAULT), false);
+check("only the fleet scope polls /api/agents", scopePolls("everything-running"), true);
+check(
+  "so the default scope's degraded total carries no fleet term",
+  totalDegradedReqPerMin +
+    (scopePolls(SIDEBAR_SCOPE_DEFAULT) ? sidebarFleetReqPerMin : 0),
+  32,
+);
 
 /* ════════════════════════════════════════════════════════════════════════════
  * SECTION 6: Team Tree Settled Backoff & Uploads Index Caching

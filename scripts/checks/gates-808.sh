@@ -248,6 +248,26 @@ gate_sh "check-team-confirm.ts — the destructive-control machines (✕, stop, 
 gate_sh "check-live-sessions.ts — live predicate, engine badge map, activity/elapsed degrade rules" \
   "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-live-sessions.ts | tail -2"
 
+# ── aios-sidebar-live-sessions · the toggle lane's two checks ──────────────
+# Both existed and passed for days while being executed by NOTHING: zero hits
+# across scripts/**.sh, every package.json and every *.yml. instrument-manifest
+# .txt lists them, which is the trap — the manifest COMPILES every file in
+# scripts/checks/, and compiling is not running. A check nobody invokes is not
+# a control, it is a file that agrees with you.
+#
+# Both were mutation-proved to go RED *through* their `| tail -2` pipe before
+# being wired (gate_sh runs `bash -c "set -o pipefail; $script"`, so the pipe
+# does not eat the exit code). Mutation: pollBudget.ts SIDEBAR_AGENTS_POLL_MS
+# 8_000 -> 4_000 — A 34 passed/0 failed -> 31/3 EXIT=1, B ALL PASS -> 5
+# FAILURE(S) EXIT=1.
+
+gate_sh "check-sidebar-scope.ts — default scope, round-trip, unknown-value fallback" \
+  "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-sidebar-scope.ts | tail -2"
+gate_sh "check-chat-delta.ts — delta contract + the chat surface's req/min budget" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-chat-delta.ts | tail -2"
+
+
 # ── aios-autonomy-automation round 5 ───────────────────────────────────────
 # Five "View Run in Chat" / "Settings → Connections" affordances shipped as
 # `<a>` elements pointing at a query string this one-route console has never

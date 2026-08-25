@@ -109,6 +109,11 @@ import {
   type RoleTokenName,
   type SubagentRow,
 } from "./agentsApi";
+/* This feed's own poll period, which used to be a `4_000` literal twelve lines
+ * into the component. It is a constant in the chat surface's budget file now
+ * because the chat sidebar can mount this component too (ChatSurface's scope
+ * toggle) — and a poll that file cannot see is a poll it cannot govern. */
+import { AGENTS_POLL_MS } from "../chat/pollBudget";
 
 const STATUS_COLOR: Record<string, string> = {
   running: tokens.accent,
@@ -796,14 +801,30 @@ function SubagentLine({
 export function AgentActivity({
   projectId,
   groupName,
+  pollMs = AGENTS_POLL_MS,
+  enabled = true,
 }: {
   projectId?: string;
   groupName?: string;
+  /** How often to re-ask `/api/agents`. Defaults to the /live rate, so the
+   *  surface this component was written for is unchanged by anyone else's
+   *  mount. The chat sidebar passes `SIDEBAR_AGENTS_POLL_MS` (8s) because it
+   *  shares a committed 40 req/min ceiling with four other polls; /live has no
+   *  such ceiling and stays at 4s. Both numbers live in
+   *  `../chat/pollBudget.ts` and are asserted by `check-chat-delta.ts`. */
+  pollMs?: number;
+  /** `false` costs EXACTLY ZERO requests: no interval, and no fetch on mount
+   *  either. The chat sidebar's default scope is "this chat", where this feed
+   *  must not exist at all — so its mount is conditional AND this flag is
+   *  false, the same belt-and-braces `ChatTeamPanel`'s `visible` prop uses
+   *  (NFU3): stopped by `enabled: false` and by there being no observer. */
+  enabled?: boolean;
 } = {}) {
   const q = useQuery({
     queryKey: ["agents", "activity", projectId ?? null],
     queryFn: () => fetchAgents(projectId),
-    refetchInterval: 4_000,
+    enabled,
+    refetchInterval: enabled ? pollMs : false,
   });
 
   const agents = useMemo(() => q.data?.agents ?? [], [q.data]);

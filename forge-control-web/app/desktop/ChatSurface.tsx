@@ -50,6 +50,7 @@ import {
   CHAT_DETAIL_FALLBACK_POLL_MS,
   CHAT_DETAIL_LIVE_POLL_MS,
   CHAT_LIST_POLL_MS,
+  SIDEBAR_AGENTS_POLL_MS,
 } from "./chat/pollBudget";
 import { effortRamp } from "./chat/effort-ramp";
 import { FileExplorerPanel } from "./chat/FileExplorerPanel";
@@ -64,6 +65,22 @@ import {
 } from "./chat/slash-registry";
 import { ChatTeamPanel } from "./team/ChatTeamPanel";
 import type { TeamNode } from "./team/teamApi";
+/* The fleet feed, mounted UNCHANGED and unforked in the sidebar's "everything
+ * running" scope — the vault addendum is explicit that this branch shows the
+ * component /live already has (LiveSurface.tsx:727) rather than growing a
+ * second implementation of it. It takes its poll period as a prop so that
+ * mounting it here does not make /live slower. */
+import { AgentActivity } from "./live/AgentActivity";
+import {
+  SIDEBAR_SCOPES,
+  SIDEBAR_SCOPE_DEFAULT,
+  SIDEBAR_SCOPE_KEY,
+  SIDEBAR_SCOPE_LABEL,
+  SIDEBAR_SCOPE_TITLE,
+  isSidebarScope,
+  scopePolls,
+  type SidebarScope,
+} from "./team/sidebar-scope";
 import { AssistantThread } from "./chat/AssistantThread";
 import { ManagerThread } from "./chat/ManagerThread";
 import { AgentChatView } from "./chat/AgentChatView";
@@ -220,12 +237,43 @@ function SidePanel({
    *  the panel shows). `null` = nothing open, so there is no team to fetch. */
   chatId: string | null;
 }) {
+  /* WHAT the Team tab is a picture of — Konrad's toggle (vault `AI OS/Spec -
+   * Manager Chat UI v3.md`, addendum 2026-08-25): "this chat" or "everything
+   * running", defaulting to this chat. Persisted per operator, alongside the
+   * panel's collapse and tab state and through the same hook, so the encoding
+   * is JSON — `./team/sidebar-scope` owns the key, the default, the labels and
+   * the parse, precisely so a check can assert them without a DOM.
+   *
+   * It lives HERE and not inside ChatTeamPanel on purpose: this is the mount
+   * point that swaps components, and ChatTeamPanel has its own owner. */
+  const [scope, setScope] = usePersistentState<SidebarScope>(
+    SIDEBAR_SCOPE_KEY,
+    SIDEBAR_SCOPE_DEFAULT,
+    isSidebarScope,
+  );
   // Per-tab width: Files needs the room for a path column, Live doesn't.
   // Both remembered separately, both draggable, double-click restores the
   // designed default.
+  //
+  // "Everything running" is a THIRD width, remembered under its own key.
+  // Measured 2026-08-25 at the 260px team default: every fleet row read
+  // `worker aio… 1m 04s`, because the row's right-aligned age and ↓-token
+  // column take a fixed slice and the project-qualified title takes the
+  // remainder — on /live that remainder is ~900px, here it was ~90. A mode
+  // whose entire purpose is "which project is this" cannot show `aio…`. 420 is
+  // the Files tab's number, which is the widest this panel is designed to be
+  // without eating the transcript, and it is still draggable to anything
+  // between 200 and 760. Its own storage key, so widening the fleet view does
+  // not widen the scoped one behind Konrad's back.
   const panel = useResizablePanel({
-    storageKey: `forge.layout.chat.sidePanel.${tab}`,
-    initial: tab === "files" ? 420 : 260,
+    storageKey:
+      tab === "team" && scope === "everything-running"
+        ? "forge.layout.chat.sidePanel.team.everything"
+        : `forge.layout.chat.sidePanel.${tab}`,
+    initial:
+      tab === "files" || (tab === "team" && scope === "everything-running")
+        ? 420
+        : 260,
     min: 200,
     max: 760,
     // Handle sits on the panel's left edge: dragging left must widen it.
@@ -236,6 +284,12 @@ function SidePanel({
   // zones with the single full-height ChatTeamPanel, so there is no longer a
   // divider to drag and the hook is gone with it. The stale localStorage key is
   // simply never read again; nothing migrates it.
+  /* The fleet feed's query is armed by SCOPE, not by the mount alone. Both
+   * gates are real: `scopePolls(scope)` is false in the default scope, and the
+   * mount below is conditional on the same fact, so "this chat" costs zero
+   * requests to /api/agents twice over — no interval, no fetch-on-mount, and no
+   * observer at all. Same NFU3 idiom as ChatTeamPanel's `visible`. */
+  const fleetEnabled = !collapsed && tab === "team" && scopePolls(scope);
 
   if (collapsed) {
     return (
@@ -350,9 +404,60 @@ function SidePanel({
           ✕
         </button>
       </div>
+      {/* The scope toggle, at the top of the sidebar exactly as asked, and only
+          over the Team tab — the file explorer has no notion of a chat to be
+          scoped to. Two segments, his two words, the cheap one first. */}
+      {tab === "team" && (
+        <div
+          data-sidebar-scope={scope}
+          className="mono"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "6px 10px",
+            borderBottom: `1px solid ${tokens.borderSoft}`,
+          }}
+        >
+          {SIDEBAR_SCOPES.map((s) => (
+            <button
+              key={s}
+              data-sidebar-scope-option={s}
+              aria-pressed={scope === s}
+              onClick={() => setScope(s)}
+              title={SIDEBAR_SCOPE_TITLE[s]}
+              className="mono"
+              style={{
+                fontSize: 10,
+                color: scope === s ? tokens.accent : tokens.textFaint,
+                background: scope === s ? tokens.primaryActionBg : "transparent",
+                border: `1px solid ${scope === s ? tokens.accent : tokens.border}`,
+                borderRadius: 6,
+                padding: "2px 8px",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {SIDEBAR_SCOPE_LABEL[s]}
+            </button>
+          ))}
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {tab === "team" ? (
-          chatId ? (
+          scope === "everything-running" ? (
+            /* EVERYTHING RUNNING — /live's own feed, mounted unforked with no
+               `projectId`, which is what makes `GET /api/agents` return every
+               run and sub-agent on the box rather than one project's. Two props
+               and no more: a slower period than /live's (the chat surface has a
+               committed 40 req/min ceiling and /live does not), and the arming
+               flag. No chatId is passed and none is wanted — this scope is
+               deliberately not about the open chat. */
+            <AgentActivity
+              pollMs={SIDEBAR_AGENTS_POLL_MS}
+              enabled={fleetEnabled}
+            />
+          ) : chatId ? (
             // One panel, full height, scoped to THIS chat — two zones since
             // phase 700 (team tree over plan Kanban) and therefore two polls,
             // 5s and 15s, against the two the pre-v3 panel ran at 4s and 6s.
