@@ -4,6 +4,26 @@ Project `aios-verification-that-bites`, round 0, task D1. Report only — nothin
 wired in, nothing was softened. All commands below were re-run in this worktree
 (`project/169903ec-audit`) on 2026-08-25.
 
+## Headline, before the table of 244
+
+**`scripts/checks/check-browser-takeover-ticket.ts` guards the one route in this
+repo reachable from the public internet without a NextAuth session** —
+`location /api/browser-takeover/ws/` proxies straight to forge-control on
+`127.0.0.1:7700`, bypassing the Next process and its auth wall entirely, to a
+live Chrome instance that can hold Konrad's logged-in Google and Perplexity
+sessions. **Its guard does not run automatically.** It is invoked only from
+`docs/plan/aios-browser-takeover-live/deploy.md:41` (and cross-referenced at
+`:51` for the secret-scan half of the same guarantee) — a deploy runbook that,
+as of this audit, has not yet been executed (`deploy.md:4`: *"Nothing in this
+project has been installed"*). That makes it neither a wired gate nor a true
+orphan: it is **PROCEDURE-INVOKED** — it fires only if a human reads the
+runbook and chooses to run it, which is the same failure shape as a memory
+note nobody read. (This reclassification came from the manager's independent
+check of this exact file, because it was the highest-consequence item on the
+first pass; verified here against the live doc before accepting it — see the
+PROCEDURE-INVOKED section below for the full citation and the re-scan it
+triggered across all 44 other LIVE-ORPHAN `scripts/checks/` files.)
+
 ## Method
 
 1. **Close the runner set first.** A gate that "runs" only inside a script nothing
@@ -58,8 +78,17 @@ wired in, nothing was softened. All commands below were re-run in this worktree
    (subject still exists and matters, nothing executes the check) · SPENT
    (one-shot verification of a settled historical round) · NOT-A-CHECK
    (harness/server/fixture) · PROCEDURE-INVOKED (a *current* human/deploy doc
-   instructs running it — historical round-evidence reports inside
-   `docs/plan/artifacts/**` do not count for this, only a live runbook does).
+   instructs running it — historical round-evidence reports, and a completed
+   project's own planning corpus, past-tense-recording what a round already
+   did, do not count for this; only a doc that is still telling someone to run
+   the check *going forward* does). This last bucket is materially weaker than
+   LIVE-WIRED (a runner fires unconditionally; a doc fires only if a human
+   reads it and chooses to act) and materially stronger than LIVE-ORPHAN
+   (nothing at all points at it). It sits between the two, and it is easy to
+   miss: a naive `git grep` for a check's filename returns the same shape of
+   hit whether the reference is a live instruction or a settled report, so
+   every doc hit for every LIVE-ORPHAN candidate was re-examined for this
+   round — see "PROCEDURE-INVOKED, and the re-scan it forced" below.
 
 ## The closed runner set, in full
 
@@ -81,8 +110,8 @@ source. This set is exhaustive for the repo as it stands on 2026-08-25.
 ## scripts/checks/ — 72 files, four/five-bucket table
 
 72 = 52 `.ts`/`.tsx` (all COMPILED-BY `check-instrument-typecheck.sh`) + 14 `.sh` +
-5 `.cjs` + 1 `.py`. Bucket totals: **17 LIVE-WIRED, 45 LIVE-ORPHAN, 5 SPENT,
-1 PROCEDURE-INVOKED, 4 NOT-A-CHECK.**
+5 `.cjs` + 1 `.py`. Bucket totals: **17 LIVE-WIRED, 44 LIVE-ORPHAN, 5 SPENT,
+2 PROCEDURE-INVOKED, 4 NOT-A-CHECK.**
 
 ### LIVE-WIRED (17)
 
@@ -113,19 +142,63 @@ source. This set is exhaustive for the repo as it stands on 2026-08-25.
 `docs/plan/artifacts/phase600/nav-walk.cjs` are also LIVE-WIRED, from
 `docs/plan/artifacts/` — see that section.
 
-### PROCEDURE-INVOKED (1)
+### PROCEDURE-INVOKED (2), and the re-scan it forced
 
 **`scripts/checks/verify-control-plane.sh`** — `docs/tools/run-control.md` (current
 tool doc, last touched 2026-08-06, not inside the historical
 `docs/plan/artifacts/**` corpus) §11 "How to verify", verbatim: *"The one command
 is **`scripts/checks/verify-control-plane.sh`**"*, followed by four literal
-invocation lines (`run-control.md:756-761`). This is the single case in the whole
-audit that earns this bucket on the brief's own terms — a *current*, general doc
-instructing a human to run it, not a settled round's own evidence trail. Note:
+invocation lines (`run-control.md:756-761`). A *current*, general doc instructing
+a human to run it repeatedly, not a settled round's own evidence trail. Note:
 `forge-control/src/lib/verify-control-plane-script.test.ts` also references this
 file, but only reads its source text as a string to assert a shell-scripting
 convention (`verify-control-plane-script.test.ts:27`) — it never executes the
 script, so this does not upgrade to LIVE-WIRED.
+
+**`scripts/checks/check-browser-takeover-ticket.ts`** — `docs/plan/aios-browser-takeover-live/deploy.md:41`
+(the invocation, inside step 0's preconditions: `cd forge-control-web && …tsx
+…/scripts/checks/check-browser-takeover-ticket.ts`) and `:51` (cross-referenced
+for the secret-scan guarantee: *"No file in git contains its value, and none
+ever may — `scripts/checks/check-browser-takeover-ticket.ts` §7 scans every
+tracked file"*). See the headline above for why this is the single most
+important line in this report. **Caught by the manager, not by this operator's
+first pass** — flagged here as a process gap, not just a data gap: this file's
+own header makes the strongest security claim of any artefact in the whole
+audit, and it was still initially miscategorised as LIVE-ORPHAN because the
+first pass's doc-grep was scoped to `docs/plan/artifacts/**` and
+`docs/plan/*/evidence/**` only, which correctly excludes settled round
+corpora but also, without a second check, silently excludes a *live, pending*
+deploy runbook living one directory shallower. That gap forced a full re-scan.
+
+**The re-scan, and why the other 44 LIVE-ORPHAN `scripts/checks/` files hold.**
+Every one of the 44 remaining LIVE-ORPHAN filenames was grepped again, this
+time across ALL of `docs/**/*.md` excluding only `docs/plan/artifacts/**`,
+`docs/research/**` and `docs/plan/*/evidence/**` — a deliberately wider net
+than the first pass. 30 of the 44 turned up at least one hit outside that
+exclusion set (`check-classify.ts`, `check-duration.ts`, `check-close-gate.ts`,
+`check-scheduler-sql.sh`, `check-task-api.ts`, `check-workstream-e2e.sh`,
+`check-plan-store.ts` and 23 more), every one of them inside a completed
+project's own **planning corpus** — `docs/plan/engine-task-graph/0{0-4}-*.md`,
+`docs/plan/operator-visibility/0{3-4}-*.md` and `1{2,4-5}-*.md`,
+`docs/plan/scripts-checks-typecheck-gate/0{0-4}-*.md`,
+`docs/plan/os-usable-for-work/04-phases.md`, `docs/plan/notification-gap.md`,
+`docs/plan/evidence/r950-forge-ui-prompt.md` — and every hit reads in the
+**past tense**, recording what a round already built and already ran (e.g.
+`aios-browser-stream-viewer/measurement.md:177`: *"`check-browser-stream-viewer.ts`
+— **65/65 assertions PASS**"*, a result, not an instruction). None of these
+projects has a pending, not-yet-executed deploy step the way
+`aios-browser-takeover-live` does — confirmed by listing every `deploy*.md` /
+`runbook*.md` in the repo (`git ls-files 'docs/plan/**/deploy*.md'
+'docs/plan/**/runbook*.md'`): the only hits outside `docs/plan/artifacts/**`
+and `docs/tools/*.md` are `docs/plan/aios-browser-takeover-live/deploy.md`
+itself and three settled evidence-dir deploy reports
+(`docs/plan/evidence/{cp4,p6,p7}-deploy.md`,
+`docs/plan/engine-task-graph/evidence/phase8-deploy*.md`,
+`docs/plan/scripts-checks-typecheck-gate/evidence/phase6-deploy.md`,
+`docs/plan/operator-visibility/artifacts/phase1860/02-deploy.md`), all of
+which record deploys that already happened. So the 44 remaining LIVE-ORPHAN
+classifications stand, but on a re-checked basis now, not the original
+narrower one.
 
 ### SPENT (5)
 
@@ -143,48 +216,42 @@ script, so this does not upgrade to LIVE-WIRED.
 `serve-v3-7798.ts` — HTTP servers other harnesses point browsers at; none contain
 a pass/fail verdict of their own.
 
-### LIVE-ORPHAN (45) — the finding bucket, ordered by strength of self-claim
+### LIVE-ORPHAN (44) — the finding bucket, ordered by strength of self-claim
 
 Every row below: subject still on disk (`git ls-files <path>` proven), nothing in
-the closed runner set names the check, and the check's own header argues its
-invariant still matters. Full proof commands are in the TSV; the strongest
-self-descriptions, verbatim:
+the closed runner set names the check, no live/pending doc invokes it either
+(see the re-scan above), and the check's own header argues its invariant still
+matters. Full proof commands are in the TSV; the strongest self-descriptions,
+verbatim:
 
-1. **`check-browser-takeover-ticket.ts`** — *"the gate on the ONE route in this
-   repo that is reachable from the public internet without a NextAuth
-   session… If the ticket check ever softens… the failure is silent and it is
-   account takeover."* Subject (`forge-control/src/lib/takeover-ticket.ts`,
-   `browser-takeover.ts`) is live, current-round work (see `PLAN.md` in this same
-   worktree). This is the highest-severity orphan in the batch: a security gate
-   for a route that bypasses NextAuth entirely, with nothing enforcing it.
-2. **`check-connection-states.ts`** — *"THE TEST THAT DECIDES PHASE 4."*
-3. **`check-secret-scan.ts`** — repo-wide committed-credential scanner. Already a
+1. **`check-connection-states.ts`** — *"THE TEST THAT DECIDES PHASE 4."*
+2. **`check-secret-scan.ts`** — repo-wide committed-credential scanner. Already a
    known, separately-tracked finding (fleet memory `do-not-soften-check-secret-scan`);
    re-confirmed here, `grep -c check-secret-scan scripts/checks/gates-808.sh` → `0`.
    Per this project's hard constraint, **not wired in during this round** — the
    fix order is redact → rotate → remove the literal → wire in, and redaction is
    seeded on a different project (`aios-guardrail-hardening`).
-4. **`check-chat-rich.tsx`** — asserts "NOTHING CAN FETCH" from a rendered chat
+3. **`check-chat-rich.tsx`** — asserts "NOTHING CAN FETCH" from a rendered chat
    message (no live `src`/`srcset`/`<link rel=preload>`) — the one guarantee a
    sibling round-807 check could not make.
-5. **`check-integrations.tsx`** — asserts the Google/Gemini API key "appears in no
+4. **`check-integrations.tsx`** — asserts the Google/Gemini API key "appears in no
    response body from any of the four endpoints — including the failure bodies,
    including an upstream body that echoes it back."
-6. **`check-typing-memo.ts`** — *"the fix is one `memo()` plus two
+5. **`check-typing-memo.ts`** — *"the fix is one `memo()` plus two
    `useCallback`s — an edit any future round could undo in four keystrokes without
    a single test going red."* A regression exactly this cheap to reintroduce, with
    nothing watching for it.
-7. **`check-quota-row.ts`** — a duplication-prevention rule
+6. **`check-quota-row.ts`** — a duplication-prevention rule
    (`quotaQuery.ts:23` documents it as enforced by this very script) with no
    automated enforcer behind it.
-8. **`check-ui-prompt.ts`** — protects the exact failure mode Konrad would see:
+7. **`check-ui-prompt.ts`** — protects the exact failure mode Konrad would see:
    *"the agent emits a block, validation rejects it, and Konrad gets a visible
    'unreadable control block' in his chat where a button should have been."*
-9. **`check-run-control-client.ts`** — argues, in its own header, for its
+8. **`check-run-control-client.ts`** — argues, in its own header, for its
    continued necessity even after a browser proof exists elsewhere: *"The
    script's VALUE is undiminished… a browser can only produce the answers the
    engine chooses to give it."*
-10. **`check-ops-scripts.sh`** — guards `scripts/ops/safe-restart.sh`, which the
+9. **`check-ops-scripts.sh`** — guards `scripts/ops/safe-restart.sh`, which the
     *current* `docs/tools/deploy-playbook.md` documents operators invoking
     directly against production pm2 services. The check that verifies
     `scripts/ops/`'s own internal consistency (permissions, the
@@ -192,14 +259,14 @@ self-descriptions, verbatim:
     one line of prose in `scripts/ops/README.md:69` — it is itself an orphan,
     auditing a directory whose real safety net turned out to be `crontab -l`
     (see below), not this script.
-11. **`contrast-nav-rail.cjs`, `contrast-role-tints.cjs`** — the name-twin pair
+10. **`contrast-nav-rail.cjs`, `contrast-role-tints.cjs`** — the name-twin pair
     the brief asked to confirm. `contrast-canvas-banners.cjs` is
     LIVE-WIRED (`gates-808.sh:178`); these two protect the LeftRail's
     selected-row contrast and the nine chat-role tint colours, respectively, in
     both themes, and neither has a call site anywhere. Same shape as
     `check-secret-requests.ts`/`check-secret-scan.ts`: a name that reads as
     covered because a sibling with a similar name is.
-12. The remaining 34 — `api-diff.sh`, `check-await-seed.sh`, `check-browser-shots.ts`,
+11. The remaining 34 — `api-diff.sh`, `check-await-seed.sh`, `check-browser-shots.ts`,
     `check-browser-stream-viewer.ts`, `check-chat-delta.ts`,
     `check-chat-pagination-browser.ts`, `check-chat-rail-payload.ts`,
     `check-classify.ts`, `check-close-gate.ts`, `check-duration.ts`,
@@ -240,6 +307,19 @@ spent three-fifths (C1, C3, C4)**, wearing a header that still claims universal
 qualifying current doc was found), with this hybrid nature flagged for whoever
 picks it up next: a naive re-wire would resurrect three permanently-failing
 project-specific checks alongside two good ones.
+
+**Generalise this one, because it will recur.** A dormant check is not
+automatically safe to switch back on just because its subject file still
+exists — it may be dormant *because it rotted*: written against one project's
+specific IDs, one round's specific schema, one branch name that no longer
+means what it meant. Flipping it back on then doesn't restore coverage, it
+resurrects the rot as new noise on unrelated work. D2 (can-it-fail) and any
+future re-wiring task should carry a column next to "would this check even
+run" for **"if it ran, would it pass against today's tree for reasons that
+have nothing to do with today's tree"** — `preflight-deploy.sh`'s C1/C3/C4 are
+the worked example: they would not merely fail to help, they would fail
+*unconditionally*, on every future project, forever, because `PROJECT_ID` and
+`BASE_BRANCH` are literals from a project that shipped weeks ago.
 
 ## docs/plan/artifacts/**/*.cjs, *.mjs — 77 files
 
@@ -366,12 +446,25 @@ active cron coverage was, for six days, wired into nothing — discovered the sa
 way this D1 audit finds everything else, by refusing to trust the header and
 checking the actual scheduler.
 
+**Scope note, not a finding to chase further here.** This project's brief is
+`scripts/checks/**`; cron/`/etc/cron.d` is included in this report only because
+`scripts/ops/` has no other execution path and the brief's own closed-runner-set
+proof requires checking it. But the discovery above makes a broader point worth
+naming and then leaving alone: **cron is a second registry of verification
+scripts, running this repo's checks by a completely different mechanism than
+`gates-808.sh`/`guard.sh`, with no owner watching whether an entry silently
+falls out of it.** The August-19-to-August-25 gap on `fleet-watchdog.sh` is proof
+that mechanism rots exactly like the gate suite does, undetected for the same
+reason (nothing watches the watcher). This is out-of-scope-but-found: D1 does
+not expand into a full cron audit, so it does not vanish from this report and it
+does not get chased further inside this task either.
+
 ## Known instances — re-measured, not trusted from the brief
 
 | instance | brief expected | measured |
 |---|---|---|
 | `check-secret-scan.ts` in `gates-808.sh` | 0 | `grep -c check-secret-scan scripts/checks/gates-808.sh` → **0**, confirmed |
-| `check-browser-takeover-ticket.ts` | orphan candidate | LIVE-ORPHAN, confirmed, see highlight #1 above |
+| `check-browser-takeover-ticket.ts` | orphan candidate | **PROCEDURE-INVOKED**, not orphan — `docs/plan/aios-browser-takeover-live/deploy.md:41,51`, a not-yet-executed deploy runbook; see headline at top of this doc |
 | `verify-control-plane.sh` | orphan candidate | **PROCEDURE-INVOKED**, not orphan — `docs/tools/run-control.md:756-761`, current doc |
 | `api-diff.sh` | orphan candidate | LIVE-ORPHAN, confirmed — phase-300 baseline still on disk, diff never re-run |
 | `contrast-nav-rail.cjs` | name-twin orphan | LIVE-ORPHAN, confirmed |
@@ -383,9 +476,9 @@ checking the actual scheduler.
 | bucket | scripts/checks | docs/plan/artifacts cjs/mjs | scripts/ops + scripts/deploy | test.ts/tsx |
 |---|---:|---:|---:|---:|
 | LIVE-WIRED | 17 | 5 | 9 (4 action, 5 verification/detector) | 72 |
-| LIVE-ORPHAN | 45 | 0 | 0 | 3 |
+| LIVE-ORPHAN | 44 | 0 | 0 | 3 |
 | SPENT | 5 | 53 | 2 | 0 |
-| PROCEDURE-INVOKED | 1 | 0 | 0 (2 more are NOT-A-CHECK actions invoked by a current doc — see table) | 0 |
+| PROCEDURE-INVOKED | 2 | 0 | 0 (2 more are NOT-A-CHECK actions invoked by a current doc — see table) | 0 |
 | NOT-A-CHECK | 4 | 19 | 9 | 0 |
 | **total** | **72** | **77** | **20** | **75** |
 
@@ -396,13 +489,19 @@ table itself, not its summary sentence, is the source of truth and is what the T
 encodes.)
 
 Item 1 of the brief's evidence (`check-secret-scan.ts`) is one instance of a
-45-wide LIVE-ORPHAN class in `scripts/checks/` alone — including a second,
-previously-unnamed security-route gate (`check-browser-takeover-ticket.ts`) and
-two more name-twins beyond the one already known
-(`contrast-nav-rail.cjs`/`contrast-role-tints.cjs` vs `contrast-canvas-banners.cjs`,
-matching `check-secret-requests.ts` vs `check-secret-scan.ts`). D2 (can-it-fail)
-should prioritise the LIVE-ORPHAN set in order of self-claimed severity above; D3
-(mutation rule) has two working models already in this repo to generalise from —
-`test-guard-discrimination.sh`'s inject/assert-RED/remove/assert-GREEN pattern,
-and `check-instrument-typecheck.sh`'s own step-9b canaries (make the compiler
-fail twice and succeed once before trusting any verdict).
+44-wide LIVE-ORPHAN class in `scripts/checks/` alone, sitting next to a
+security-route gate one notch less severe than orphaned —
+`check-browser-takeover-ticket.ts` guards the repo's one unauthenticated public
+route but is at least invoked by a (not-yet-run) deploy runbook, PROCEDURE-INVOKED
+rather than pure LIVE-ORPHAN — and two more name-twins beyond the one already
+known (`contrast-nav-rail.cjs`/`contrast-role-tints.cjs` vs
+`contrast-canvas-banners.cjs`, matching `check-secret-requests.ts` vs
+`check-secret-scan.ts`). D2 (can-it-fail) should prioritise the LIVE-ORPHAN set
+in order of self-claimed severity above, and treat both PROCEDURE-INVOKED
+entries as a distinct, second-priority tier — weaker than orphan-severity
+alone would suggest, since a human-run path exists, but not to be waved
+through as "covered" either. D3 (mutation rule) has two working models already
+in this repo to generalise from — `test-guard-discrimination.sh`'s
+inject/assert-RED/remove/assert-GREEN pattern, and
+`check-instrument-typecheck.sh`'s own step-9b canaries (make the compiler fail
+twice and succeed once before trusting any verdict).
