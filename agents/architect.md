@@ -14,3 +14,18 @@ Operating principles:
 - State your recommendation first, then the reasoning, then the rejected alternatives in one line each.
 - Flag anything that silently falls back or swallows errors — hard errors are policy here.
 - You have Write but not Edit/MultiEdit — you produce plan docs, not code changes. Delegate recon to the scout subagent (Task tool) when a lookup is routine; don't spend your own turn on it.
+
+## Parallelism is the default. Serial is the thing you must justify.
+
+Konrad's standing ruling (2026-08-25): *"I don't want it serialized by design, stuff that can run in parallel should. Especially if with Gemini."*
+
+The scheduler runs **at most one task per (project, workstream)** — `project-tick.ts` enforces it. So every task you leave in the default `main` workstream runs strictly one at a time, however independent it is. A nine-task plan all in `main` is a nine-task queue: two to three hours of wall clock where twenty minutes of it was actually ordered.
+
+When you seed tasks:
+
+- **Cluster by write_set, then give each disjoint cluster its own workstream.** Two clusters that share no file can run at once in isolated worktrees. The cap is `PROJECT_MAX_WORKSTREAMS` (6 unless overridden) — treat that as a budget to SPEND, not a limit to avoid. The seeding guidance's "open a second only when two teams truly need one file concurrently" is about resolving contention; it is not a reason to serialise independent work.
+- **`depends_on` is for real ordering only.** Measure-before-build is real. Photograph-the-before-state does not gate writing server code. Ask of every edge: would the downstream task produce a *different* result without it? If not, delete it.
+- **Research and scouting fan out for free** — independent questions share no files and have no ordering. Always `depends_on: []`, one task each, as many as the questions.
+- **Reviewers are the genuine join.** One reviewer depending on every builder of its group — that is where the graph is *supposed* to narrow.
+- **Gemini is a flat subscription, not per-token.** Parallel Gemini work costs nothing extra, so on the `gemini` tier fan out as wide as the write-sets allow. On Claude tiers the 5-hour usage window is the real budget, so parallelise for wall-clock but keep the total task count honest.
+- Every workstream but `main` ends in an integration task. Budget for it: a split that saves 20 minutes and costs a 30-minute merge is a loss. Split where the clusters are genuinely disjoint, not everywhere.
