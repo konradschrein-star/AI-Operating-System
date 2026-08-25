@@ -27,8 +27,34 @@
  * tsx, `process.exit(1)` on any match. Same shape as the other check-*.ts
  * scripts, deliberately.
  *
+ * THE FAILURE REPORT IS REDACTED, AND THAT IS NOT A SOFTENING. Until
+ * 2026-08-25 a failure printed the matched span verbatim, so the act of
+ * reporting a committed credential COPIED it — into a terminal, a gate log, an
+ * artefact directory, a report. The scanner is meant to be wired into
+ * `gates-808.sh`, which would have written the live password into every
+ * project's gate log on every run. So a failure now names the FILE, the LINE,
+ * the RULE that fired, and the match with its password segment replaced by
+ * `***` — enough to find the string by hand, nothing anybody can use.
+ *
+ * DETECTION IS BYTE-FOR-BYTE UNCHANGED by that edit: the same regexes over the
+ * same corpus with the same `SAFE_MARKERS`, the same per-file failure, the same
+ * exit code, the same count. `do-not-soften-check-secret-scan` forbids making
+ * this script find LESS. This makes it SAY less while finding exactly the same,
+ * and the two are not the same act. `secret-scan-redaction.test.ts` pins both
+ * halves.
+ *
+ * Note the mask is `***`, which `SAFE_MARKERS` already recognises (`^\*+$`) as
+ * the universal redaction — so this script's own output passes this script.
+ * That is a property the test asserts, not a coincidence.
+ *
  * Run (from the repo root):
  *   forge-control/node_modules/.bin/tsx scripts/checks/check-secret-scan.ts
+ *
+ * FIXTURE MODE, for the test suite only:
+ *   … check-secret-scan.ts --file /tmp/fixture.ts [--file …]
+ * scans exactly the named paths instead of the tracked corpus. The gate
+ * invocation takes NO arguments and always sweeps every tracked file; anything
+ * that runs this script with `--file` is testing it, not gating with it.
  */
 
 import { execFileSync } from "node:child_process";
@@ -83,10 +109,83 @@ function trackedFiles(): string[] {
     .filter((f) => !SKIP_EXTENSIONS.has(extname(f)));
 }
 
+/** Fixture mode: `--file <path>` (repeatable). No arguments means the gate —
+ *  the whole tracked corpus. An argument this script does not understand is a
+ *  hard error, never a silently-ignored token: a typo'd flag must not be able
+ *  to turn a gate run into a no-op run that exits 0. */
+function selectedFiles(argv: readonly string[]): string[] {
+  if (argv.length === 0) return trackedFiles();
+
+  const picked: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== "--file") {
+      throw new Error(
+        `check-secret-scan: unknown argument ${JSON.stringify(argv[i])} at position ${i}. ` +
+          `Usage: check-secret-scan.ts [--file <path> …] — no arguments scans every tracked file.`,
+      );
+    }
+    const path = argv[++i];
+    if (path === undefined) throw new Error("check-secret-scan: --file needs a path after it");
+    picked.push(path);
+  }
+  return picked;
+}
+
+/** The mask that replaces a matched password segment. `SAFE_MARKERS`'s
+ *  `^\*+$` alternative already treats it as the universal redaction, so a gate
+ *  log carrying this script's own output does not fail this script. Fixed
+ *  width on purpose — a mask as long as the secret would leak its length. */
+const MASK = "***";
+
+/** Replace `secret` inside `match` with `MASK`, so a report can show the shape
+ *  of what fired without reproducing the credential.
+ *
+ *  `lastIndexOf` rather than `indexOf`: in both regexes the captured segment
+ *  is the LAST thing in the match (`…:PASSWORD@`, `PGPASSWORD=PASSWORD`), and
+ *  a DSN whose user and password happen to be the same string
+ *  (`postgres://x:x@`) must mask the password, not the user.
+ *
+ *  Throws rather than falling back to printing the raw match: the capture is a
+ *  substring of the match by construction, so a miss means the regexes were
+ *  edited into a shape this function no longer understands, and the correct
+ *  response to that is a loud crash — NOT quietly reverting to the verbatim
+ *  print this whole change exists to remove. The diagnostic carries lengths
+ *  only; it must never carry the material. */
+function mask(match: string, secret: string): string {
+  const at = match.lastIndexOf(secret);
+  if (at < 0) {
+    throw new Error(
+      `check-secret-scan: cannot redact — the captured segment (${secret.length} chars) is not a ` +
+        `substring of its own match (${match.length} chars). A pattern was edited; fix the ` +
+        `redaction before this script prints anything.`,
+    );
+  }
+  return match.slice(0, at) + MASK + match.slice(at + secret.length);
+}
+
+/** 1-based line of a byte offset, so a failure says WHERE without quoting. */
+function lineOf(content: string, index: number): number {
+  let line = 1;
+  for (let i = 0; i < index; i++) if (content.charCodeAt(i) === 10) line++;
+  return line;
+}
+
+/** `matchAll` types `index` as optional on some lib targets; a match without
+ *  an offset is not something to paper over with a 0. */
+function offsetOf(m: RegExpMatchArray): number {
+  if (typeof m.index !== "number") {
+    throw new Error("check-secret-scan: match carries no index — cannot report a line number");
+  }
+  return m.index;
+}
+
+const ARGV = process.argv.slice(2);
+const CORPUS = ARGV.length === 0 ? "tracked" : "named";
+
 let failures = 0;
 let scanned = 0;
 
-for (const file of trackedFiles()) {
+for (const file of selectedFiles(ARGV)) {
   const abs = new URL(file, `file://${REPO_ROOT}`);
   if (fileURLToPath(abs) === SELF_PATH) continue; // this file quotes its own patterns
 
@@ -98,12 +197,19 @@ for (const file of trackedFiles()) {
   }
   scanned++;
 
+  // WHAT FIRES IS DECIDED HERE; WHAT IS PRINTED IS DECIDED BY `mask()`. Keep
+  // those two apart — every `SAFE_MARKERS.test` below reads the RAW captured
+  // segment, never a masked one, so redaction cannot change the verdict.
   const suspects: string[] = [];
   for (const m of content.matchAll(DSN_RE)) {
-    if (!SAFE_MARKERS.test(m[1])) suspects.push(`DSN password: ${m[0]}`);
+    if (!SAFE_MARKERS.test(m[1])) {
+      suspects.push(`line ${lineOf(content, offsetOf(m))}  DSN password  ${mask(m[0], m[1])}`);
+    }
   }
   for (const m of content.matchAll(PGPASSWORD_RE)) {
-    if (!SAFE_MARKERS.test(m[2])) suspects.push(`PGPASSWORD=${m[2]}`);
+    if (!SAFE_MARKERS.test(m[2])) {
+      suspects.push(`line ${lineOf(content, offsetOf(m))}  PGPASSWORD  ${mask(m[0], m[2])}`);
+    }
   }
 
   if (suspects.length > 0) {
@@ -115,7 +221,7 @@ for (const file of trackedFiles()) {
 
 console.log(
   failures === 0
-    ? `\nALL PASS — ${scanned} tracked files carry no unlabelled DB credential`
+    ? `\nALL PASS — ${scanned} ${CORPUS} files carry no unlabelled DB credential`
     : `\n${failures} FILE(S) FAILED — live-looking DB credential committed`,
 );
 process.exit(failures === 0 ? 0 : 1);
