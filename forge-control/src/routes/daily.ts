@@ -333,6 +333,7 @@ r.post("/gtasks/sync", async (c) => {
       pushed_update: r2.pushed_update.length,
       pulled_new: r2.pulled_new.length,
       pulled_update: r2.pulled_update.length,
+      retired: r2.retired.length,
       unchanged: r2.unchanged,
     });
   } catch (err: unknown) {

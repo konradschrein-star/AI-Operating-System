@@ -29,6 +29,7 @@ import {
   listGoogleTasks,
   createGoogleTask,
   updateGoogleTask,
+  deleteGoogleTask,
   DEFAULT_TASKLIST,
   type GoogleTask,
 } from "./gtasks.ts";
@@ -53,6 +54,9 @@ export interface GtaskSyncResult {
   pushed_update: string[];
   pulled_new: string[];
   pulled_update: string[];
+  /** Tasks whose Google Tasks copy was removed because they moved to the
+   *  calendar — one commitment, one place. */
+  retired: string[];
   unchanged: number;
 }
 
@@ -110,6 +114,7 @@ export async function syncGoogleTasks(
   const pushedUpdate: string[] = [];
   const pulledNew: string[] = [];
   const pulledUpdate: string[] = [];
+  const retired: string[] = [];
   let unchanged = 0;
 
   // ── Google → board ──────────────────────────────────────────────────────
@@ -143,6 +148,26 @@ export async function syncGoogleTasks(
         });
       }
       pulledNew.push(g.id);
+      continue;
+    }
+
+    // ── It graduated to the calendar: retire the Tasks copy ───────────────
+    //
+    // The routing rule is that a task lives in Google Calendar OR Google Tasks,
+    // never both. `tasksNeedingGtask()` enforces that for NEW pushes, but a task
+    // pushed while unscheduled and LATER dragged onto the grid keeps its Tasks
+    // entry — so it shows twice on the phone, once as a 10:15 event and once as
+    // a loose to-do. Measured on live data 2026-08-25: "Deploy phase 8" carried
+    // both a gtask_id and a gcal_event_id.
+    //
+    // Delete rather than complete: it was never done, it moved. A completed
+    // entry would land in his Google Tasks history as work he finished.
+    if (local.start_time) {
+      if (!dryRun) {
+        await deleteGoogleTask(g.id, tasklist).catch(() => null);
+        await updateTask(local.id, { gtask_id: null, gtask_updated: null });
+      }
+      retired.push(g.id);
       continue;
     }
 
@@ -234,6 +259,7 @@ export async function syncGoogleTasks(
     pushed_update: pushedUpdate,
     pulled_new: pulledNew,
     pulled_update: pulledUpdate,
+    retired,
     unchanged,
   };
 }

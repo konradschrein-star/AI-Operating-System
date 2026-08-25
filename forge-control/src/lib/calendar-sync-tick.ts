@@ -44,10 +44,11 @@ async function tickOnce(): Promise<void> {
   try {
     const g = await syncGoogleTasks({});
     const touched =
-      g.pushed_new.length + g.pushed_update.length + g.pulled_new.length + g.pulled_update.length;
+      g.pushed_new.length + g.pushed_update.length + g.pulled_new.length +
+      g.pulled_update.length + g.retired.length;
     if (touched > 0) {
       console.log(
-        `[gtasks-sync] remote=${g.remote} pushed=${g.pushed_new.length}+${g.pushed_update.length} pulled=${g.pulled_new.length}+${g.pulled_update.length} unchanged=${g.unchanged}`,
+        `[gtasks-sync] remote=${g.remote} pushed=${g.pushed_new.length}+${g.pushed_update.length} pulled=${g.pulled_new.length}+${g.pulled_update.length} retired=${g.retired.length} unchanged=${g.unchanged}`,
       );
     }
   } catch (e) {
