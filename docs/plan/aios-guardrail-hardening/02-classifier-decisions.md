@@ -121,6 +121,56 @@ rm -rf /opt/dir2>&1               -> fs.destructive   (dir2 is a word, as bash r
 git push --force origin main 2>&1 -> git.force_push
 ```
 
+### (c) `recursive AND force` was a conjunction that meant nothing
+
+Found after the round's main commit, from the real command behind the 48-file
+deletion — recovered from the D4 lane's own thread, not guessed:
+
+```
+rm -r src/routes
+```
+
+Recursive, a directory, **no `-f`**. The rule read `if recursive and force:`, so
+the guard never even reached its routine-path allowlist. That conjunction
+pattern-matched the *idiom* `rm -rf` rather than reasoning about
+destructiveness: `-f` suppresses prompts and ignores missing files, and removes
+nothing extra. `rm -r <dir>` and `rm -rf <dir>` delete the same tree.
+
+Measured against the hardened classifier *before* the correction — every one of
+these was **allowed**:
+
+| command | before | after |
+|---|---|---|
+| `rm -r src/routes` | allowed | `fs.destructive` |
+| `rm -R src/routes` | allowed | `fs.destructive` |
+| `rm --recursive src/routes` | allowed | `fs.destructive` |
+| `rm -r /opt/forge-ai-os` — the entire live checkout | **allowed** | `fs.destructive` |
+| `rm -rf src/routes` | `fs.destructive` | `fs.destructive` |
+
+**The cost of dropping the `force` requirement is zero.** Flag census over the
+52 rm segments in the corpus:
+
+| | count |
+|---|---|
+| `-r` **and** `-f` | 20 |
+| `-r` **without** `-f` | **0** |
+| `-f` without `-r` | 27 |
+| neither | 5 |
+
+`-r` without `-f` never occurs in 2,924 real commands, so the correction newly
+trips **nothing**. Re-measured after the change: corpus trips still 10 → 2 with
+zero newly-tripping rows, the 27-shape routine workload unchanged, and
+`rm -r node_modules`, `rm -r .next`, `rm -r dist build`, `rm -r /tmp/scratch-x`,
+`rm -r .next/types 2>&1` and `cd /tmp && rm -r main-check` all still pass. The
+140-case suite stayed green **without being edited** — none of its 55 `rm` cases
+uses `-r` alone, so the suite did not encode the bug, it was simply blind to it.
+
+**`-f` without `-r` stays uncaught, and that one IS a tradeoff, not a claim
+about destructiveness.** All 27 such calls are legitimate `/tmp` probe cleanup
+— one line removes 13 files. A rule firing on them is exactly the kind that
+gets a guard switched off. Recorded here so the next reader does not mistake
+the asymmetry for an argument that `-f` is what makes a delete dangerous.
+
 ---
 
 ## 3. REJECT — deliberately not caught, with the reason

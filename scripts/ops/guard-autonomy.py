@@ -106,6 +106,15 @@ database. What changed, with the decision behind each, is written up in
   session cookies, and fleet policy is explicit that a login wall is the one
   thing an agent does not solve itself. So the profile named `scratch` passes
   and the directory holding it does not.
+* RECURSION ALONE TRIGGERS `fs.destructive`. The condition was `recursive AND
+  force`, which pattern-matched the idiom `rm -rf` instead of reasoning about
+  destructiveness -- `-f` only suppresses prompts, it removes nothing extra. A
+  lane ran `rm -r src/routes` on 2026-08-25 and deleted all 48 tracked files of
+  forge-control's API surface without the guard reaching its own allowlist;
+  `rm -r /opt/forge-ai-os` was allowed by the same hole. `-r` without `-f`
+  occurs 0 times in the 24h corpus, so the correction costs zero new trips.
+  `-f` without `-r` stays uncaught on purpose -- all 27 such calls are routine
+  scratch cleanup. See 02-classifier-decisions.md §2(c).
 * NEW LOCAL RULE `autonomy.self_edit`. An agent curling `/api/autonomy/rules`
   or `/api/autonomy/trips/<id>/resolve` is reaching for the rule that is
   blocking it, or for the record that it was blocked. That endpoint is
@@ -614,11 +623,36 @@ def match_rules(head: str, rest, words, cwd: str, ctx: dict, unknown_targets: bo
         flags = "".join(w[1:] for w in rest if w.startswith("-") and not w.startswith("--"))
         longs = {w for w in rest if w.startswith("--")}
         recursive = "r" in flags.lower() or "--recursive" in longs
-        force = "f" in flags or "--force" in longs
         targets = [w for w in rest if not w.startswith("-")]
-        if recursive and force:
+
+        # RECURSION ALONE IS THE TRIGGER. `-f` is deliberately NOT required.
+        #
+        # This condition used to read `recursive and force`, which was the
+        # idiom `rm -rf` pattern-matched rather than a statement about
+        # destructiveness. `-f` only suppresses prompts and ignores missing
+        # files; it adds nothing to how much a command removes. `rm -r <dir>`
+        # and `rm -rf <dir>` delete the same tree.
+        #
+        # It cost exactly what you would expect. On 2026-08-25 a lane ran
+        #     rm -r src/routes
+        # and removed all 48 tracked files of forge-control's API surface. The
+        # guard never even reached the routine-path allowlist, because of the
+        # missing `-f`. Measured against the hardened classifier before this
+        # change, `rm -r /opt/forge-ai-os` -- the entire live checkout -- was
+        # likewise ALLOWED, as were `rm -R` and `rm --recursive`.
+        #
+        # Dropping `force` is close to free: `-r` WITHOUT `-f` occurs **0 times
+        # in the 24h corpus** (52 rm calls in 2,924 commands; 20 are `-rf`, 27
+        # are `-f` without `-r`, 5 have neither). So this catches the real
+        # command at a measured cost of zero new trips.
+        #
+        # `-f` WITHOUT `-r` stays uncaught, and that IS a false-positive
+        # tradeoff rather than a claim about destructiveness: those 27 calls are
+        # all legitimate /tmp probe cleanup, one line of which removes 13 files.
+        # A rule firing on them is the kind that gets the guard switched off.
+        if recursive:
             if unknown_targets and not targets:
-                # `… | xargs rm -rf` -- the targets are on stdin. Nothing here
+                # `… | xargs rm -r` -- the targets are on stdin. Nothing here
                 # can judge them, and the verb is total, so it escalates.
                 return (
                     "fs.destructive",
@@ -629,7 +663,7 @@ def match_rules(head: str, rest, words, cwd: str, ctx: dict, unknown_targets: bo
                 return (
                     "fs.destructive",
                     {"command": joined_words[:400], "targets": targets[:8]},
-                    f"recursive force delete: {' '.join(targets[:3])}",
+                    f"recursive delete: {' '.join(targets[:3])}",
                 )
 
     if head == "pm2" and rest and rest[0].strip(STRIP) in ("delete", "del"):
