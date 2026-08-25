@@ -42,7 +42,7 @@
  * state — the same rule the rest of this surface follows.
  */
 
-import { useCallback, useMemo, useState, type CSSProperties, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
 import { tokens } from "../../tokens";
 import { probeAllConnections, type ProbeAllResponse } from "../../api-connections";
 import {
@@ -65,15 +65,18 @@ import {
 import {
   agyConnection,
   claudeConnection,
+  fetchFleetDefaultTier,
   geminiCliConnection,
   geminiKeyConnection,
   githubConnection,
   googleConnection,
   isReadFailure,
   ultraConnection,
+  updateFleetDefaultTier,
   type AgyFacts,
   type ConnectionState,
   type ConnectionSummary,
+  type FleetDefaultTierSetting,
   type GeminiCliFacts,
   type GithubFacts,
   type GoogleFacts,
@@ -213,6 +216,8 @@ export function ConnectionsPanel(): JSX.Element {
         error={probeAllError}
         onRun={() => void runProbeAll()}
       />
+
+      <FleetDefaultEngineSection />
 
       {registry.error && (
         <div
@@ -366,6 +371,201 @@ export function ConnectionsPanel(): JSX.Element {
       >
         <GitHubCard onFacts={setGithub} reloadKey={reloadKey} />
       </Row>
+    </div>
+  );
+}
+
+const FLEET_TIER_DESCRIPTIONS: Record<string, { label: string; desc: string }> = {
+  gemini: {
+    label: "gemini — Gemini 3.7 Flash via agy (Default)",
+    desc: "Default engine for sub-agent work: builders, tests, boilerplate, docs, evidence and all re-checks.",
+  },
+  junior: {
+    label: "junior — Claude 3.5 Sonnet",
+    desc: "Claude junior: deploy/host-touching tasks where work must definitely land on disk.",
+  },
+  standard: {
+    label: "standard — Claude Opus / Sonnet",
+    desc: "Claude standard: gating reviews of product code and tasks requiring high judgement.",
+  },
+  fast: {
+    label: "fast — Claude 3.5 Haiku",
+    desc: "Claude fast: trivial mechanical work and fast scout recon.",
+  },
+  flagship: {
+    label: "flagship — Claude Opus / Fable",
+    desc: "Claude flagship: genuinely hard top-level architecture and system design only.",
+  },
+};
+
+/**
+ * Fleet default engine switch — runtime tier configuration for sub-agent dispatch.
+ *
+ * Untiered and newly created tasks resolve against this setting at tick / dispatch time
+ * (GET /api/fleet/default-tier), backed by app_settings['fleet.default_tier'].
+ * Changing this setting updates the default immediately at runtime without restart.
+ */
+export function FleetDefaultEngineSection(): JSX.Element {
+  const [tierData, setTierData] = useState<FleetDefaultTierSetting | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetchFleetDefaultTier()
+      .then((data) => {
+        if (active) setTierData(data);
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleChange = useCallback(async (newTier: string) => {
+    setUpdating(true);
+    setError(null);
+    try {
+      const res = await updateFleetDefaultTier(newTier);
+      setTierData(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUpdating(false);
+    }
+  }, []);
+
+  const activeTier = tierData?.default_tier ?? "gemini";
+  const source = tierData?.source ?? "default";
+  const isGemini = activeTier === "gemini";
+
+  return (
+    <div
+      data-fleet-default-engine
+      style={{
+        background: tokens.bgCard,
+        border: `1px solid ${tokens.border}`,
+        borderRadius: 12,
+        padding: "14px 16px",
+        marginBottom: 16,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: tokens.textHi }}>
+          Fleet Default Engine
+        </span>
+        <span
+          className="mono"
+          data-fleet-tier-badge
+          style={{
+            background: isGemini ? tokens.primaryActionBg : tokens.selectedBg,
+            color: isGemini ? tokens.textHi : tokens.accent,
+            border: `1px solid ${tokens.borderEmphasis}`,
+            borderRadius: 5,
+            padding: "2px 7px",
+            fontSize: 10.5,
+            fontWeight: 600,
+          }}
+        >
+          {tierData ? tierData.default_tier.toUpperCase() : "GEMINI"}
+        </span>
+        <span
+          className="mono"
+          data-fleet-tier-source
+          style={{
+            background: tokens.bgGutter,
+            color: source === "app_settings" ? tokens.ok : tokens.textFaint,
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 5,
+            padding: "2px 7px",
+            fontSize: 10.5,
+          }}
+        >
+          {source === "app_settings" ? "APP_SETTINGS (RUNTIME)" : "DEFAULT"}
+        </span>
+        <span style={{ flex: 1 }} />
+        {tierData?.updated_at && (
+          <span
+            className="mono"
+            data-fleet-tier-updated
+            title={tierData.updated_at}
+            style={{ fontSize: 10.5, color: tokens.textFaint }}
+          >
+            UPDATED {new Date(tierData.updated_at).toLocaleTimeString()}
+          </span>
+        )}
+      </div>
+
+      <div style={{ fontSize: 12.5, color: tokens.textSoft, lineHeight: 1.5, marginTop: 8 }}>
+        The engine tier newly created and untiered sub-agent tasks resolve against at dispatch
+        time. Switchable at runtime with no deploy or restart required.
+      </div>
+
+      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+        <label
+          htmlFor="fleet-default-tier-select"
+          className="mono"
+          style={{ fontSize: 10, color: tokens.textLabel }}
+        >
+          DEFAULT ENGINE TIER
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <select
+            id="fleet-default-tier-select"
+            data-fleet-tier-select
+            value={activeTier}
+            disabled={updating || tierData === null}
+            onChange={(e) => void handleChange(e.target.value)}
+            className="mono"
+            style={{
+              background: tokens.bgGutter,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 7,
+              color: tokens.textHi,
+              cursor: updating ? "progress" : "pointer",
+              fontSize: 12,
+              padding: "6px 10px",
+              minWidth: 260,
+            }}
+          >
+            <option value="gemini">gemini — Gemini 3.7 Flash via agy (Default)</option>
+            <option value="junior">junior — Claude 3.5 Sonnet</option>
+            <option value="standard">standard — Claude Opus / Sonnet</option>
+            <option value="fast">fast — Claude 3.5 Haiku</option>
+            <option value="flagship">flagship — Claude Opus / Fable</option>
+          </select>
+          {updating && (
+            <span className="mono" style={{ fontSize: 11, color: tokens.textSoft }}>
+              Updating runtime setting…
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11.5, color: tokens.textSoft, lineHeight: 1.45, marginTop: 2 }}>
+          {FLEET_TIER_DESCRIPTIONS[activeTier]?.desc ?? ""}
+        </div>
+      </div>
+
+      {error && (
+        <div
+          data-fleet-tier-error
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: tokens.bleed,
+            background: tokens.dangerActionBg,
+            border: `1px solid ${tokens.dangerActionBorder}`,
+            borderRadius: 8,
+            padding: "8px 10px",
+            marginTop: 10,
+            lineHeight: 1.45,
+            wordBreak: "break-word",
+          }}
+        >
+          {error}
+        </div>
+      )}
     </div>
   );
 }

@@ -829,3 +829,62 @@ export function ultraConnection(
       : `${summary.health}\n\nThis forge-control does not report a Gemini tally, so there is no count to show beside the state.`,
   };
 }
+
+/* ── Fleet Default Engine Tier (Runtime Switch) ──────────────────────────── */
+
+export type FleetTaskTier = "fast" | "junior" | "standard" | "flagship" | "gemini";
+
+export const FLEET_TASK_TIERS: readonly FleetTaskTier[] = [
+  "gemini",
+  "junior",
+  "standard",
+  "fast",
+  "flagship",
+] as const;
+
+export interface FleetDefaultTierSetting {
+  default_tier: string;
+  source: "app_settings" | "default";
+  updated_at: string | null;
+}
+
+export async function fetchFleetDefaultTier(): Promise<FleetDefaultTierSetting> {
+  const res = await fetch("/api/proxy/fleet/default-tier", {
+    headers: { accept: "application/json" },
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body.error === "string") detail = ` — ${body.error}`;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(`GET /api/fleet/default-tier failed: ${res.status} ${res.statusText}${detail}`);
+  }
+  return (await res.json()) as FleetDefaultTierSetting;
+}
+
+export async function updateFleetDefaultTier(
+  tier: string,
+): Promise<FleetDefaultTierSetting> {
+  const res = await fetch("/api/proxy/fleet/default-tier", {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({ tier }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body.error === "string") detail = ` — ${body.error}`;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(`PUT /api/fleet/default-tier failed: ${res.status} ${res.statusText}${detail}`);
+  }
+  return (await res.json()) as FleetDefaultTierSetting;
+}
