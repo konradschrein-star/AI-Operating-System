@@ -53,11 +53,36 @@ import runControl from "./routes/run-control.ts";
 
 const app = new Hono();
 
+/* THE TAKEOVER TICKET IS A BEARER CREDENTIAL IN A URL PATH — never log it.
+ *
+ * nginx already sets `access_log off` on /api/browser-takeover/ws/ for exactly
+ * this reason, and browser-takeover.ts logs run/profile/port/jti/outcome and
+ * never the ticket itself. This middleware was the third door, and it was open.
+ *
+ * A real noVNC connection is an UPGRADE, and upgrades are served by the
+ * http.Server 'upgrade' listener, which never reaches Hono middleware — so this
+ * only fires when something fetches the URL as ordinary HTTP: a link preview, a
+ * crawler, an address-bar paste, a probe. Found 2026-08-25 by the deploy task,
+ * which had written one of its own live tickets here:
+ *
+ *   GET /api/browser-takeover/ws/eyJ2IjoxLCJyaWQiOiI2NDI1M2NjNGEzMjIi… 404
+ *
+ * Full payload and signature, on disk, in a log that rotates and is retained.
+ * A non-upgrade GET does NOT burn the jti, so a ticket logged this way stays
+ * LIVE for the remainder of its TTL rather than being spent.
+ */
+const REDACTED_PATH_PREFIXES = ["/api/browser-takeover/ws/"];
+
+function safeLogPath(path: string): string {
+  const prefix = REDACTED_PATH_PREFIXES.find((p) => path.startsWith(p));
+  return prefix ? `${prefix}<redacted>` : path;
+}
+
 app.use("*", async (c, next) => {
   const t0 = Date.now();
   await next();
   console.log(
-    `[${new Date().toISOString()}] ${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - t0}ms`,
+    `[${new Date().toISOString()}] ${c.req.method} ${safeLogPath(c.req.path)} ${c.res.status} ${Date.now() - t0}ms`,
   );
 });
 
