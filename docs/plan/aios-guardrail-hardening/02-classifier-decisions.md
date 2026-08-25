@@ -394,8 +394,48 @@ hook.
 ## 7. Gate summary and inherited RED
 
 Full run: `/opt/ai-os/scratch/guardrail-a2/gates-808-round1.txt`.
+**31 gates, RED: 1**, and that one is inherited.
 
-**One inherited RED, attributed:** `check-ops-scripts.sh` asserts
+```
+ 22 0      pnpm test — forge-control unit suite
+ 23 0      test-guard-autonomy.py — classifier matrix + exit-code contract
+ 24 0      test-guard-service-restart.py
+ 25 0      test-guard-protected-paths.py — the Write/Edit hole the Bash hooks cannot see
+ 26 1      check-ops-scripts.sh — scripts/ops/ inventory, modes, hook registration
+ 27 0      psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard
+ …
+ 31 0      reproduce-cleanliness — re-running a protocol leaves the tree untouched
+
+ RED: 1
+```
+
+Gates 1–22 and 27–31 are green (29 and 30 SKIPPED — the browser harness was not
+requested). Gate 31 passing matters here: running all three suites and the
+inventory check leaves the working tree byte-identical, which is what the
+`__pycache__` entry added to `.gitignore` buys — the suites import the hooks
+with `importlib` and `check-ops-scripts.sh` `py_compile`s them, so without it
+every gate run would dirty the tree and turn gate 31 red for having been run.
+
+Two things in that log that are **not** failures and should not be read as
+such:
+
+- **Gate 23 prints a `BrokenPipeError` traceback.** It comes from the test's own
+  stub HTTP server writing a response to a socket the hook has already closed —
+  the timeout case, where the stub deliberately sleeps 4 s past the hook's 2.5 s
+  ceiling. It is the stub's stderr, the suite reports `140/140 passed`, and the
+  gate exits 0. Silencing it means a `try/except BrokenPipeError` in
+  `test-guard-autonomy.py`, which is outside this task's write-set.
+- **Gate 27 prints `connection refused` on port 59997.** That is
+  `psql-argv-leak.cjs` demonstrating the leak it guards against; it exits 0.
+
+Separately, `check-secret-scan.ts` is **red at `main`** and was red before this
+task began: `forge-control/src/routes/pipeline.ts` carries a live-looking DSN
+password. `git show main:…` confirms the string is present at `main`, the file
+is outside this write-set, and none of the twelve staged files trip the scan.
+That check is deliberately wired into no gate — see
+`memory/do-not-soften-check-secret-scan.md`.
+
+**The inherited RED, attributed:** `check-ops-scripts.sh` asserts
 `scripts/ops/check-vps2-backup.sh` is mode `750`. git stores it as `100755`
 (`git ls-files -s` confirms) — the tighter mode is restored by
 `install-symlinks.sh` at install time and cannot survive a checkout. The check
