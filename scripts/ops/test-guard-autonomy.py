@@ -266,6 +266,17 @@ MUST_BLOCK += [
     ("a literal that is itself a variable gets no second hop",
      'SC="$OTHER"; rm -rf $SC', "fs.destructive", None),
 
+    # -- the sharp edge of the `$$` substitution, and the reason it is limited to
+    # the two tokens that are GUARANTEED to be digits. An opaque `$X` followed by
+    # a routine basename is the laundering shape: substitute any expansion and
+    # `$X/dist` becomes a path whose components include `dist`, which rule 1
+    # calls routine wherever it appears -- so `X=/opt/content-forge` in the
+    # caller's environment would walk straight through.
+    ("an opaque variable followed by a routine basename must NOT resolve",
+     "C=$X/dist; rm -rf $C", "fs.destructive", None),
+    ("…the same with node_modules",
+     "C=$BUILD/node_modules; rm -rf $C", "fs.destructive", None),
+
     # -- cd-tracking must not become an escape hatch: a relative target is
     # normpath'd AFTER the join, so `..` walks back out of the routine tree.
     ("cd /tmp then delete back out through ..",
@@ -460,6 +471,28 @@ MUST_PASS += [
      "cd /opt && SC=/tmp/guard-probe-r5; rm -rf $SC", None, None),
     ("literal node_modules path via a variable",
      "D=/opt/content-forge/node_modules; rm -rf $D", None, None),
+
+    # -- the `$$` / $RANDOM scratch-dir idiom. Found by the live guard blocking
+    # THIS round's own control script (trip 9d5c8cdf): the routine prefix was
+    # /opt/ai-os/scratch/ and the only thing in the way was the pid token. Both
+    # tokens always expand to digits, so they change one path component's
+    # spelling and never the tree.
+    ("C=/opt/ai-os/scratch/…-$$ ; rm -rf $C (trip 9d5c8cdf's exact shape)",
+     "C=/opt/ai-os/scratch/b167-installctl-$$; rm -rf $C", None, None),
+    ("$$ in /tmp", "T=/tmp/probe-$$; rm -rf $T", None, None),
+    ("$RANDOM in /tmp", "T=/tmp/probe-$RANDOM; rm -rf $T", None, None),
+    ("${RANDOM} brace form", "T=/tmp/probe-${RANDOM}; rm -rf $T", None, None),
+    ("$$ inside double quotes", 'T="/tmp/probe-$$"; rm -rf "$T"', None, None),
+    # …and the verdict is preserved in the OTHER direction too: a pid token in a
+    # non-routine tree resolves to a non-routine path and still blocks.
+    ("$$ does not launder a real tree",
+     "C=/opt/content-forge-$$; rm -rf $C", "fs.destructive", None),
+    ("$$ does not launder the worktree ROOT",
+     "C=/opt/ai-os/workspace/projects/$$; rm -rf $C", "fs.destructive", None),
+    # …and no OTHER expansion is resolved: only these two tokens are digits.
+    ("$HOME is not a digit token", "C=$HOME/x; rm -rf $C", "fs.destructive", None),
+    ("a command substitution in the value is not literal",
+     'C="$(cat /tmp/where)"; rm -rf $C', "fs.destructive", None),
 
     # -- the browser-profiles/scratch exception itself.
     ("research-browser's disposable scratch profile",

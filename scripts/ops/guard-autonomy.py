@@ -453,25 +453,59 @@ def substitution_bodies(cmd: str):
 
 # A whole statement that is nothing but `NAME=<literal>`.
 #
-# Both halves of that sentence are load-bearing:
+# "A whole statement" -- terminated by `;`, `&&`, `|`, a newline, `)` or the end
+# of the string -- is what separates a shell VARIABLE from a per-command ENV
+# PREFIX. `SC=/tmp/x; rm -rf $SC` deletes /tmp/x; `SC=/tmp/x rm -rf $SC` passes
+# SC in rm's environment and expands `$SC` from the CALLER's scope, which this
+# hook cannot see. Resolving the second shape would be an evasion:
+# `SC=/tmp/safe rm -rf $SC` with SC=/opt/content-forge exported.
 #
-# * <literal> excludes `$`, a backtick and a backslash outside single quotes, so
-#   the value this hook reads is the value bash will use. Inside `'…'` a `$` is
-#   literal to bash too, so it is allowed there.
-# * "a whole statement" -- terminated by `;`, `&&`, `|`, a newline, `)` or the
-#   end of the string -- is what separates a shell VARIABLE from a per-command
-#   ENV PREFIX. `SC=/tmp/x; rm -rf $SC` deletes /tmp/x; `SC=/tmp/x rm -rf $SC`
-#   passes SC in rm's environment and expands `$SC` from the CALLER's scope,
-#   which this hook cannot see. Resolving the second shape would be an evasion:
-#   `SC=/tmp/safe rm -rf $SC` with SC=/opt/content-forge exported.
+# The value is captured loosely here and VALIDATED by `literal_value()` below,
+# because "is this literal enough" is a question about the characters, not about
+# where the statement ends.
 LITERAL_ASSIGN_RE = re.compile(
     r"""(?:^|(?<=[;&|\n(]))\s*
         ([A-Za-z_][A-Za-z0-9_]*)=
-        (?:"([^"$`\\]*)"|'([^'`]*)'|([^\s;&|<>()"'`$\\]*))
+        (?:"([^"`\\]*)"|'([^'`]*)'|([^\s;&|<>()"'`\\]*))
         \s*(?=$|[;&|\n)])
     """,
     re.X,
 )
+
+# `$$` and `$RANDOM` are the fleet's two scratch-directory idioms and they are
+# safe to resolve THROUGH, which no other expansion is.
+#
+# Both always expand to a run of DIGITS. Digits contain no `/` and cannot spell
+# `..`, so substituting a placeholder changes the spelling of exactly one path
+# COMPONENT and cannot move the path into a different tree. Every question
+# `is_routine_path` asks is about the tree: a routine PREFIX (all literal, none
+# containing `$$`), an exact ROUTINE_EXACT path, position inside WORKTREE_ROOT,
+# or membership of a component in ROUTINE_BASENAMES (all non-numeric words, so a
+# digit run joins none of them and displaces none of them). The verdict is
+# therefore identical for the real path and the substituted one, in both
+# directions -- which is what makes this a resolution and not a hole.
+#
+# Inside single quotes `$$` is literal text to bash rather than the pid. The
+# substitution is applied there too, and by the same argument the verdict does
+# not change, so the distinction costs nothing to ignore.
+#
+# Measured: the live guard blocked `rm -rf $C` with
+# `C=/opt/ai-os/scratch/b167-installctl-$$` assigned in the same command, on this
+# round's own work (trip 9d5c8cdf). /opt/ai-os/scratch/ is a routine prefix; the
+# only thing standing between that command and the allowlist was the `$$`.
+SHELL_DIGIT_TOKEN_RE = re.compile(r"\$\$|\$\{RANDOM\}|\$RANDOM\b")
+
+
+def literal_value(raw: str):
+    """The resolvable value of a `NAME=` right-hand side, or None.
+
+    None means "this hook cannot know what bash will use here", which sends the
+    target back to rule 5 and keeps it blocked.
+    """
+    resolved = SHELL_DIGIT_TOKEN_RE.sub("0", raw)
+    if "$" in resolved or "`" in resolved:
+        return None
+    return resolved
 
 
 def scan_context(cmd: str) -> dict:
@@ -493,8 +527,10 @@ def scan_context(cmd: str) -> dict:
     # the only safe answer is "unresolvable" -- back to rule 5, blocked.
     literal_at = {}
     for m in LITERAL_ASSIGN_RE.finditer(cmd):
-        value = next((v for v in m.groups()[1:] if v is not None), "")
-        literal_at[m.start(1)] = value
+        raw = next((v for v in m.groups()[1:] if v is not None), "")
+        value = literal_value(raw)
+        if value is not None:
+            literal_at[m.start(1)] = value
 
     # EVERY assignment occurrence is enumerated, then each is asked whether the
     # strict pattern above claimed that exact position. A name assigned a

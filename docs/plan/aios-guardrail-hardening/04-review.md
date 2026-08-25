@@ -625,3 +625,193 @@ one-character regex fix to the headline CATCH.
 *Reviewed at `d907389b1391601eb73359d7967e612ffce4fa53`. Every command in this
 document was executed; probe scripts are in `/tmp/r4-*.py`, `/tmp/r4-*.sh` and
 `/tmp/r4-gates.txt`, none of them committed.*
+
+---
+
+# H. Fix cycle 1 (round 5) — response, appended not edited
+
+Everything above this line is round 4's review as it was written. It is evidence
+and it stays verbatim; this section records what was done about it and what was
+measured afterwards. Two commits: `29fe55f` (B1) and the round-5 hardening commit
+that follows it.
+
+## H.0 What was executed
+
+| what | command | result |
+|---|---|---|
+| gate suite | `bash scripts/checks/gates-808.sh --strict` | **exit 0** — 31 gates, 29 EXECUTED, 2 SKIPPED-by-design (29/30, browser), **RED 0** |
+| hook suite | `python3 scripts/ops/test-guard-autonomy.py` | **199/199**, exit 0 (was 140/140) |
+| hook mutation control | `bash scripts/checks/prove-guard-bites.sh` | **BITES — 9/9 mutations DISCRIMINATED**, subject md5 identical before/after |
+| mode-assertion control | `bash scripts/checks/prove-ops-mode-bites.sh` | **BITES** — 755 FAILs, 750 passes, elsewhere SKIPs loudly |
+| unit suite | `pnpm test` (forge-control) | **2227/2227** (was 2224; +3 new route tests) |
+| typecheck | `tsc --noEmit -p forge-control/tsconfig.json` | clean |
+| migration numbers, **against the merge-tree** | `main`'s `check-migration-numbers.ts` on `git merge-tree main HEAD` | `HEAD~1`: **exit 1, COLLISION 0047**. `HEAD`: **exit 0, PASS — 31 migrations, highest 0051** |
+| service-restart / protected-paths suites | `python3 scripts/ops/test-guard-{service-restart,protected-paths}.py` | 19/19, 28/28 (via gates 24–25) |
+
+## H.1 The blockers, one by one
+
+**B1 — migration collision.** `git mv 0047_guardrail_rule_changes.sql →
+0051_guardrail_rule_changes.sql`. `sha256sum` was
+`432bdd1e69a3c942a3e8a4cb665b5c68a7e9e8239dc6883a58f573acd1e9df6c` before the
+move and after it; the committed digest differs only because the same commit adds
+a provenance note to the file's own header. 0050 skipped — `0050_day_tasks_goal.sql`
+is committed on `project/d6371f2d`. Number chosen against `main`, against every
+`project/*` ref, and against every worktree on disk, not against this lane.
+`01-engine.md` §4 now records why round 1's three "0047 is free" checks were each
+true and each blind, keeping the transcripts verbatim.
+
+**B2 — gate 26.** The assertion is not softened; it is made location-aware.
+`install-symlinks.sh` symlinks `$TARGET_DIR/<f>` at `<repo>/scripts/ops/<f>` and
+then `chmod 750`s the repo file — so "the installed copy" and "this checkout" are
+the same inode exactly when the symlink resolves back here, and that is now the
+discriminator. On the installed checkout the check still demands 750 and still
+fails at 755; everywhere else it SKIPs with the reason printed. Because an
+assertion that skips wherever anyone looks is indistinguishable from a deleted
+one, `scripts/checks/prove-ops-mode-bites.sh` stands up a scratch `$TARGET_DIR`
+and watches all three verdicts. It restores the mode on EXIT **and** on INT/TERM/HUP
+and verifies the restore by md5.
+
+**B3 — discrimination.** 140 → 199 cases, covering every family the review named
+and all four §8.1 gaps: `rm -r` / `--recursive` / `-R` / `-r -f` without `-f`,
+newline segmentation (3 cases), the `2>&1` fd prefix (4 passing + 1 blocking, so
+adjacency is asserted in both directions), `cd`-tracking (3 passing + 2 blocking),
+and the `browser-profiles/scratch` exception (2 passing + 2 blocking siblings).
+
+`scripts/checks/prove-guard-bites.sh` is the answer to "show both mutations red".
+It applies nine real behaviour reverts to a **copy** of the hook — never the repo
+file, md5 asserted unchanged across the run — points the suite at the copy via its
+own documented `GUARD_AUTONOMY_HOOK` override, and requires each to turn it red.
+It refuses to run at all if the unmutated suite is not green first.
+
+| mutation | round 4 | round 5 |
+|---|---|---|
+| M1 `if recursive:` → `if recursive and force:` | 140/140 ❌ | **3 red** ✅ |
+| M2 `punctuation_chars` loses the newline | 140/140 ❌ | **11 red** ✅ |
+| M3 `heredoc_marker` ignores quoting/arithmetic | n/a | **3 red** ✅ |
+| M4 unterminated heredoc swallows the remainder | n/a | **1 red** ✅ |
+| M5 `SHELL_C_RE` anchors `c` to the end again | n/a | **1 red** ✅ |
+| M6 stop resolving literal assignments | n/a | **11 red** ✅ |
+| M7 drop the whole-statement requirement | n/a | **1 red** ✅ |
+| M8 stop substituting `$$` / `$RANDOM` | n/a | **5 red** ✅ |
+| M9 substitute *any* `$NAME`, not just digits | n/a | **2 red** ✅ |
+
+M3 and M9 were **INERT on the first attempt** and are recorded as such rather
+than quietly dropped, because each taught something the cases were missing:
+
+* M3 was rescued by the *other* half of the B4 fix — keeping an unterminated
+  remainder covers the accidental shapes on its own. The cases that separate them
+  are the adversarial ones: a fake heredoc opener **plus a matching terminator
+  line**, which hides everything between them from a classifier that reads `<<`
+  without reading quote state.
+* M9 was rescued because substituting `$HOME/x` yields the *relative* path `0/x`,
+  which is still not routine. The case that separates them is `C=$X/dist` — an
+  opaque variable followed by a routine basename, which rule 1 calls routine
+  wherever it appears. That is the laundering shape and it now has its own test.
+
+**B4 — `strip_heredocs`.** Split into `heredoc_marker()`, a left-to-right scan
+tracking quote state and `$((` depth, plus the loop. `<<` inside a quoted region,
+inside arithmetic, or written `<<<` no longer opens a body; the marker's quoting
+must balance. And when the marker line never arrives, the remaining lines are
+**kept and classified** rather than discarded — an unterminated heredoc is a
+command bash itself rejects, so there is no legitimate shape being protected. The
+prose cases the function exists for are still invisible (4 passing cases).
+
+**B5 — `bash -cx`.** `^-[a-zA-Z]*c$` → `^-[a-zA-Z]*c[a-zA-Z]*$`. `--` still
+cannot match, because `[a-zA-Z]` does not accept `-`. Three cases (`-cx`, `-xc`,
+`-exc`).
+
+**B6 — the literal `VAR=` false positive.** `scan_context()` learns literal
+assignments, `is_routine_path()` resolves a bare `$SC` / `${SC}` through them
+before rule 5. Deliberately narrow, each limit with its own MUST_BLOCK case: only
+a **whole statement** counts (an env prefix expands from the caller's scope,
+which this hook cannot see); a name assigned twice, or assigned anything opaque
+anywhere in the command, is unresolvable; `${SC:-…}` is the variable through an
+operator and is not resolved; there is no second hop.
+
+**B7 — audit ordering.** The mutation's outcome is the status code; the audit's
+outcome is a separate `audit: "ok" | "failed"` field carrying `audit_error`. A
+404 keeps its 404 and writes neither row — asserted, so the field cannot be read
+as "the change went through". The alternative the review offered (transact the
+audit with the mutation) was **rejected on purpose**: it would let a broken audit
+table block Konrad from turning a guardrail off, which is the one failure
+direction this control plane must not have. `05-deploy.md` §0 states the
+migration-before-restart order that keeps the window shut in the first place.
+
+## H.2 F1 reproduced live, against this round's own work
+
+The review's F1 (the guard blocking `rm -rf $SC` with `SC` assigned literally in
+the same command, trip `5c9fc766`) **recurred during this round**, on the control
+script for the `install-symlinks.sh` fix:
+
+```
+BLOCKED by the autonomy control plane: Destructive fs ops (fs.destructive)
+  attempted: rm -rf $C
+  trip:      9d5c8cdf-ca40-4053-8f0e-52278f45ab02
+```
+
+`C=/opt/ai-os/scratch/b167-installctl-$$`, assigned two words earlier.
+`/opt/ai-os/scratch/` is a routine prefix; the only thing between that command and
+the allowlist was the `$$`. It was reported and fixed, not worked around — the
+control was re-run against a fixed literal path instead.
+
+`$$` and `$RANDOM` are now substituted inside an otherwise-literal value, and the
+argument that makes that a resolution rather than a hole is written into the hook:
+both always expand to a run of **digits**, digits contain no `/` and cannot spell
+`..`, so the substitution changes the spelling of exactly one path component and
+cannot move the path into another tree. Every question `is_routine_path` asks is
+about the tree, and no `ROUTINE_BASENAME` is a digit run, so the verdict is
+identical for the real path and the substituted one — in **both** directions,
+which M8 and M9 both assert.
+
+## H.3 Also fixed: F8's first item, because `05-deploy.md` depends on it
+
+`install-symlinks.sh` now refuses to run when `REPO_ROOT` is under
+`/opt/ai-os/workspace/projects/`. Writing a deploy procedure that says "run
+`install-symlinks.sh`" while the script would happily point every PreToolUse hook
+at a directory that is deleted when the project finishes is handing someone a
+loaded gun. Proved both ways: refuses from this worktree (exit 1, reason
+printed), and the byte-identical copy under `/opt/ai-os/scratch/` proceeds to its
+dry-run (`md5sum` equal on both).
+
+## H.4 Not fixed, reported
+
+* **F3** (`source` can never say `console`) — the review's own prescription is
+  "ask Konrad which he wants before building". Asked in the manager chat; not
+  built. The column is decorative today, not deceptive.
+* **F5** (9 of 24 unresolved trips invisible; the trips feed inner-joins
+  `guardrail_rules`, so a deleted rule takes its trips with it) — a behaviour
+  change to the trips query, outside the seven blockers. Reported.
+* **F6** (`check-secret-scan` red, `main`'s `pipeline.ts` DSN) — rotation is
+  Konrad's call and its own window; only the redaction step is on this branch.
+* **F8's** remaining two items (`guard-protected-paths.py` writes no audit line;
+  an ACK whose reminder POST fails is silent) — both mitigated rather than open,
+  per the review's own assessment. Recorded.
+
+## H.5 Write-set
+
+Declared: `docs/plan/aios-guardrail-hardening/04-review.md` — this file, the
+reviewer's own document, which cannot be where a fix to seven code blockers goes.
+**Every other file below is an undeclared write and is named here first.** The
+declared set describes the round-4 REVIEW task; this is the round-5 FIX task and
+the blockers name the files themselves.
+
+| file | why it had to change | blocker |
+|---|---|---|
+| `db/migrations/0051_guardrail_rule_changes.sql` (was `0047_…`) | the rename IS the fix | B1 |
+| `forge-control/src/db/autonomy.ts` | 4 comments naming migration 0047 | B1 |
+| `forge-control/src/routes/autonomy.ts` | migration number; `auditOutcome` | B1, B7 |
+| `forge-control/src/lib/autonomy-changes.test.ts` | the 500 assertion is now a 200 + `audit` assertion; 3 new tests | B7 |
+| `scripts/ops/guard-autonomy.py` | the classifier fixes | B4, B5, B6 |
+| `scripts/ops/test-guard-autonomy.py` | 140 → 199 cases | B3 |
+| `scripts/ops/install-symlinks.sh` | worktree refusal | F8 |
+| `scripts/checks/check-ops-scripts.sh` | location-aware mode assertion | B2 |
+| `scripts/checks/prove-guard-bites.sh` (new) | "show both mutations red" | B3 |
+| `scripts/checks/prove-ops-mode-bites.sh` (new) | the skipping assertion needs a control | B2 |
+| `docs/plan/aios-guardrail-hardening/01-engine.md` | §4 renumber + why the old proof was blind | B1 |
+| `docs/plan/aios-guardrail-hardening/02-classifier-decisions.md` | §8.1 closed | B3 |
+| `docs/plan/aios-guardrail-hardening/05-deploy.md` (new) | "state it in `05-deploy.md`" | B7 |
+
+Not touched: `/opt/forge-ai-os` (the live checkout), the live database, pm2, the
+live hook at `/opt/ai-os/scripts/guard-autonomy.py`, and `guardrail_trips` — the
+suites are in-process or point at a stub the test file starts itself, so this
+round wrote no trip row except the one the live guard wrote **about** it (H.2).

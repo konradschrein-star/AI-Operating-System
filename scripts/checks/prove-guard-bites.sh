@@ -161,6 +161,25 @@ mutate "B6 — LITERAL_ASSIGN_RE drops the whole-statement requirement" '
 s = s.replace("        \\s*(?=$|[;&|\\n)])\n", "        \\s*\n", 1)
 '
 
+# --- M8: stop resolving the `$$` / $RANDOM scratch idiom. The false positive
+# that blocked this round'"'"'s own control script comes straight back.
+mutate "B6b — literal_value() stops substituting the pid/RANDOM tokens" '
+s = s.replace(
+    "    resolved = SHELL_DIGIT_TOKEN_RE.sub(\"0\", raw)",
+    "    resolved = raw",
+    1)
+'
+
+# --- M9: the OTHER direction on the same token — substitute EVERY expansion,
+# not only the two that are guaranteed to be digits. `C=$HOME/x` would then
+# resolve to `/x` and a real tree could be laundered through a variable.
+mutate "B6b — literal_value() substitutes any \$NAME, not just the digit tokens" '
+s = s.replace(
+    "SHELL_DIGIT_TOKEN_RE = re.compile(r\"\\$\\$|\\$\\{RANDOM\\}|\\$RANDOM\\b\")",
+    "SHELL_DIGIT_TOKEN_RE = re.compile(r\"\\$\\$|\\$\\{?[A-Za-z_][A-Za-z0-9_]*\\}?\")",
+    1)
+'
+
 # ---------------------------------------------------------------------------
 # Step 3 — the repo file must be untouched. A control that edits its own
 # subject in place is how a mutation transcript quietly becomes a regression.
