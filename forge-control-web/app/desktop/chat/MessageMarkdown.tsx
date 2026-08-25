@@ -299,9 +299,14 @@ function DocLink({
         * (20260825T061654Z-r3-thread-references.png): rendered, a wikilink read
         * "[[Operating Manual" — an opening bracket with nothing closing it,
         * which looks like markdown the renderer failed to finish rather than
-        * like restraint. The dotted underline in the link colour is the same
-        * signal the path pills carry, and one visual language for "this opens
-        * in the Files panel" is better than two. */}
+        * like restraint.
+        *
+        * RULING, 2026-08-25: AN AFFORDANCE ENCODES BEHAVIOUR, NOT SYNTAX. A
+        * wikilink and a path pill do the identical thing — open in the Files
+        * panel — so they look identical. Marking them apart would advertise
+        * how the author happened to type the reference, which is of no use to
+        * the reader at the moment of clicking. One behaviour, one visual
+        * language: the link colour with a dotted underline. */}
       {children}
     </a>
   );

@@ -151,6 +151,12 @@ function pickHit(
  * until forge-control restarts — so the honest answer for a click on
  * `/root/.claude/projects/-opt-forge-ai-os/memory/` today is "not live yet",
  * not a viewer that says "(failed to load)".
+ *
+ * THE TOAST IS THE GUARD WORKING, NOT A GAP TO CLOSE (manager ruling,
+ * 2026-08-25). Do not delete this check to stop the "isn't live" message
+ * appearing — the message goes away by itself the moment forge-control
+ * restarts into a router that serves the root. Removing the check would trade
+ * an accurate sentence for a broken viewer.
  */
 export async function resolveRootPath(
   root: string,
