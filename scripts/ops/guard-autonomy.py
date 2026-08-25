@@ -204,12 +204,27 @@ OUTBOUND_HOST_RE = re.compile(
     r"api\.telegram\.org|hooks\.slack\.com|/services/T[0-9A-Z]", re.I
 )
 
+# Heads whose ARGUMENT is a program rather than a filename. Defined here, above
+# the heredoc code, because that is the first thing that needs to ask the
+# question; `classify_segment` uses the same tuple further down, and having one
+# definition is the point -- two lists of shells would drift apart on the first
+# addition.
+SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+PY_HEAD_RE = re.compile(r"^python[0-9.]*$")
+# Interpreters whose heredoc body is a PROGRAM. Anything not on this list keeps
+# the round-0 behaviour: its heredoc body is prose and is dropped.
+INTERPRETER_HEADS = SHELLS + ("python", "python3", "node", "perl", "ruby", "php")
+DB_CLIENT_HEADS = ("psql", "mysql", "mongo", "mongosh", "redis-cli")
+
 
 HEREDOC_OP_RE = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 
 
 def heredoc_marker(line: str):
-    """`(dash, marker)` for the first REAL heredoc redirection on this line.
+    """`(dash, marker, pos)` for the first REAL heredoc redirection on this line.
+
+    `pos` is the offset of the `<<`, which is what lets a caller ask WHICH
+    command is about to consume the body -- `cat` (prose) or `bash` (a program).
 
     "Real" is the whole point, and it is why this is a left-to-right scan rather
     than one `re.search` over the raw line. Three shapes carry the characters
@@ -270,7 +285,7 @@ def heredoc_marker(line: str):
                 continue
             m = HEREDOC_OP_RE.match(line, i)
             if m:
-                return m.group(1), m.group(3)
+                return m.group(1), m.group(3), i
             i += 2
             continue
         i += 1
@@ -295,24 +310,54 @@ def strip_heredocs(cmd: str) -> str:
     accepts an indented marker here.
 
     THIS FUNCTION DROPS INPUT, WHICH MAKES IT THE DANGEROUS KIND OF PRE-FILTER.
-    Two rules keep it honest, both added in round 5 after the round-4 review:
+    Three rules keep it honest, two added in round 5 after the round-4 review
+    and the third in round 7 after the round-6 review:
 
     1. Only a real heredoc introducer opens a body -- see `heredoc_marker`.
     2. When the marker line never arrives, the remaining lines are KEPT and
        classified, not discarded. An unterminated heredoc is a command bash
        itself rejects, so there is no legitimate shape to protect there; the
        only thing the old behaviour protected was the evasion.
+    3. A body this function drops is NOT unexamined. `heredoc_programs()` picks
+       up every body whose consumer executes it -- `bash <<EOF`, `psql <<EOF`,
+       `cat <<EOF | bash` -- and `classify()` runs it through the rules as the
+       program it is. Round 6's blocker 1: `bash <<EOF` + `rm -rf
+       /opt/content-forge` classified as NOTHING, exit 0, no audit line, while
+       the same delete written plainly exited 2. "Prose" was the wrong word for
+       the argument of an interpreter.
     """
-    out, lines = [], cmd.split("\n")
+    lines = cmd.split("\n")
+    keep = [True] * len(lines)
+    for _kind, _consumer, _body, first, last in heredoc_blocks(cmd):
+        for k in range(first, last + 1):   # the body AND the closing marker
+            keep[k] = False
+    return "\n".join(line for line, k in zip(lines, keep) if k)
+
+
+def heredoc_blocks(cmd: str):
+    """Walk the lines once, yielding one record per TERMINATED heredoc.
+
+    `(kind, consumer_words, body, first_body_line, last_dropped_line)`.
+
+    One walker feeds both `strip_heredocs` (which drops what is yielded) and
+    `heredoc_programs` (which classifies what is yielded), so the two cannot
+    disagree about where a body starts and ends. When they disagree, one of
+    them is a hole.
+
+    An UNTERMINATED heredoc is yielded by neither: `strip_heredocs` keeps those
+    lines in the command and the ordinary segment walk classifies them, which
+    is round 5's second B4 rule and must not be undone by classifying them a
+    second time here.
+    """
+    lines = cmd.split("\n")
     i = 0
     while i < len(lines):
         line = lines[i]
-        out.append(line)
         hd = heredoc_marker(line)
         i += 1
         if hd is None:
             continue
-        dash, marker = hd
+        dash, marker, pos = hd
         j, found = i, -1
         while j < len(lines):
             candidate = lines[j].lstrip("\t") if dash else lines[j]
@@ -320,11 +365,80 @@ def strip_heredocs(cmd: str) -> str:
                 found = j
                 break
             j += 1
-        if found >= 0:
-            i = found + 1  # drop the body AND the closing marker
-        # else: no terminator anywhere -- leave `i` alone so the outer loop
-        # appends (and the caller classifies) every remaining line.
-    return "\n".join(out)
+        if found < 0:
+            continue        # unterminated: the lines stay in the command
+        kind, consumer = heredoc_consumer(line, pos)
+        yield kind, consumer, "\n".join(lines[i:found]), i, found
+        i = found + 1
+
+
+def heredoc_consumer(line: str, pos: int):
+    """`(kind, words)` for whatever will read the body opened at `pos`.
+
+    kind is "prose" (the round-0 assumption, still the default), "shell",
+    "python" or "db". `words` is the consuming command, starting AT the
+    interpreter -- `docker exec -i cf-postgres psql -U postgres <<EOF` yields
+    `["psql", "-U", "postgres"]`, because that is the command the SQL rules
+    know how to read.
+
+    TWO PLACES CAN CONSUME THE BODY and both are checked:
+
+        psql -U postgres <<EOF      -- the segment holding the `<<`
+        cat <<EOF | bash            -- a DOWNSTREAM segment on the same line
+
+    The second is why this does not simply look at the head word. `cat` is the
+    canonical prose consumer and `cat <<'EOF' > note.md` must stay prose, but
+    `cat <<'EOF' | bash` hands the identical body to a shell.
+
+    Both scans are deliberately NARROW, because the loose version of each is a
+    false positive on the fleet's most common heredoc by far -- a prose note:
+
+    * upstream, only the LAST segment counts. `bash deploy.sh && cat <<'EOF' >
+      note.md` has a shell on the line and prose in the body.
+    * downstream, only a head after a PIPE counts. `segments()` alone would
+      offer the redirection TARGET as a head, so `cat <<'EOF' > /tmp/node`
+      would read its own output file as an interpreter.
+    """
+    upstream = [seg for seg in segments(line[:pos])]
+    if upstream:
+        words = upstream[-1][0]
+        for idx, word in enumerate(words):
+            got = _consumer_kind(word)
+            if got:
+                return got, list(words[idx:])
+
+    piped, seg, after_pipe = [], [], False
+    for tok in tokenize(line[pos:]):
+        if is_operator(tok):
+            if seg and after_pipe:
+                piped.append(seg)
+            seg, after_pipe = [], tok in ("|", "|&")
+            continue
+        seg.append(tok)
+    if seg and after_pipe:
+        piped.append(seg)
+    for words in piped:
+        got = _consumer_kind(words[0])
+        if got:
+            return got, list(words)
+    return "prose", []
+
+
+def _consumer_kind(word: str):
+    """"db" / "python" / "shell" for a command word, else None."""
+    head = os.path.basename(word.strip(STRIP))
+    if head in DB_CLIENT_HEADS:
+        return "db"
+    if head in INTERPRETER_HEADS:
+        return "python" if PY_HEAD_RE.match(head) else "shell"
+    return None
+
+
+def heredoc_programs(cmd: str):
+    """Every heredoc body whose consumer will EXECUTE it: (kind, words, body)."""
+    for kind, consumer, body, _first, _last in heredoc_blocks(cmd):
+        if kind != "prose" and body.strip():
+            yield kind, consumer, body
 
 
 def tokenize(cmd: str):
@@ -451,23 +565,41 @@ def substitution_bodies(cmd: str):
 # routine. Scanned from the raw string once, then passed down every recursion.
 # ---------------------------------------------------------------------------
 
-# A whole statement that is nothing but `NAME=<literal>`.
+# A whole statement, RUN IN THE CURRENT SHELL, that is nothing but
+# `NAME=<literal>`.
 #
-# "A whole statement" -- terminated by `;`, `&&`, `|`, a newline, `)` or the end
-# of the string -- is what separates a shell VARIABLE from a per-command ENV
+# "A whole statement" is what separates a shell VARIABLE from a per-command ENV
 # PREFIX. `SC=/tmp/x; rm -rf $SC` deletes /tmp/x; `SC=/tmp/x rm -rf $SC` passes
 # SC in rm's environment and expands `$SC` from the CALLER's scope, which this
 # hook cannot see. Resolving the second shape would be an evasion:
 # `SC=/tmp/safe rm -rf $SC` with SC=/opt/content-forge exported.
 #
+# "IN THE CURRENT SHELL" is the round-7 half, and it is the same evasion under
+# a different spelling. Round 6's blocker 2: the round-5 boundary accepted `(`
+# and a bare `|`, and BOTH of those put the assignment in a SUBSHELL whose
+# variables die with it. Measured in bash, with SC=/opt/CALLER-VALUE exported:
+#
+#     (SC=/tmp/x); echo $SC        -> /opt/CALLER-VALUE     (subshell)
+#     true | SC=/tmp/y; echo $SC   -> /opt/CALLER-VALUE     (pipeline)
+#     { SC=/tmp/z; }; echo $SC     -> /tmp/z                (current shell)
+#     SC=/tmp/w && true; echo $SC  -> /tmp/w                (current shell)
+#
+# So `(SC=/tmp/x); rm -rf $SC` deletes whatever the CALLER's SC names, and the
+# hook was reading /tmp/x. The boundaries below are exactly the separators bash
+# runs the next statement in the current shell after: start-of-string, `;`,
+# newline, `&` (which covers both `&&` and a backgrounded predecessor) and
+# `||`. A bare `|` before, and `)`, `&` or a bare `|` AFTER, are all refused --
+# each of those is the assignment itself running somewhere that does not
+# persist. Refusing leaves the name unresolvable, which is rule 5: blocked.
+#
 # The value is captured loosely here and VALIDATED by `literal_value()` below,
 # because "is this literal enough" is a question about the characters, not about
 # where the statement ends.
 LITERAL_ASSIGN_RE = re.compile(
-    r"""(?:^|(?<=[;&|\n(]))\s*
+    r"""(?:^|(?<=;)|(?<=\n)|(?<=&)|(?<=\|\|))\s*
         ([A-Za-z_][A-Za-z0-9_]*)=
         (?:"([^"`\\]*)"|'([^'`]*)'|([^\s;&|<>()"'`\\]*))
-        \s*(?=$|[;&|\n)])
+        \s*(?=$|[;\n]|&&|\|\|)
     """,
     re.X,
 )
@@ -645,7 +777,7 @@ def _skip_opts(rest, valued: set) -> int:
     return i
 
 
-SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+# SHELLS is defined with the heredoc constants, which need it first.
 PASSTHROUGH = ("nohup", "time", "command", "builtin", "exec", "stdbuf", "setsid")
 SSH_VALUED = {"-i", "-p", "-o", "-l", "-F", "-J", "-L", "-R", "-W", "-b", "-c",
               "-D", "-E", "-e", "-I", "-m", "-S", "-w"}
@@ -657,10 +789,40 @@ DOCKER_EXEC_VALUED = {"-e", "--env", "-u", "--user", "-w", "--workdir", "-l",
 
 def classify(cmd: str, cwd: str, _depth: int = 0, _ctx=None):
     """Return (rule_id, payload, human_action) for the first rule the command
-    would trip, or None. Conservative by construction: when in doubt, allow."""
+    would trip, or None. Conservative by construction: when in doubt, allow.
+
+    TAKES THE RAW COMMAND. Sanitising heredocs is this function's own job as of
+    round 7, not its caller's -- a caller that stripped first would hand the
+    heredoc-program pass below an empty body and the whole class of
+    `bash <<EOF` evasions would be invisible again, silently and with every
+    test still green.
+    """
     if _depth > MAX_DEPTH:
         return None
-    ctx = _ctx if _ctx is not None else scan_context(cmd)
+    cleaned = strip_heredocs(cmd)
+    ctx = _ctx if _ctx is not None else scan_context(cleaned)
+
+    # Heredoc bodies whose consumer EXECUTES them. `strip_heredocs` dropped
+    # these as prose until round 6's blocker 1: `bash <<EOF` + a recursive
+    # delete classified as nothing at all, against a control plane set to block
+    # everything. The body of `cat <<EOF > note.md` is still prose and is still
+    # dropped -- what changed is that the guard now asks WHO reads it.
+    for kind, consumer, body in heredoc_programs(cmd):
+        if kind == "db":
+            # The SQL has to arrive as an argument of the client command, which
+            # is where `match_db` reads it -- and it is passed as ONE word so no
+            # re-quoting can split a statement in half.
+            hit = classify_segment(
+                consumer + [body], cwd,
+                scan_context(" ".join(consumer) + "\n" + body), _depth + 1,
+            )
+        elif kind == "python":
+            hit = python_program(body, cwd, ctx, _depth + 1)
+        else:
+            hit = classify(body, cwd, _depth + 1, None)
+        if hit:
+            return hit
+    cmd = cleaned
 
     # A substitution inside double quotes is one shlex token, so it has to be
     # dug out of the raw string separately.
@@ -771,6 +933,17 @@ def classify_segment(words, cwd: str, ctx: dict, depth: int):
             if script is None:
                 return None  # `bash script.sh` -- the body is a file, not visible
             return classify(script, cwd, depth + 1, ctx)
+        if PY_HEAD_RE.match(head):
+            # `python3 -c <src>` is the same program as a `python3 <<EOF` body,
+            # so it goes through the same scanner. NOT a `return`: without `-c`
+            # this is `python3 google_api.py gmail send`, which match_rules
+            # still has to see.
+            script = _shell_c_argument(rest)
+            if script is not None:
+                hit = python_program(script, cwd, ctx, depth + 1)
+                if hit:
+                    return hit
+            break
         if head == "eval":
             if not rest:
                 return None
@@ -796,6 +969,63 @@ def _shell_c_argument(rest):
     for i, tok in enumerate(rest):
         if SHELL_C_RE.match(tok) and i + 1 < len(rest):
             return rest[i + 1]
+    return None
+
+
+# Python source, scanned for the three shapes that are a total delete or a
+# shell command in disguise. Deliberately NARROW -- see the size of the thing
+# being refused below.
+PY_RMTREE_RE = re.compile(
+    r"\b(?:shutil\.rmtree|os\.removedirs)\s*\(\s*(?:[rbfu]{0,2})(['\"])(.*?)\1"
+)
+PY_SHELL_STR_RE = re.compile(
+    r"\b(?:os\.system|os\.popen|subprocess\.(?:run|call|check_call|check_output|Popen))"
+    r"\s*\(\s*(?:[rbfu]{0,2})(['\"])(.*?)\1"
+)
+PY_SHELL_ARGV_RE = re.compile(
+    r"\b(?:subprocess\.(?:run|call|check_call|check_output|Popen))\s*\(\s*\[([^\]]*)\]"
+)
+PY_ARGV_ITEM_RE = re.compile(r"(['\"])(.*?)\1")
+
+
+def python_program(source: str, cwd: str, ctx: dict, depth: int):
+    """Classify PYTHON source: a `python3 -c` argument or a `python3 <<EOF` body.
+
+    WHAT THIS IS AND IS NOT. Round 0 recorded `python3 -c` as a REJECTED catch
+    -- "interpreter body, unbounded" -- and that judgement stands for the
+    language as a whole: nothing here parses Python, and `exec(base64...)`,
+    `Path(p).rmdir()` in a loop, or an `os.remove` walk all pass. What round 7
+    adds is the three shapes that are literally the guarded verbs with a
+    different spelling, each bounded so tightly that it cannot fire on code it
+    has not read the target of:
+
+        shutil.rmtree("<literal>")      -> the fs.destructive rule, on the value
+        os.system("<literal>")          -> the whole shell classifier, recursed
+        subprocess.run(["rm", "-rf"…])  -> the same, on the joined argv
+
+    A NON-LITERAL TARGET IS ALLOWED, and that is a decision rather than an
+    oversight: `shutil.rmtree(path)` is what real Python looks like, the value
+    is genuinely invisible here, and a rule that blocks every rmtree of a
+    variable would fire on ordinary build scripts -- the shape that gets a
+    guard switched off. The shell side can afford to refuse an unresolvable
+    `$VAR` because `rm -rf $VAR` is rare; `rmtree(var)` is the common case.
+    """
+    for _q, target in PY_RMTREE_RE.findall(source):
+        if target and not is_routine_path(target, cwd, ctx):
+            return (
+                "fs.destructive",
+                {"command": source[:400], "targets": [target]},
+                f"python recursive delete: {target}",
+            )
+    inner_cmds = [m[1] for m in PY_SHELL_STR_RE.findall(source)]
+    for argv in PY_SHELL_ARGV_RE.findall(source):
+        items = [m[1] for m in PY_ARGV_ITEM_RE.findall(argv)]
+        if items:
+            inner_cmds.append(" ".join(items))
+    for inner in inner_cmds:
+        hit = classify(inner, cwd, depth + 1, None)
+        if hit:
+            return hit
     return None
 
 
@@ -1189,8 +1419,11 @@ def _main() -> int:
     cwd = payload.get("cwd") or os.getcwd()
 
     try:
+        # RAW, not stripped: classify() sanitises heredoc prose itself and
+        # needs the un-stripped command to see the bodies an interpreter will
+        # execute (round 6 blocker 1). `cleaned` below is for the ACK scan only.
         cleaned = strip_heredocs(cmd)
-        hit = classify(cleaned, cwd)
+        hit = classify(cmd, cwd)
     except Exception as e:
         # A classifier bug must never cost the fleet a command -- but it must
         # not be invisible either, or the guard degrades to nothing in silence.

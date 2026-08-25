@@ -130,12 +130,14 @@ s = s.replace(
     1)
 '
 
-# --- M4: revert the round-5 B4 fix's SECOND half — drop the remainder again
-# when the marker line never arrives.
+# --- M4: revert the round-5 B4 fix'"'"'s SECOND half — drop the remainder again
+# when the marker line never arrives. (Round 7 moved this decision out of
+# strip_heredocs into the shared walker heredoc_blocks; the behaviour reverted
+# is identical, the anchor is not.)
 mutate "B4 — an unterminated heredoc swallows the rest of the command again" '
 s = s.replace(
-    "        if found >= 0:\n            i = found + 1",
-    "        i = found + 1 if found >= 0 else len(lines)",
+    "        if found < 0:\n            continue        # unterminated: the lines stay in the command",
+    "        if found < 0:\n            found = len(lines) - 1",
     1)
 '
 
@@ -156,9 +158,10 @@ s = s.replace(
 '
 
 # --- M7: the OTHER direction on B6 — make it resolve the env-PREFIX form too,
-# which is the evasion the "whole statement" rule exists to refuse.
+# which is the evasion the "whole statement" rule exists to refuse. (The anchor
+# is the round-7 lookahead; round 6's was `[;&|\n)]` and no longer exists.)
 mutate "B6 — LITERAL_ASSIGN_RE drops the whole-statement requirement" '
-s = s.replace("        \\s*(?=$|[;&|\\n)])\n", "        \\s*\n", 1)
+s = s.replace("        \\s*(?=$|[;\\n]|&&|\\|\\|)\n", "        \\s*\n", 1)
 '
 
 # --- M8: stop resolving the `$$` / $RANDOM scratch idiom. The false positive
@@ -178,6 +181,69 @@ s = s.replace(
     "SHELL_DIGIT_TOKEN_RE = re.compile(r\"\\$\\$|\\$\\{RANDOM\\}|\\$RANDOM\\b\")",
     "SHELL_DIGIT_TOKEN_RE = re.compile(r\"\\$\\$|\\$\\{?[A-Za-z_][A-Za-z0-9_]*\\}?\")",
     1)
+'
+
+# --- M10: revert round 6 blocker 1 in full — every heredoc body is prose
+# again, so `bash <<EOF` + a recursive delete classifies as nothing.
+mutate "R7/B1 — heredoc_consumer() calls every body prose again" '
+s = s.replace(
+    "    upstream = [seg for seg in segments(line[:pos])]",
+    "    return \"prose\", []\n    upstream = [seg for seg in segments(line[:pos])]",
+    1)
+'
+
+# --- M11: revert only the DOWNSTREAM half. `psql <<EOF` still blocks, but the
+# body handed to an interpreter through a pipe goes back to being invisible.
+mutate "R7/B1 — heredoc_consumer() stops looking downstream of a pipe" '
+s = s.replace(
+    "    piped, seg, after_pipe = [], [], False",
+    "    return \"prose\", []\n    piped, seg, after_pipe = [], [], False",
+    1)
+'
+
+# --- M12: the OTHER direction on the same fix — treat EVERY consumer as an
+# interpreter. The catch survives; the fleet'"'"'s prose notes start blocking, which
+# is the failure mode that gets a guard switched off.
+mutate "R7/B1 — every heredoc consumer counts as an interpreter" '
+s = s.replace(
+    "    head = os.path.basename(word.strip(STRIP))\n    if head in DB_CLIENT_HEADS:",
+    "    head = os.path.basename(word.strip(STRIP))\n    return \"shell\"\n    if head in DB_CLIENT_HEADS:",
+    1)
+'
+
+# --- M13: revert the round-7 python scanner. `python3 -c` / `python3 <<PY`
+# with a literal rmtree target goes back to classifying as nothing.
+mutate "R7 — python_program() stops scanning interpreter source" '
+s = s.replace(
+    "    for _q, target in PY_RMTREE_RE.findall(source):",
+    "    return None\n    for _q, target in PY_RMTREE_RE.findall(source):",
+    1)
+'
+
+# --- M14: the OTHER direction on the python scanner — block every rmtree
+# instead of only non-routine literal targets. `shutil.rmtree(\"node_modules\")`
+# would then trip, which is ordinary build-script work.
+mutate "R7 — python rmtree stops consulting is_routine_path()" '
+s = s.replace(
+    "        if target and not is_routine_path(target, cwd, ctx):",
+    "        if target:",
+    1)
+'
+
+# --- M15: revert round 6 blocker 2 — the round-5 statement boundary, which
+# accepted `(` and a bare `|` and so read a SUBSHELL assignment as if it had
+# persisted into the caller.
+mutate "R7/B2 — LITERAL_ASSIGN_RE accepts subshell/pipeline assignments again" '
+before = s
+s = s.replace(
+    "r\"\"\"(?:^|(?<=;)|(?<=\\n)|(?<=&)|(?<=\\|\\|))\\s*",
+    "r\"\"\"(?:^|(?<=[;&|\\n(]))\\s*",
+    1)
+s = s.replace(
+    "        \\s*(?=$|[;\\n]|&&|\\|\\|)\n",
+    "        \\s*(?=$|[;&|\\n)])\n",
+    1)
+assert s.count("(?<=[;&|") == 1 and "(?=$|[;&|" in s, "R7/B2 revert applied only half"
 '
 
 # ---------------------------------------------------------------------------

@@ -89,8 +89,14 @@ def branch_is(expected):
 
 
 def classify_case(label, cmd, expect, cwd=DEFAULT_CWD, payload_check=None):
+    # THE RAW COMMAND, exactly as _main() hands it over since round 7. Calling
+    # strip_heredocs() here first -- which this harness did through round 6 --
+    # empties every heredoc body before classify() can ask who executes it, so
+    # the whole `bash <<EOF` class of cases would assert against a command the
+    # hook never sees. Layer B runs the real subprocess and would have caught
+    # the divergence; Layer A must not need it to.
     try:
-        hit = g.classify(g.strip_heredocs(cmd), cwd)
+        hit = g.classify(cmd, cwd)
     except Exception as e:  # a classifier exception is itself a finding
         record(False, f"{label} -- classify raised {e!r}")
         return
@@ -293,6 +299,81 @@ MUST_BLOCK += [
      "rm -rf /opt/ai-os/browser-profiles", "fs.destructive", None),
 ]
 
+# ---------------------------------------------------------------------------
+# ROUND 7 -- round 6's two blockers.
+#
+# BLOCKER 1: a heredoc whose consumer is an INTERPRETER. `strip_heredocs`
+# dropped every body as prose, so the body of `bash <<EOF` -- which is the
+# program bash runs -- was invisible to every wired rule. Measured against a
+# stub control plane set to block everything: `rm -rf /opt/content-forge` exit
+# 2 with an audit line, the same delete inside `bash <<EOF` exit 0 with none.
+# Every case here is red at 8650693 and green after.
+#
+# BLOCKER 2: `(SC=/tmp/x)` and `true | SC=/tmp/x` put the assignment in a
+# SUBSHELL. Bash then expands the CALLER's SC in the following `rm -rf $SC`
+# (verified: `export SC=/opt/CALLER-VALUE; (SC=/tmp/x); echo $SC` prints
+# /opt/CALLER-VALUE), so resolving them is the env-prefix laundering the
+# round-5 comment already refused, spelled differently.
+# ---------------------------------------------------------------------------
+
+MUST_BLOCK += [
+    # -- B1: the three shapes from the review, verbatim --
+    ("heredoc consumed by bash: the body is the program",
+     "bash <<EOF\nrm -rf /opt/content-forge\nEOF", "fs.destructive", None),
+    ("heredoc consumed by psql: the body is SQL",
+     "psql -U postgres <<EOF\nDROP TABLE runs;\nEOF", "fs.destructive", None),
+    ("heredoc consumed by python3: shutil.rmtree of a literal",
+     "python3 - <<'PY'\nimport shutil\nshutil.rmtree('/opt/content-forge')\nPY",
+     "fs.destructive", None),
+
+    # -- …and the same hole reached by the other spellings --
+    ("quoted marker changes nothing about who runs the body",
+     "sh <<'EOF'\nrm -rf /opt/content-forge\nEOF", "fs.destructive", None),
+    ("a force push inside a shell heredoc",
+     "bash - <<'EOF'\ngit push --force origin main\nEOF", "git.force_push", None),
+    ("<<- tab-indented terminator, shell consumer",
+     "bash <<-'EOF'\n\trm -rf /opt/content-forge\n\tEOF", "fs.destructive", None),
+    ("docker exec psql <<EOF (the container route to the same DB)",
+     "docker exec -i cf-postgres psql -U postgres <<EOF\nTRUNCATE runs;\nEOF",
+     "fs.destructive", None),
+    ("the consumer is DOWNSTREAM of a pipe: cat <<EOF | bash",
+     "cat <<'EOF' | bash\nrm -rf /opt/content-forge\nEOF", "fs.destructive", None),
+    ("…and cat <<EOF | psql",
+     "cat <<'EOF' | psql -U postgres\nDROP TABLE runs;\nEOF", "fs.destructive", None),
+    ("a heredoc inside a bash -c string still reaches the classifier",
+     "bash -c 'bash <<EOF\nrm -rf /opt/content-forge\nEOF'", "fs.destructive", None),
+    ("python subprocess argv list is a shell command with commas",
+     "python3 - <<'PY'\nimport subprocess\nsubprocess.run([\"rm\", \"-rf\", \"/opt/content-forge\"])\nPY",
+     "fs.destructive", None),
+    ("python os.system carries a whole shell line",
+     "python3 - <<'PY'\nimport os\nos.system(\"git push --force origin main\")\nPY",
+     "git.force_push", None),
+
+    # -- the round-0 REJECT this reverses. `python3 -c shutil.rmtree` was
+    # documented as "interpreter body, unbounded" and asserted as a PASS
+    # through round 6. It cannot stay a pass while the heredoc spelling of the
+    # identical program blocks -- an agent would simply write the one that
+    # works. 02-classifier-decisions.md §R7 records the reversal and its price.
+    ("python3 -c shutil.rmtree of a real tree (round-0 REJECT, reversed in round 7)",
+     "python3 -c \"import shutil; shutil.rmtree('/opt/content-forge')\"",
+     "fs.destructive", None),
+    ("os.removedirs is the same verb",
+     "python3 -c \"import os; os.removedirs('/opt/content-forge')\"",
+     "fs.destructive", None),
+
+    # -- B2: an assignment bash does NOT run in the current shell --
+    ("subshell assignment: bash expands the CALLER's SC",
+     "(SC=/tmp/x); rm -rf $SC", "fs.destructive", None),
+    ("pipeline assignment: the right side of `|` is a subshell",
+     "true | SC=/tmp/x; rm -rf $SC", "fs.destructive", None),
+    ("an assignment that is itself backgrounded does not persist",
+     "SC=/tmp/x & rm -rf $SC", "fs.destructive", None),
+    ("an assignment on the LEFT of a pipe does not persist",
+     "SC=/tmp/x | cat; rm -rf $SC", "fs.destructive", None),
+    ("assignment inside a subshell, delete outside it",
+     "( cd /opt && SC=/tmp/x ); rm -rf $SC", "fs.destructive", None),
+]
+
 
 # --- MUST_PASS ---------------------------------------------------------------
 # The false-positive side -- the bigger risk per the brief. Every entry here
@@ -368,8 +449,10 @@ MUST_PASS = [
     # -- P2-1 REJECT: documented gaps, deliberately never caught --
     ("REJECT: alias expansion (non-interactive bash doesn't expand aliases)",
      "alias r=rm; r -rf /opt/x", None, None),
-    ("REJECT: python3 -c shutil.rmtree (interpreter body, unbounded)",
-     'python3 -c "import shutil; shutil.rmtree(\'/opt/x\')"', None, None),
+    # (the round-0 "REJECT: python3 -c shutil.rmtree" entry moved to MUST_BLOCK
+    # in round 7 — see the §R7 block above and 02-classifier-decisions.md. What
+    # remains rejected is the LANGUAGE: only literal targets are read, which is
+    # asserted three cases below rather than left as a claim.)
     ("REJECT: truncate -s0", "truncate -s0 /opt/content-forge/.env", None, None),
     ("REJECT: > redirection over a real file", "> /opt/content-forge/.env", None, None),
     ("REJECT: dd of=", "dd if=/dev/zero of=/opt/x bs=1M count=1", None, None),
@@ -512,6 +595,90 @@ MUST_PASS += [
     ("a here-string carrying prose is not classified as a command",
      'grep -q x <<< "rm -rf /opt/content-forge"', None, None),
     ("arithmetic shift on its own", "echo $((1 << 3))", None, None),
+]
+
+# ---------------------------------------------------------------------------
+# ROUND 7 -- the false-positive side of the two blocker fixes. This is the half
+# that decides whether the guard survives contact with the fleet: `python3 -
+# <<'PY'` is one of the most common shapes in the 24h corpus, and a prose
+# heredoc is how every memory note and report on this box gets written.
+# ---------------------------------------------------------------------------
+
+MUST_PASS += [
+    # -- prose is still prose. `cat` is the consumer in each, and the round-7
+    # scan is narrow on purpose: only the LAST segment before the `<<` and only
+    # a head AFTER A PIPE can nominate an interpreter.
+    ("prose heredoc after an unrelated shell invocation on the same line",
+     "bash deploy.sh && cat <<'EOF' > note.md\nrm -rf /opt/content-forge\nEOF", None, None),
+    ("the redirection TARGET is not the consumer, even when it is named `node`",
+     "cat <<'EOF' > /tmp/node\nrm -rf /opt/content-forge\nEOF", None, None),
+    ("tee is not an interpreter",
+     "cat <<'EOF' | tee /tmp/n.md\ngit push --force origin main\nEOF", None, None),
+    ("a heredoc into a file whose name contains a shell name",
+     "cat <<'EOF' > /tmp/bash.md\nrm -rf /opt/content-forge\nEOF", None, None),
+
+    # -- the interpreter bodies that are ORDINARY work --
+    ("shell heredoc removing scratch",
+     "bash <<'EOF'\nrm -rf /tmp/probe-1\nEOF", None, None),
+    ("shell heredoc that assigns its OWN scratch variable",
+     "bash <<'EOF'\nSC=/tmp/probe-1\nrm -rf $SC\nEOF", None, None),
+    ("shell heredoc doing a build",
+     "bash <<'EOF'\ncd /opt/content-forge && pnpm install --frozen-lockfile --prod=false\nEOF",
+     None, None),
+    ("psql heredoc that only reads",
+     "psql -U postgres -d content_forge <<EOF\nSELECT count(*) FROM runs;\nEOF", None, None),
+    ("psql heredoc DROP against a scratch-named db",
+     "psql -d rollup_probe_r1873 <<EOF\nDROP TABLE runs;\nEOF", None, None),
+    ("the fleet's `python3 - <<'PY'` idiom, doing ordinary work",
+     "python3 - <<'PY'\nimport json\nprint(json.dumps({'ok': True}))\nPY", None, None),
+    ("python3 heredoc reading the database",
+     "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['psql', '-c', 'SELECT 1'])\nPY",
+     None, None),
+
+    # -- the LIMITS of the python scanner, asserted rather than described. Each
+    # of these is a documented gap: a rule that fired on them would fire on
+    # ordinary build scripts, which is how a guard gets switched off.
+    ("python rmtree of a VARIABLE is not resolved (documented limit)",
+     "python3 - <<'PY'\nimport shutil\nshutil.rmtree(path)\nPY", None, None),
+    ("python rmtree of a routine path passes on its VALUE",
+     "python3 -c \"import shutil; shutil.rmtree('node_modules')\"", None, None),
+    ("python rmtree of /tmp scratch passes",
+     "python3 - <<'PY'\nimport shutil\nshutil.rmtree('/tmp/probe-1')\nPY", None, None),
+    ("python echoing a destructive string runs nothing",
+     "python3 - <<'PY'\nprint('rm -rf /opt/content-forge')\nPY", None, None),
+
+    # -- B2 must not have narrowed the shapes bash really does run in the
+    # current shell. Each of these still resolves to its literal.
+    ("assignment at the start of the command",
+     "SC=/tmp/probe-r7; rm -rf $SC", None, None),
+    ("assignment after && (round-5 case, must survive the narrowing)",
+     "cd /opt && SC=/tmp/probe-r7; rm -rf $SC", None, None),
+    ("assignment after || ",
+     "false || SC=/tmp/probe-r7; rm -rf $SC", None, None),
+    ("assignment after a backgrounded predecessor",
+     "sleep 1 & SC=/tmp/probe-r7; rm -rf $SC", None, None),
+    ("assignment on its own line",
+     "cd /opt\nSC=/tmp/probe-r7\nrm -rf $SC", None, None),
+    ("assignment followed by && rather than ;",
+     "SC=/tmp/probe-r7 && rm -rf $SC", None, None),
+
+    # -- MAX_DEPTH PIN. Not an endorsement: a fifth level of wrapper nesting
+    # exceeds classify()'s MAX_DEPTH=4 and is allowed. This is pinned rather
+    # than left implicit so that raising the cap has to be a DELIBERATE edit
+    # that turns this case red, and so that a change LOWERING the cliff is
+    # caught. Measured cost of the cap on real traffic: the 24h corpus reaches
+    # depth 2 exactly three times and depth 0 or 1 in the other 2,921 commands,
+    # so no fleet work is anywhere near it. The four-deep case above it is in
+    # MUST_BLOCK; only the fifth escapes.
+    ("MAX_DEPTH PIN: five nested heredocs exceed the recursion cap (documented limit)",
+     "bash <<M4\nbash <<M3\nbash <<M2\nbash <<M1\nbash <<M0\n"
+     "rm -rf /opt/content-forge\nM0\nM1\nM2\nM3\nM4", None, None),
+]
+
+MUST_BLOCK += [
+    ("four nested heredocs are still inside the recursion cap",
+     "bash <<M3\nbash <<M2\nbash <<M1\nbash <<M0\n"
+     "rm -rf /opt/content-forge\nM0\nM1\nM2\nM3", "fs.destructive", None),
 ]
 
 
@@ -774,7 +941,58 @@ def run_layer_b():
     b_case("FORGE_GUARD_AUDIT_LOG honoured for a real block (RED today)",
            p.returncode == 2 and any(l.get("kind") == "blocked" for l in lines))
 
-    for f in ("/tmp/guard-autonomy-test-audit-b3.log", "/tmp/guard-autonomy-test-audit-b14.log"):
+    # B15: round 6's blocker 1, end to end and in the exact form the review
+    # proved it in -- the real subprocess, a stub set to block everything, and
+    # the audit file as the second witness. Layer A asserts classify(); this
+    # asserts that _main() hands classify() the RAW command. Through round 6 it
+    # pre-stripped, and no Layer A case could have seen that.
+    stub = Stub(); stub.state.mode = "block"
+    audit_file = "/tmp/guard-autonomy-test-audit-b15.log"
+    if os.path.exists(audit_file):
+        os.remove(audit_file)
+    p, _ = run_hook(stdin_for("bash <<EOF\nrm -rf /opt/content-forge\nEOF"),
+                     {"FORGE_RUN_UUID": "b15", "FORGE_GUARD_AUDIT_LOG": audit_file}, stub.url)
+    stub.stop()
+    lines = read_audit_lines(audit_file)
+    b_case("heredoc consumed by bash -> exit 2 + a 'blocked' audit line (RED at 8650693)",
+           p.returncode == 2 and any(l.get("kind") == "blocked" for l in lines)
+           and len(stub.state.autonomy_calls) == 1)
+
+    # B16: the same machinery must leave PROSE alone, and the evidence for that
+    # is negative -- the control plane is never asked at all. A guard that
+    # merely got "allow" back would still have classified a memory note as a
+    # command, and would still write a trip row the day a rule turns blanket.
+    stub = Stub(); stub.state.mode = "block"
+    p, _ = run_hook(stdin_for("cat <<'EOF' > note.md\nNever run rm -rf /opt/content-forge.\nEOF"),
+                     {"FORGE_RUN_UUID": "b16"}, stub.url)
+    stub.stop()
+    b_case("prose heredoc -> exit 0 AND the control plane is never contacted",
+           p.returncode == 0 and len(stub.state.autonomy_calls) == 0)
+
+    # B15b/B15c: the other two shapes the review proved the bypass with, also
+    # end to end. Layer A cannot substitute for these: the round-6 hook stripped
+    # inside _main(), so an in-process assertion on classify() is measuring a
+    # different function from the one the hook contract runs.
+    for label, cmd, tag in (
+        ("psql <<EOF", "psql -U postgres <<EOF\nDROP TABLE runs;\nEOF", "b15b"),
+        ("cat <<EOF | bash", "cat <<'EOF' | bash\nrm -rf /opt/content-forge\nEOF", "b15c"),
+        ("python3 - <<PY rmtree",
+         "python3 - <<'PY'\nimport shutil\nshutil.rmtree('/opt/content-forge')\nPY", "b15d"),
+    ):
+        stub = Stub(); stub.state.mode = "block"
+        p, _ = run_hook(stdin_for(cmd), {"FORGE_RUN_UUID": tag}, stub.url)
+        stub.stop()
+        b_case(f"{label} -> exit 2 (RED at 8650693: exit 0, no audit line)",
+               p.returncode == 2 and len(stub.state.autonomy_calls) == 1)
+
+    # B17: round 6's blocker 2, end to end.
+    stub = Stub(); stub.state.mode = "block"
+    p, _ = run_hook(stdin_for("(SC=/tmp/x); rm -rf $SC"), {"FORGE_RUN_UUID": "b17"}, stub.url)
+    stub.stop()
+    b_case("subshell assignment -> exit 2 (RED at 8650693: exit 0)", p.returncode == 2)
+
+    for f in ("/tmp/guard-autonomy-test-audit-b3.log", "/tmp/guard-autonomy-test-audit-b14.log",
+              "/tmp/guard-autonomy-test-audit-b15.log"):
         if os.path.exists(f):
             os.remove(f)
 

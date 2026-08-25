@@ -187,7 +187,8 @@ and left out; the cost of catching it is judged higher than the risk it carries.
 | `psql -c 'DELETE FROM runs'` (no `WHERE`) | Cheap to add, but measured **0 times in 24h**. Revisit with data rather than on suspicion. |
 | `DROP INDEX`, `ALTER … DROP COLUMN` | Migrations do this legitimately in deploy tasks. |
 | `redis-cli --eval x.lua` | Script body invisible. |
-| `python3 -c "shutil.rmtree(…)"`, `node -e "fs.rmSync(…)"` | Interpreter bodies are unbounded. Catching one spelling invites the belief that all are caught, which is worse than a documented gap. |
+| ~~`python3 -c "shutil.rmtree(…)"`~~ | **REVERSED in round 7 — see §9.** A literal rmtree target is now read and judged like an `rm -rf` target. `node -e "fs.rmSync(…)"` is still rejected, and so is every non-literal target. |
+| a heredoc body — `bash <<EOF`, `psql <<EOF`, `python3 - <<PY` | **This row did not exist until round 7, and its absence was the hole.** Round 0 built `strip_heredocs` to protect PROSE and never asked who consumes the body. See §9. |
 | `pnpm dlx rimraf /opt/x`, `npx rimraf dist` | Same. |
 | `truncate -s0 f`, `> f`, `: > f`, `dd of=f` | Redirection is everywhere in builder work; the false-positive cost is the highest in this table. |
 | `mv /opt/x /dev/null`, `mv /opt/cf /tmp/gone` | A rename and a destruction are the same syscall. Cannot be told apart. |
@@ -536,3 +537,135 @@ Recorded so the next round starts from a list rather than from scratch.
 4. **The 2.5 s HTTP timeout is a silent allow under control-plane load.** It
    fails open with one line in a log nobody reads — correct per design
    constraint 1, but the log line is the entire notification.
+
+---
+
+## 9. Round 7 — the heredoc consumer, and one reversed REJECT
+
+Round 6's review, fix cycle 2. Two blockers, both in code this branch had
+already rewritten once, and both of the same shape as the 23:36 Haiku
+incident: *the guard reported nothing at all, and nothing about the transcript
+said so.*
+
+### 9.1 A heredoc body is prose only if a prose command reads it
+
+`strip_heredocs` existed to stop the guard blocking its own documentation — a
+memory note inside `cat <<'EOF'` quotes the very commands it warns about. It
+dropped every body. But the body of `bash <<EOF` is not prose, it is the
+program bash executes, and the same is true of `psql <<EOF`, `python3 - <<PY`,
+and of `cat <<EOF | bash`, where the consumer is downstream of a pipe.
+
+Measured at `8650693` against a stub control plane set to block everything:
+
+| command | exit | audit line |
+|---|---|---|
+| `rm -rf /opt/content-forge` | 2 | `blocked` |
+| `bash <<EOF` ⏎ `rm -rf /opt/content-forge` ⏎ `EOF` | **0** | **none** |
+| `psql -U postgres <<EOF` ⏎ `DROP TABLE runs;` ⏎ `EOF` | **0** | **none** |
+| `cat <<'EOF' \| bash` ⏎ `rm -rf /opt/content-forge` ⏎ `EOF` | **0** | **none** |
+
+Fix: `heredoc_blocks()` — one walker that both `strip_heredocs` and
+`heredoc_programs` consume, so the sanitiser and the classifier cannot disagree
+about where a body ends — plus `heredoc_consumer()`, which names the command
+that will read it. A body whose consumer is a shell is classified as shell; a
+python consumer goes to `python_program()`; a db client is re-assembled as
+`psql <opts> <body>` so `match_db()` reads the SQL where it expects it, as ONE
+word, so no re-quoting can split a statement.
+
+`classify()` now takes the RAW command and sanitises internally. That is the
+part with teeth: through round 6, `_main()` stripped first, so **an in-process
+assertion on `classify()` was measuring a different function from the one the
+hook contract runs.** The test harness had the same bug — it called
+`classify(strip_heredocs(cmd))` — which is why 199 green cases said nothing
+about this hole. Layer B (real subprocess, stub API) is the witness that cannot
+drift; the five round-7 Layer B cases are RED at `8650693` and green at HEAD.
+
+**The narrowness is the load-bearing part**, and it is asserted, not asserted-
+about. Only the LAST segment before the `<<` and only a head AFTER A PIPE can
+nominate an interpreter:
+
+| shape | verdict | why |
+|---|---|---|
+| `cat <<'EOF' > note.md` | prose | the canonical fleet note |
+| `bash deploy.sh && cat <<'EOF' > note.md` | prose | a shell on the line is not the consumer |
+| `cat <<'EOF' > /tmp/node` | prose | the redirection TARGET is not a consumer — a naive `segments()` scan offers it as a head |
+| `cat <<'EOF' \| tee /tmp/n.md` | prose | `tee` is not an interpreter |
+| `cat <<'EOF' \| bash` | shell | it is |
+
+Mutation M12 reverts exactly this narrowness (every consumer counts as an
+interpreter) and turns 15 cases red.
+
+### 9.2 `python3 -c "shutil.rmtree(…)"` — a REJECT reversed
+
+Round 0 rejected the whole interpreter-body class as unbounded, and for the
+language as a whole that still holds: nothing here parses Python, and
+`exec(base64…)`, a `Path.rmdir()` loop or an `os.remove` walk all pass. But the
+rejection could not survive §9.1: once `python3 <<PY` bodies are classified,
+allowing the identical program written `python3 -c` means an agent simply
+writes the spelling that works. Reversing one and not the other would be a
+guard with a documented door in it.
+
+What `python_program()` reads, and nothing else:
+
+    shutil.rmtree("<literal>") / os.removedirs("<literal>")  -> the fs rule, on the VALUE
+    os.system("<literal>")                                   -> the shell classifier, recursed
+    subprocess.run(["rm", "-rf", …])                         -> the same, on the joined argv
+
+**A non-literal target is allowed on purpose.** `shutil.rmtree(path)` is what
+real Python looks like; the value is genuinely invisible; a rule that blocked
+every rmtree of a variable would fire on ordinary build scripts. The shell side
+can afford to refuse an unresolvable `$VAR` because `rm -rf $VAR` is rare —
+`rmtree(var)` is the common case. Both directions are asserted (`rmtree(path)`
+and `rmtree('node_modules')` are MUST_PASS) and M14 reverts the routine-path
+consultation to prove the check is doing work.
+
+### 9.3 A subshell assignment is not an assignment
+
+`(SC=/tmp/x); rm -rf $SC` and `true | SC=/tmp/x; rm -rf $SC` were read as if
+`SC` had been set. Bash disagrees — verified directly, with `SC` exported:
+
+    export SC=/opt/CALLER-VALUE
+    (SC=/tmp/x);       echo $SC   -> /opt/CALLER-VALUE     subshell
+    true | SC=/tmp/y;  echo $SC   -> /opt/CALLER-VALUE     pipeline
+    { SC=/tmp/z; };    echo $SC   -> /tmp/z                current shell
+    SC=/tmp/w && true; echo $SC   -> /tmp/w                current shell
+
+So the guard was resolving to `/tmp/x` a delete that bash aims at whatever the
+caller's `SC` names — the env-prefix laundering the round-5 comment already
+refused, under a different spelling. The boundary is now exactly the separators
+bash runs the next statement in the current shell after: `^`, `;`, newline, `&`
+and `||`; `(`, `)`, a bare `|` and a trailing `&` are refused, which leaves the
+name unresolvable and the delete blocked (rule 5).
+
+### 9.4 What the widening cost on the real workload
+
+The whole of §9, re-run over the 2,924-command 24h corpus, comparing each
+hook's SHIPPED call convention (round 6: `classify(strip_heredocs(cmd))`;
+round 7: `classify(cmd)`):
+
+| | round 6 | round 7 |
+|---|---|---|
+| trips | 2 | **2** |
+| new trips | — | **0** |
+| trips dropped | — | 0 |
+| classifier exceptions | 0 | 0 |
+
+Not a vacuous zero: 72 of those commands contain a terminated heredoc, and 50
+bodies — **26,717 bytes of program text**, 43 python and 7 SQL — are newly
+classified where round 6 discarded them. 23 prose bodies are still dropped.
+Reproduce with `heredoc_blocks()` over the corpus; it is read where it lies.
+
+### 9.5 Suite and control
+
+| instrument | round 6 | round 7 |
+|---|---|---|
+| `test-guard-autonomy.py` | 199/199 | **244/244** |
+| `prove-guard-bites.sh` | BITES, 9 mutations | **BITES, 15 mutations** |
+
+New mutations: M10 (every body prose again), M11 (stop looking downstream of a
+pipe), M12 (every consumer is an interpreter — the false-positive direction),
+M13 (no python scanning), M14 (python rmtree ignores routine paths — the
+false-positive direction), M15 (the round-5 assignment boundary). M4 and M7
+were re-anchored: both named source that this round moved, and a mutation whose
+anchor is gone reports INCONCLUSIVE rather than a false green — which is how
+the script found its own staleness on the first run.

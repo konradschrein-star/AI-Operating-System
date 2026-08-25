@@ -815,3 +815,144 @@ Not touched: `/opt/forge-ai-os` (the live checkout), the live database, pm2, the
 live hook at `/opt/ai-os/scripts/guard-autonomy.py`, and `guardrail_trips` — the
 suites are in-process or point at a stub the test file starts itself, so this
 round wrote no trip row except the one the live guard wrote **about** it (H.2).
+
+---
+
+# I. Fix cycle 2 (round 7) — response, appended not edited
+
+Round 6's re-review returned NEEDS_FIXES with three blockers. All three are
+closed below, each with the command that demonstrated the defect and the
+command that demonstrates the fix. Tip fixed from: `8650693`.
+
+## I.0 What was executed
+
+| instrument | result |
+|---|---|
+| `python3 scripts/ops/test-guard-autonomy.py` | **246/246**, exit 0 (was 199/199) |
+| the same suite against `git show 8650693:…guard-autonomy.py` | **5 Layer B cases RED**, incl. all three shapes the review named |
+| `bash scripts/checks/prove-guard-bites.sh` | **BITES — 15/15 mutations DISCRIMINATED**, subject md5 unchanged |
+| 24h corpus re-run, round-6 vs round-7 shipped conventions | 2 trips → **2 trips, 0 new, 0 dropped, 0 exceptions** |
+| `strip_heredocs` old vs new over the same corpus | **0/2924 outputs differ** — the rewrite is behaviour-preserving |
+| adversarial input fuzz (22 malformed/pathological commands) | **0 raised**; every return is `None` or a 3-tuple |
+| `bash scripts/checks/gates-808.sh --strict` | see I.4 |
+
+## I.1 Blocker 1 — a heredoc consumed by an interpreter
+
+**Reproduced at `8650693` before touching anything**, in-process, cwd
+`/opt/forge-ai-os`:
+
+```
+plain rm            -> fs.destructive
+bash <<EOF          -> None
+psql -U postgres <<EOF (DROP TABLE runs;)  -> None
+python3 - <<'PY'    -> None
+docker exec … psql <<EOF (TRUNCATE runs;)  -> None
+```
+
+Fixed by `heredoc_blocks()` / `heredoc_consumer()` / `heredoc_programs()` in
+`scripts/ops/guard-autonomy.py`, and by moving heredoc sanitisation INTO
+`classify()`. The full design argument, the narrowness table and the
+false-positive measurement are in
+[`02-classifier-decisions.md` §9](02-classifier-decisions.md).
+
+The same five commands at HEAD:
+
+```
+bash <<EOF                    -> fs.destructive
+sh <<'EOF'                    -> fs.destructive
+psql -U postgres <<EOF        -> fs.destructive
+docker exec … psql <<EOF      -> fs.destructive
+python3 - <<'PY' (rmtree)     -> fs.destructive
+cat <<'EOF' | bash            -> fs.destructive      (found while fixing)
+cat <<'EOF' | psql -U postgres-> fs.destructive      (found while fixing)
+```
+
+**The instrument lesson is bigger than the bug.** The suite could not have
+caught this at any number of cases, because `classify_case()` called
+`classify(strip_heredocs(cmd))` — it stripped the body before handing it over,
+exactly as `_main()` did, so Layer A was asserting on a **different function
+from the one the hook contract runs**. 199 green cases and a total bypass were
+consistent with each other. Layer A now passes the raw command; five Layer B
+cases (real subprocess, stub API) assert the same shapes end to end, and those
+are the ones that cannot drift from `_main()`.
+
+## I.2 Blocker 2 — a subshell assignment is not an assignment
+
+Verified in bash first, because the fix is only correct if bash agrees:
+
+```
+$ export SC=/opt/CALLER-VALUE
+$ (SC=/tmp/x);       echo $SC   -> /opt/CALLER-VALUE
+$ true | SC=/tmp/y;  echo $SC   -> /opt/CALLER-VALUE
+$ { SC=/tmp/z; };    echo $SC   -> /tmp/z
+$ SC=/tmp/w && true; echo $SC   -> /tmp/w
+```
+
+`LITERAL_ASSIGN_RE`'s boundary is now the separators after which bash runs the
+next statement in the **current shell** — `^`, `;`, newline, `&`, `||` — with
+`(`, `)`, a bare `|` and a trailing `&` refused. Five MUST_BLOCK cases, and the
+round-5 shapes that must keep resolving (`^`, `&&`, `||`, newline, after a
+backgrounded predecessor) are six MUST_PASS cases. M15 reverts both halves of
+the boundary and turns 6 cases red; the mutation asserts the revert applied to
+both, because a half-applied revert flips only one case and reads like a weak
+assertion rather than a broken control.
+
+## I.3 Blocker 3 — the stale count in `05-deploy.md`
+
+Fixed, and fixed in the class rather than the instance: steps 5 and 6 now tell
+the verifier to read **the exit code and the `N/N` equality**, not a number
+copied out of a document that goes stale every cycle. Step 6 had the same
+defect one line down (`7/7 mutations`, now 15) and is corrected the same way.
+Step 6 also now warns that the script exceeds the default 2-minute Bash timeout
+— it runs the whole suite once per mutation, ~4 minutes at 15.
+
+## I.4 Found while fixing, reported not swept under
+
+1. **Two mutation anchors had gone stale** (M4, M7) and named source this
+   round moved or rewrote. `prove-guard-bites.sh` reported them as
+   INCONCLUSIVE and exited 2 rather than passing 13 of 15 — the control
+   catching its own rot is the behaviour that was designed in, and it is worth
+   recording that it worked. Both re-anchored to the same behaviour.
+2. **`MAX_DEPTH = 4` puts a cliff at five nested wrappers.** Five nested
+   heredocs (or `bash -c` strings, which is the pre-existing form) are allowed.
+   Not changed: any finite cap has a cliff, a "cap reached" refusal has no rule
+   to hang on, and the measured workload is nowhere near it — over 2,924 real
+   commands the recursion reaches depth 2 three times and 0 or 1 in the other
+   2,921. **Pinned instead**, with the four-deep case in MUST_BLOCK and the
+   five-deep case in MUST_PASS labelled `MAX_DEPTH PIN`, so raising the cap is
+   a deliberate edit that turns a case red rather than a silent change.
+3. **`02-classifier-decisions.md`'s REJECT table now carries the heredoc row it
+   never had** — the round-6 review's point that the hole "appears nowhere in
+   the rejected-catch table" was the correct diagnosis of how it survived three
+   rounds: it was never a decision, so nobody re-examined it.
+
+## I.5 One decision reversed, flagged for the manager
+
+`python3 -c "shutil.rmtree(…)"` was a documented REJECT from round 0 and a
+MUST_PASS case through round 6. It is now a CATCH, bounded to a **literal**
+target judged by `is_routine_path()` — `rmtree(path)` and
+`rmtree('node_modules')` still pass, and both are asserted. The reason it could
+not stay rejected is I.1: once `python3 <<PY` bodies are classified, leaving the
+`-c` spelling of the identical program allowed is a documented door. `node -e
+"fs.rmSync(…)"` and the rest of the interpreter-body class remain rejected.
+Reported to the manager chat rather than decided in silence.
+
+## I.6 Write-set
+
+**Declared write-set: empty — nothing was declared for this task.** Every file
+below is therefore an undeclared write and is named here first, loudly.
+
+| file | why it had to change | blocker |
+|---|---|---|
+| `scripts/ops/guard-autonomy.py` | the two classifier fixes | B1, B2 |
+| `scripts/ops/test-guard-autonomy.py` | 199 → 246 cases; the harness's own pre-strip bug | B1, B2 |
+| `scripts/checks/prove-guard-bites.sh` | 6 new mutations; M4/M7 re-anchored | B1, B2 |
+| `docs/plan/aios-guardrail-hardening/05-deploy.md` | the stale counts | B3 |
+| `docs/plan/aios-guardrail-hardening/02-classifier-decisions.md` | §9 + the REJECT table rows | B1 |
+| `docs/plan/aios-guardrail-hardening/04-review.md` | this section | — |
+
+Not touched: `/opt/forge-ai-os` (the live checkout), the live database, pm2,
+the live hook at `/opt/ai-os/scripts/guard-autonomy.py`, `guardrail_trips`, and
+`db/migrations/`. Layer A is in-process and Layer B points at a stub the test
+file starts itself, so this round wrote no trip row and made no request to
+`:7700`.
