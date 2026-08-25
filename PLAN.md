@@ -68,11 +68,11 @@
 ## Task Graph
 
 ```
-T1 builder [standard]   DB & API: app_settings helper & /api/fleet/default-tier routes (depends: [])
-T2 builder [standard]   Engine: TIER_GUIDE, project-tick default tier & budget ledger (depends: [T1])
-T3 builder [standard]   UI: Surface default tier in desktop settings panel (depends: [T1])
-T4 builder [standard]   Verification: API toggle, tick DB measurement & acceptance evidence (depends: [T2, T3])
-T5 reviewer [standard]  Gating Review: Review full diff against requirements (depends: [T4])
+T1 builder [standard]   db-and-api-runtime-tier-switch (4d7717aa-b64e-4873-82b5-9f18f16f9bd8) — depends: []
+T2 builder [standard]   project-tick-tier-guide-and-dispatch (471a3b62-1ce6-4030-865a-7b8f4debe7ee) — depends: [T1]
+T3 builder [standard]   ui-surface-fleet-default-tier (cb7c957f-6528-44f5-80de-4bafa86894e0) — depends: [T1]
+T4 builder [standard]   live-acceptance-and-evidence (247fb66a-ff9f-41db-89c2-3e27e8792f03) — depends: [T2, T3]
+T5 reviewer [standard]  review-aios-gemini-default-tier (a07d6e8e-76c5-4875-811d-01975ca5c735) — depends: [T4]
 ```
 
 ---
