@@ -161,9 +161,33 @@ gate "no-raw-colours.cjs (whole app)" node scripts/checks/no-raw-colours.cjs
 # project-tick, cc-runner, executor.ts, db/projects — the scheduler and the run
 # engine, where one careless edit breaks every lane at once. Those stay banned,
 # and an authorised edit to them is recorded here the same way this one is.
+#
+# OPERATOR WAIVER 2026-08-25 — recorded here the way the paragraph above says.
+# Project aios-gemini-default-tier: Konrad's Claude WEEKLY limit is reached, so
+# gemini (agy) becomes the fleet's default engine and that default becomes a
+# RUNTIME setting instead of the next deploy. TIER_GUIDE — the block every
+# planner reads to pick an engine — is defined in forge-control/src/lib/
+# project-tick.ts, and the tick is where a row carrying no tier is resolved
+# against the setting. The work cannot be done anywhere else, so this gate had
+# become the toll the 2026-08-23 waiver above describes: passable only by
+# disobeying an authorised brief, or by a builder widening a gate. Authorised in
+# PLAN.md §4 ("Forbidden-File Gate Authorization").
+#
+# SCOPE: forge-control/src/lib/project-tick.ts and its .test.ts, on branch
+# project/860c948e ONLY. The ban is SUSPENDED, not released — its reason is
+# still live — so any other lane touching project-tick still goes red, and this
+# waiver expires with the branch. cc-runner, executor.ts and db/projects stay
+# forbidden for this project as well: none was authorised and none was touched
+# (the fix-chain default is passed at the project-tick CALL SITE for exactly
+# that reason).
 gate_sh "forbidden-file diff — three-dot main...HEAD" \
-  "git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects' \
-   && { echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; } || { echo 'clean — no engine/Files file differs'; exit 0; }"
+  "waived=''; \
+   [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'project/860c948e' ] \
+     && waived='forge-control/src/lib/project-tick(\\.test)?\\.ts\$'; \
+   hits=\$(git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects' || true); \
+   [ -n \"\$waived\" ] && [ -n \"\$hits\" ] && hits=\$(printf '%s\\n' \"\$hits\" | grep -vE \"\$waived\" || true); \
+   [ -n \"\$hits\" ] && { printf '%s\\n' \"\$hits\"; echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; }; \
+   echo 'clean — no unwaived engine/Files file differs'; exit 0"
 
 gate_sh "forge-control/ untouched by round 808's own commits" \
   "changed=\$(git diff --name-only 7b961b5..HEAD -- forge-control/ | wc -l); \

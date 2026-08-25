@@ -92,7 +92,7 @@ import {
 } from "./engine-fallback.ts";
 import { projectSlug } from "./run-control-rules.ts";
 import { provisionWorkstream, liveCheckoutPath } from "./workspace.ts";
-import { getFleetState } from "../db/ai_os.ts";
+import { getFleetState, getFleetDefaultTier } from "../db/ai_os.ts";
 import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
 import {
   requeueRunAfterUsageWall,
@@ -347,12 +347,36 @@ function taskCurl(projectId: string): string {
   );
 }
 
-const TIER_GUIDE =
-  `Each task's "tier" picks its model. SET ONE ON EVERY TASK — omitting it means Opus, and 510 of this ` +
-  `fleet's last 574 sessions ran Opus. "fast" (Haiku): trivial mechanical work. "junior" (Sonnet) is THE ` +
-  `DEFAULT — tests, boilerplate, docs, evidence, and ALL re-checks. "standard" (Opus): implementation needing ` +
-  `judgement, and the one gating review of a phase touching product code. "flagship" (Fable): genuinely hard ` +
-  `design only. If you cannot say why a task needs Opus, it does not.`;
+/** Konrad, 2026-08-25: the Claude WEEKLY limit is reached, so the fleet's
+ *  default engine moves to Gemini (`agy`) and must be switchable at runtime.
+ *
+ *  THE DEFAULT IS NO LONGER A CONSTANT. An omitted tier used to mean Opus;
+ *  since the runtime switch landed it means whatever `app_settings
+ *  ['fleet.default_tier']` holds at the moment the task is created or
+ *  dispatched (`db/ai_os.ts`, `GET /api/fleet/default-tier`). The guide says so
+ *  rather than naming today's value twice: a planner told "omitting it means
+ *  Opus" against a fleet defaulting to gemini would tier defensively around a
+ *  cost that no longer exists.
+ *
+ *  THE EXCEPTION LIST IS NOT A PREFERENCE, it is the measured failure mode.
+ *  `agy`'s `write_to_file` refuses any path that does not already exist, and a
+ *  run that gives up can still return SUCCESS with an empty envelope — 29
+ *  such dropouts in six hours of gemini lanes, and 41.3% of gemini-pinned work
+ *  finished on Claude via the fallback (see lib/engine-fallback.ts, which owns
+ *  the retry-then-junior policy). Wherever "it reported done" must MEAN done
+ *  and nobody re-reads the diff — a deploy touching the host, or the one gating
+ *  review of product code — the task stays on Claude. Everything else is
+ *  re-checked by something downstream, so a dropout costs a retry, not a lie. */
+export const TIER_GUIDE =
+  `Each task's "tier" picks its ENGINE. "gemini" (Gemini 3.7 Flash via agy) IS THE DEFAULT — builders, ` +
+  `tests, boilerplate, docs, evidence and ALL re-checks. It is a RUNTIME setting (GET ` +
+  `/api/fleet/default-tier) and an omitted tier resolves to whatever it says, so SET ONE ON EVERY TASK ` +
+  `rather than inherit a default that can flip mid-project. TWO EXCEPTIONS STAY ON CLAUDE, because agy ` +
+  `can report SUCCESS having written nothing: deploy/host-touching tasks ("junior"), and the ONE gating ` +
+  `review of a phase touching product code ("standard"). The Claude ladder: "fast" (Haiku) trivial ` +
+  `mechanical work, "junior" (Sonnet) work that must actually land on disk, "standard" (Opus) ` +
+  `implementation needing judgement, "flagship" (Fable) genuinely hard design only. If you cannot say ` +
+  `why a task needs Opus, it does not.`;
 
 /** Konrad, 2026-08-19, after a 5-hour usage window went to 82% on work he
  *  described as "simple stuff": "we shouldn't instruct the reviewers to have to
@@ -1740,6 +1764,40 @@ function precreateWriteSet(
   }
 }
 
+/**
+ * The fleet's DEFAULT tier, read at the moment it is needed.
+ *
+ * DELIBERATELY NOT CACHED. The whole point of moving the default into
+ * `app_settings` is that Konrad can change the fleet's engine with one PUT and
+ * no deploy; a process-lifetime cache would turn that setting back into "the
+ * value that happened to be there when the executor last restarted" — which is
+ * exactly how the re-tiering watchdog turned a setting into a coincidence
+ * (see the fix-chain comment in consolidation, below). One indexed lookup on a
+ * single-row key, taken only for a task that carries no tier of its own, is
+ * cheaper than spawning anything.
+ *
+ * RETURNS NULL RATHER THAN THROWING, and only here. `getFleetDefaultTier()`
+ * throws on a malformed row and that is right for an API caller who can be told
+ * 500; on the dispatch path the same throw would fail the task and BLOCK the
+ * project, so an unreadable setting would take the fleet down instead of one
+ * request. Null means "no fleet default available", the caller falls back to
+ * the behaviour that predates the switch (an untiered task runs on its role
+ * file's model), and the reason is logged in full — loud and degraded, not
+ * silent and wrong.
+ */
+async function resolveFleetDefaultTier(): Promise<TaskTier | null> {
+  try {
+    return (await getFleetDefaultTier()).default_tier;
+  } catch (e) {
+    console.warn(
+      `[project-tick] could not read the fleet default tier (${
+        e instanceof Error ? e.message : String(e)
+      }) — untiered work falls back to its role file's model for this tick`,
+    );
+    return null;
+  }
+}
+
 async function spawnTaskRuns(): Promise<void> {
   const claimed = await claimReadyTasks();
   if (claimed.length === 0) return;
@@ -1799,18 +1857,51 @@ async function spawnTaskRuns(): Promise<void> {
       // project's one directory. `main` resolves to exactly what this line
       // resolved to before phase 4.
       const ws = await resolveTaskWorkspace(task);
+      /* ── THE RUNTIME DEFAULT, APPLIED AT DISPATCH ──────────────────────────
+       *
+       * A row that carries no tier of its own runs on the FLEET DEFAULT
+       * (`app_settings['fleet.default_tier']`), not on its role file's model.
+       * `POST /api/projects/:id/tasks` already resolves the same setting when a
+       * task is created, so this is the belt for the rows that route cannot
+       * reach: everything seeded before the switch existed, and anything a
+       * future insert path forgets to tier.
+       *
+       * THE RESOLVED TIER IS SUBSTITUTED INTO THE TASK, not carried beside it.
+       * Three downstream decisions read the claimed row's tier — the pre-create,
+       * the builder sentence that tells a gemini run its files already exist,
+       * and TIER_MODELS — and a fourth argument threaded past two of them is how
+       * one of the three gets missed (fix chains lost their re-check tier to
+       * exactly that shape; see lib/tier-inherit.ts). One object, one tier.
+       *
+       * WHAT THIS DOES NOT DO: it does not write the tier back to the row. The
+       * R870 dropout recovery guards on the PERSISTED tier
+       * (`demoteTaskTier ... WHERE tier = $2`), so an untiered row dispatched on
+       * gemini that the engine drops takes the ordinary failure path instead of
+       * the retry — loud, not silent, and `demoteAfterEngineFailure` says so by
+       * name. Persisting it belongs to whoever owns db/projects.ts; tiering the
+       * row at creation (the route, above) is the real fix and this is the net
+       * under the rows that predate it. */
+      const fleetDefault = task.tier === null ? await resolveFleetDefaultTier() : null;
+      const dispatched: ProjectTask & { project: Project } =
+        fleetDefault === null ? task : { ...task, tier: fleetDefault };
+      if (fleetDefault !== null) {
+        console.log(
+          `[project-tick] task ${task.id} carries no tier — dispatching on the fleet default ` +
+            `'${fleetDefault}' (app_settings['fleet.default_tier'])`,
+        );
+      }
       // R870, the preventative half. `agy` cannot bring a new path into
       // existence; touching the declared write-set first turns every "create
       // this file" into "edit this file", which it does fine.
-      if (tierCanDropOut(task.tier)) {
-        precreateWriteSet(task, ws.workspace_dir);
+      if (tierCanDropOut(dispatched.tier)) {
+        precreateWriteSet(dispatched, ws.workspace_dir);
       }
-      const prompt = buildPrompt(task, task.project, {
-        workstream: task.workstream,
+      const prompt = buildPrompt(dispatched, dispatched.project, {
+        workstream: dispatched.workstream,
         work_branch: ws.work_branch,
       });
       const cfg = roleConfig(task.role);
-      const tierCfg = task.tier ? TIER_MODELS[task.tier] : null;
+      const tierCfg = dispatched.tier ? TIER_MODELS[dispatched.tier] : null;
       const run = await createRunForTask({
         title: `${task.project.name} · ${task.title}`,
         prompt,
@@ -1837,7 +1928,7 @@ async function spawnTaskRuns(): Promise<void> {
       // exactly like a tick that did nothing. Every spawn is on the record now.
       // R58: the line also names the workstream and the dependency count, so
       // it says WHY a task started when it did, not just that it did.
-      console.log(formatSpawnLog(task, run.id, task.project.name));
+      console.log(formatSpawnLog(dispatched, run.id, task.project.name));
       // R17's warn clause. ONE PER SPAWN, not one per tick — which is why it
       // sits beside the spawn line above rather than in the tick body.
       const undeclared = emptyWriteSetWarning(task, task.project.name);
@@ -2114,8 +2205,22 @@ async function consolidateVerdictGroup(
        * Inherit rather than hardcode: a gemini project's fix chains stay gemini
        * and a flagship project's stay flagship, without this file knowing which
        * fleet it is serving. `rows` are the REVIEWED tasks — the work being
-       * fixed — so their tier is the right one to carry forward. */
-      const inheritedTier = inheritTier(rows);
+       * fixed — so their tier is the right one to carry forward.
+       *
+       * AND WHEN THERE IS NOTHING TO INHERIT, the chain takes the FLEET DEFAULT
+       * rather than being born untiered. `inheritTier` returns undefined only
+       * when every reviewed row is itself untiered — legacy rows, or a project
+       * seeded before the runtime switch existed — and that is exactly the case
+       * the measurement above is about: a null tier is not "no opinion", it is
+       * "the default engine, whichever one that is today". Resolving it here
+       * PERSISTS a real tier onto the chain rows, which also keeps R870's
+       * dropout recovery working for them — it guards on the stored tier.
+       *
+       * ON ONE LINE DELIBERATELY: tier-inherit.test.ts pins this wiring with
+       * `/const inheritedTier = inheritTier\(rows\)/` — the original defect was a
+       * MISSING argument, which no unit test of the helper can see — and a
+       * wrapped assignment silently un-pins it. */
+      const inheritedTier = inheritTier(rows) ?? (await resolveFleetDefaultTier()) ?? undefined;
       const chain = await createFixChain({
         tier: inheritedTier,
         project_id: projectId,
@@ -2739,6 +2844,30 @@ export async function demoteAfterEngineFailure(
         `[project-tick] task ${task.id} was dropped by the ${task.tier} engine but its project ` +
           `is ${project?.status ?? "unreadable"} — failing it rather than re-queuing paid work ` +
           `on a project that is not accepting any`,
+      );
+    }
+    /* THE UNTIERED DROPOUT, named rather than left to look like a work failure.
+     *
+     * `spawnTaskRuns` dispatches a tier-less row on the FLEET DEFAULT, so such a
+     * row can run on `agy` and be dropped by it — but every write in this
+     * function guards on the PERSISTED tier (`demoteTaskTier ... WHERE
+     * tier = $2`), and NULL matches nothing. The task therefore takes the
+     * ordinary failure path: failed, project blocked, Konrad pushed. That is a
+     * defensible destination and it is what happened before the switch existed;
+     * what is NOT defensible is Konrad reading "task failed" and never learning
+     * the engine returned an empty envelope. One line, only on the exact shape
+     * that produces it. */
+    if (
+      task.tier === null &&
+      task.run_status === "failed" &&
+      isEngineDropout(task.last_error) &&
+      tierCanDropOut(await resolveFleetDefaultTier())
+    ) {
+      console.warn(
+        `[project-tick] task ${task.id} carries NO tier, ran on the fleet default engine and was ` +
+          `dropped by it ("${(task.last_error ?? "").trim().slice(0, 160)}") — R870's recovery ` +
+          `guards on the stored tier, so this task fails instead of being retried. Set a tier on ` +
+          `the row (or re-create it now that task creation resolves the default) to get the retry.`,
       );
     }
     return false;
