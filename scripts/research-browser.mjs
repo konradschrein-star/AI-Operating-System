@@ -37,7 +37,7 @@
 // exit codes:
 //   0  success — JSON status on stdout
 //   1  runtime error (browser launch, X/VNC startup, IPC timeout, reminder POST failure)
-//   2  missing prerequisite (playwright module, Chrome binary, Xvfb/x11vnc/websockify/noVNC)
+//   2  missing prerequisite (playwright module, Chrome binary, Xvfb/x11vnc/websockify/noVNC/autocutsel)
 //   3  usage error (bad subcommand, bad profile name, bad flag, bad --url)
 //   4  LOGIN REQUIRED — a login wall was detected. The takeover stack is up, the wall is
 //      screenshotted, a reminder is queued, and the browser is left RUNNING so a human can
@@ -676,6 +676,7 @@ const TAKEOVER_BINARIES = {
   xvfb: '/usr/bin/Xvfb',
   x11vnc: '/usr/bin/x11vnc',
   websockify: '/usr/bin/websockify',
+  autocutsel: '/usr/bin/autocutsel',
 };
 export const NOVNC_WEB_ROOT = '/usr/share/novnc';
 
@@ -692,6 +693,44 @@ export function findWindowManager(paths = WM_CANDIDATE_PATHS, exists = existsSyn
   return paths.find((p) => exists(p)) ?? null;
 }
 
+export const OPENBOX_MENU_TEMPLATE = fileURLToPath(
+  new URL('./config/openbox/menu.xml', import.meta.url),
+);
+export const OPENBOX_CONFIG_DIR = join(process.env.HOME ?? '/root', '.config', 'openbox');
+export const OPENBOX_MENU_DEST = join(OPENBOX_CONFIG_DIR, 'menu.xml');
+
+export function ensureOpenboxMenu({
+  templatePath = OPENBOX_MENU_TEMPLATE,
+  destPath = OPENBOX_MENU_DEST,
+} = {}) {
+  if (!existsSync(templatePath)) {
+    return { installed: false, reason: `template not found at ${templatePath}` };
+  }
+  let templateContent;
+  try {
+    templateContent = readFileSync(templatePath, 'utf8');
+  } catch (err) {
+    return { installed: false, reason: `failed to read template: ${err.message}` };
+  }
+
+  let existingContent = null;
+  if (existsSync(destPath)) {
+    try {
+      existingContent = readFileSync(destPath, 'utf8');
+    } catch {
+      // unreadable -> overwrite
+    }
+  }
+
+  if (existingContent === templateContent) {
+    return { installed: false, updated: false, reason: 'up-to-date' };
+  }
+
+  ensureDir(dirname(destPath), 0o755);
+  writeFileSync(destPath, templateContent, { mode: 0o644 });
+  return { installed: true, updated: existingContent !== null, path: destPath };
+}
+
 function assertTakeoverPrereqs() {
   const missing = [];
   for (const [name, path] of Object.entries(TAKEOVER_BINARIES)) {
@@ -705,7 +744,7 @@ function assertTakeoverPrereqs() {
       EXIT.PREREQ,
       `the takeover stack is not installed. Missing:\n` +
         missing.map((m) => `  - ${m}\n`).join('') +
-        `  Install with: apt-get install -y xvfb x11vnc websockify novnc`,
+        `  Install with: apt-get install -y xvfb x11vnc websockify novnc autocutsel`,
     );
   }
 }
@@ -959,6 +998,12 @@ function readTakeover(profile) {
     // The WM takes no display argument, so its cmdline is just the binary — that is the only
     // token available to guard against pid reuse.
     wm: state.wm?.pid !== undefined && isPidAlive(state.wm.pid) && pidCmdlineMatches(state.wm.pid, state.wm.bin),
+    autocutsel_clipboard:
+      isPidAlive(state.autocutsel_clipboard?.pid) &&
+      pidCmdlineMatches(state.autocutsel_clipboard.pid, 'autocutsel'),
+    autocutsel_primary:
+      isPidAlive(state.autocutsel_primary?.pid) &&
+      pidCmdlineMatches(state.autocutsel_primary.pid, 'autocutsel'),
     x11vnc:
       isPidAlive(state.x11vnc?.pid) && pidCmdlineMatches(state.x11vnc.pid, `:${state.displayNum}`),
     websockify:
@@ -967,7 +1012,16 @@ function readTakeover(profile) {
   };
   // The WM is deliberately NOT part of `up`: it is a takeover comfort, not a requirement, and a
   // box without one must still report a working stack.
-  return { ...state, live, up: live.xvfb && live.x11vnc && live.websockify };
+  return {
+    ...state,
+    live,
+    up:
+      live.xvfb &&
+      live.x11vnc &&
+      live.websockify &&
+      live.autocutsel_clipboard &&
+      live.autocutsel_primary,
+  };
 }
 
 /**
@@ -993,6 +1047,8 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
     novncPort: ports.novncPort,
     xvfb: existing?.xvfb ?? null,
     wm: existing?.wm ?? null,
+    autocutsel_clipboard: existing?.autocutsel_clipboard ?? null,
+    autocutsel_primary: existing?.autocutsel_primary ?? null,
     x11vnc: existing?.x11vnc ?? null,
     websockify: existing?.websockify ?? null,
     started_at: existing?.started_at ?? new Date().toISOString(),
@@ -1037,6 +1093,9 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
           `a login popup may be impossible to type into. Install one: apt-get install -y openbox\n`,
       );
     } else {
+      if (wmBin.endsWith('openbox')) {
+        ensureOpenboxMenu();
+      }
       // The WM inherits DISPLAY through the environment; it takes no display argument.
       const wmStartedAt = Date.now();
       state.wm = {
@@ -1055,6 +1114,24 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
         timeoutMs: 5_000,
       });
     }
+  }
+  if (!existing?.live?.autocutsel_clipboard) {
+    state.autocutsel_clipboard = spawnDetached(
+      profile,
+      'autocutsel-clipboard',
+      TAKEOVER_BINARIES.autocutsel,
+      ['-display', ports.display, '-selection', 'CLIPBOARD'],
+    );
+    started.push('autocutsel-clipboard');
+  }
+  if (!existing?.live?.autocutsel_primary) {
+    state.autocutsel_primary = spawnDetached(
+      profile,
+      'autocutsel-primary',
+      TAKEOVER_BINARIES.autocutsel,
+      ['-display', ports.display, '-selection', 'PRIMARY'],
+    );
+    started.push('autocutsel-primary');
   }
   if (!existing?.live?.x11vnc) {
     state.x11vnc = spawnDetached(profile, 'x11vnc', TAKEOVER_BINARIES.x11vnc, [
@@ -1109,6 +1186,12 @@ function teardownTakeover(profile) {
     state.x11vnc?.pid
       ? terminate(state.x11vnc.pid, `:${state.displayNum}`, 'x11vnc')
       : { what: 'x11vnc', result: 'no-pid-recorded' },
+    state.autocutsel_primary?.pid
+      ? terminate(state.autocutsel_primary.pid, 'autocutsel', 'autocutsel-primary')
+      : { what: 'autocutsel-primary', result: 'no-pid-recorded' },
+    state.autocutsel_clipboard?.pid
+      ? terminate(state.autocutsel_clipboard.pid, 'autocutsel', 'autocutsel-clipboard')
+      : { what: 'autocutsel-clipboard', result: 'no-pid-recorded' },
     // The WM goes before Xvfb: it dies on its own when the display disappears, but ordering it
     // first keeps the teardown deterministic instead of racing the X server's exit.
     state.wm?.pid
@@ -1163,7 +1246,13 @@ function reapOrphanedTakeover(profile) {
       supervisorPid > 0 &&
       isPidAlive(supervisorPid) &&
       pidCmdlineMatches(supervisorPid, SUPERVISOR_TOKEN),
-    anyProcessLive: state.live.xvfb || state.live.x11vnc || state.live.websockify || state.live.wm,
+    anyProcessLive:
+      state.live.xvfb ||
+      state.live.x11vnc ||
+      state.live.websockify ||
+      state.live.wm ||
+      state.live.autocutsel_clipboard ||
+      state.live.autocutsel_primary,
   });
   if (verdict.stateOnly === true) {
     removeIfPresent(takeoverStatePath(profile));
@@ -1962,7 +2051,7 @@ takeover / security:
 exit codes:
   0  success — JSON status on stdout
   1  runtime error (browser launch, X/VNC startup, IPC timeout, reminder POST failure)
-  2  missing prerequisite (playwright module, Chrome, Xvfb/x11vnc/websockify/noVNC)
+  2  missing prerequisite (playwright module, Chrome, Xvfb/x11vnc/websockify/noVNC/autocutsel)
   3  usage error
   4  LOGIN REQUIRED — wall detected, takeover up, wall screenshotted, reminder queued, browser
      left running. Distinct on purpose: this means "needs Konrad", not "broke".
@@ -2232,6 +2321,8 @@ async function cmdTakeover(opts) {
         logs: {
           xvfb: takeover.xvfb?.log ?? null,
           wm: takeover.wm?.log ?? null,
+          autocutsel_clipboard: takeover.autocutsel_clipboard?.log ?? null,
+          autocutsel_primary: takeover.autocutsel_primary?.log ?? null,
           x11vnc: takeover.x11vnc?.log ?? null,
           websockify: takeover.websockify?.log ?? null,
         },

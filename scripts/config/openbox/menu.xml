@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+<menu id="root-menu" label="forge desktop">
+  <item label="New Chrome window">
+    <action name="Execute"><execute>google-chrome --no-sandbox --new-window about:blank</execute></action>
+  </item>
+  <item label="Chrome — AI OS">
+    <action name="Execute"><execute>google-chrome --no-sandbox --new-window https://os.schreinercontentsystems.com</execute></action>
+  </item>
+  <separator/>
+  <item label="Terminal">
+    <action name="Execute"><execute>xfce4-terminal</execute></action>
+  </item>
+  <separator/>
+  <item label="Reconfigure openbox">
+    <action name="Reconfigure"/>
+  </item>
+</menu>
+</openbox_menu>
