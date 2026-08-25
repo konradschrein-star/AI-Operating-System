@@ -1,152 +1,142 @@
-# aios-browser-takeover-live — plan (round 0)
+# Plan: aios-chat-reference-navigation
 
-**Goal.** Konrad clicks a link in his chat, lands in the agent's live Chrome, logs in by
-hand, the agent resumes. No SSH tunnel.
+Architect round 0, 2026-08-25. Every claim below was read from the code or observed
+in a real browser (screenshots under `/opt/ai-os/uploads/051c7e2a92b5/`).
 
-## Recommendation
+## Recommendation, in one paragraph
 
-Carry the websockify upgrade on a **dedicated, single-purpose URL prefix**
-`/api/browser-takeover/ws/<ticket>` served by an exact nginx `location` that
-`proxy_pass`es to `127.0.0.1:7700`, bypassing Next entirely. The **ticket is the
-credential**: an HMAC-SHA256-signed, 120-second, run+profile+port-bound blob carried in
-the URL *path segment*. forge-control verifies it before proxying a single byte, and takes
-the profile and port **from the signed payload**, never from a client-supplied run id.
-Every existing upgrade arm that accepts a bare run id is deleted, so there is exactly one
-authentication rule on the socket instead of "the safe one and the other one".
+Port the uncommitted live-checkout work onto this branch first (it is the sole copy),
+then extend it along five disjoint file clusters in parallel workstreams: **detect**
+(`code-path-link.ts`: `path:line`, folders, wikilink parsing, false-positive fixes,
+memory root), **preview** (`FilePreview.tsx`: frontmatter strip, line-numbered code
+viewer with a highlighted line, real previews per format), **panel**
+(`FileExplorerPanel`/`VaultFileList`/bus: reveal + flash the opened entry, open folders,
+carry the line), **markdown** (`MessageMarkdown.tsx` + a tiny remark wikilink plugin,
+resolution order, pending state, no-listener fallback, restrained discoverability),
+and **test** (a committed Playwright regression test that clicks a pill from the Team
+tab). Server work is one small task in `main` (a read-only `memory` root). One reviewer
+joins everything; one deploy/verify task ends it with live screenshots.
 
-Reasoning, in order of what drove the design:
+## What I found (facts, not the brief's claims)
 
-1. **A dedicated prefix, not a regex over `/api/uploads/`.** The nginx location bypasses
-   NextAuth. Anything it covers is public. `location /api/browser-takeover/ws/` covers
-   exactly one handler and cannot shadow an upload route, a shots index, or a future
-   `/api/uploads/*` addition. A regex like `~ ^/api/uploads/[^/]+/vnc/websockify$` would
-   work today and would silently widen the day someone adds a sibling path.
-2. **Ticket in the path, not the query.** Measured in noVNC's own source: `ui.js:1019-1025`
-   builds the socket URL by bare string concatenation, `url += '/' + path`, and
-   `webutil.js:32-43` captures the `path` query var with `[^&#]*`. A ticket in a path
-   segment (base64url — no `&`, no `#`) round-trips cleanly. A query-form ticket also
-   happens to survive today, but only because `?` is not in that exclusion set; it breaks
-   the moment a ticket needs a second parameter. Path form has no such edge.
-3. **Verify at upgrade time, not for the session's life.** The ticket authorises
-   *establishing* the socket. Once the 101 is written the session runs as long as Konrad
-   needs. 120 s is generous for a click-to-connect and short enough that a leaked URL is
-   worthless.
-4. **`reconnect=0` is mandatory, not cosmetic.** noVNC rebuilds the socket URL from the
-   `path` setting frozen at page load (`ui.js:1062-1070` → `connect()` → `rfb.js:83`), so an
-   auto-reconnect replays an **expired** ticket and shows Konrad an opaque failure. Disable
-   noVNC's reconnect; the viewer re-mints and reloads the iframe instead.
-5. **Only forge-control holds the signing key.** The mint endpoint lives on `:7700` and is
-   reached through the already-authenticated `/api/proxy` hop, so the Next process never
-   needs the secret and there is one copy of it on the box.
+1. **The "already done" work is the SOLE COPY.** `code-path-link.ts`, `open-file-bus.ts`
+   and the hunks in `MessageMarkdown.tsx`, `FileExplorerPanel.tsx`, `ChatSurface.tsx`,
+   `routes/files.ts` exist only as uncommitted edits in `/opt/forge-ai-os`
+   (`git log --all -S consumePendingOpenFile` → nothing). Preserved:
+   `/opt/ai-os/uploads/051c7e2a92b5/live-chat-ref-nav-tracked.patch` (4 tracked files,
+   re-snapshotted after the manager's `readOnly` edit) plus `live-code-path-link.ts`,
+   `live-open-file-bus.ts`, `live-detect-test.mts`. Round 1 ports them. The live
+   checkout is NOT to be edited or reverted by anyone in this project — deploy handles it
+   with Konrad's explicit OK (protocol: `live-checkout-dirty-protocol`).
+2. **`routes/files.ts` was never read-only.** `PUT /files/write` has been on main since
+   `ad35016` (the LIBRARY editor). The manager has since added `readOnly: true` on
+   `aios`/`forge-src` in the live file and `/write` answers 403 (verified live). That
+   edit is inside the preserved patch and ships with the port.
+3. **R1 is satisfied at the API level**: after the 02:5x restart `/api/files/roots`
+   lists `aios` and `forge-src`; `/read?root=forge-src&path=docs/plan/03-quality.md` →
+   200, 28 KB. In the browser the pills render with `data-openable-path` on the live
+   build (BUILD_ID 02:50 contains the attribute). A click on an absolute `forge-src`
+   pill could not be photographed: the thread is windowed ("show 60 older"), so older
+   pills are not in the DOM, and worker reports render in the collapsed AGENT COMMS
+   strip. The deploy/verify task proves it with a seeded message.
+4. **A clicked `.ts/.tsx/.py` file cannot render.** `FilePreview` (used by BOTH the Files
+   panel and `/document`) knows only `.md .txt .json .csv` + media; everything else is
+   "no inline preview — download". The line-numbered viewer exists only in
+   `MediaDocumentViewer` (Library surface). This is what Konrad's "still don't open up
+   in a proper way" and his later "proper inline previews for the different file formats"
+   are about. D1 is impossible without fixing this.
+5. **Bare names resolve slowly and to the wrong tree.** `SEARCH_ROOTS` walks `workspace`
+   before `forge-src`; `MessageMarkdown.tsx` has 46 copies under `workspace/projects/*`
+   and 1 under `forge-src`. Live click on `ChatSurface.tsx`: 4 s later nothing visible,
+   panel still on Team, no toast (shot `20260825T010724Z-r1-bare-chatsurface-after.png`).
+   There is no pending state while the searches run.
+6. **False affordances exist today**: `.txt`, `.md .txt .json .csv`,
+   `.ts .tsx .js .py .sh .sql` are marked openable on the live page (dead clicks).
+7. **D6**: `resolveInRoot`'s dot-segment guard inspects only the root-RELATIVE path
+   (`files.ts:76`), so a root whose own directory contains `.claude` is fine. Decision:
+   add a dedicated read-only root `memory` → `/root/.claude/projects/-opt-forge-ai-os/memory`.
+8. **D8**: `MobileApp.tsx` renders no chat at all (control tabs only). Nothing to make
+   work. The markdown task adds a fallback: if no Files panel is listening, a click
+   navigates to `/document` in the same tab — so any surface without a panel still opens
+   the file instead of doing nothing.
+9. `metadata.tier_pin = flagship` on this project overrides every per-task tier. Reported
+   to the manager chat with a choice block; tiers below are set honestly anyway.
+10. `aios-sidebar-live-sessions` has not touched `ChatSurface.tsx` yet (its toggle task is
+    round 3, pending). Our only change to that file is the 16-line subscribe effect at
+    ~line 711 — far from the right-panel block. Keep it that way.
 
-Rejected alternatives, one line each:
+## Design decisions (owner of state / dispatch / failure / visibility)
 
-- *Make the Next Route Handler proxy the upgrade* — impossible: no socket access, `Response`
-  rejects 101 (vercel/next.js #58698, #95514); this is the gap, not the fix.
-- *nginx `auth_request` against the NextAuth session* — the session cookie is a JWE that only
-  the Next process can open, so it needs a new decrypt endpoint anyway; a signed ticket is
-  the same work without a second round trip on every upgrade.
-- *HTTP Basic auth on the location* — survives an upgrade, but adds a second credential
-  Konrad must hold and is unbound to run, profile, or expiry.
-- *Bare run id over a loopback-only nginx location* — the brief's own prohibition, and the
-  correct one: guessing a run id would hand over a logged-in Google session.
-- *Single-use tickets with a replay store* — adds state to a stateless check to defend
-  against replay inside a 120 s window by whoever already holds the URL.
-- *`location ~ ^/api/uploads/.../websockify$`* — see (1).
+- **State**: the Files panel owns navigation + selection (unchanged). The bus carries one
+  request `{root, path, line?, isDir?}` with the latch (unchanged, load-bearing).
+  `requestOpenFile` returns the listener count so a caller can tell "nobody heard".
+- **Dispatch**: `MessageMarkdown` resolves → `requestOpenFile`. Resolution moves into
+  `resolve-path.ts` (shared with `/document`). Order: vault → forge-src → aios →
+  uploads → memory → workspace, and inside workspace non-`projects/` paths rank first.
+- **Failure**: every miss toasts (kept); resolution longer than ~1 s shows a pending
+  state; zero listeners → `window.location.assign(/document…)`. No silent branch anywhere.
+- **Visibility**: the regression test asserts tab flip + zero new tabs + rendered content.
+- **Wikilinks (D2)**: a 40-line remark plugin (no dependency) turns `[[Note]]`,
+  `[[Note|Alias]]`, `[[Note\|Alias]]` (table escape), `[[Note#Heading]]`,
+  `[[Dir/Note]]` into a `link` node with `href=/document?wikilink=<name>`. That href
+  passes `safeHref` (same-origin relative) and the allowlist keeps `href` on `a`; the
+  `a` component override — our code, not markup — intercepts `/document?…` hrefs on
+  plain click. NO rehype-raw. Both gates stay.
+- **Frontmatter (D3)**: `splitFrontmatter()` pure helper; rendered as a compact
+  mono meta strip above the body, never as prose.
+- **Discoverability (D7), default pending Konrad**: openable pills take the link colour
+  (`var(--v2-accent)`) with the existing dotted underline; other pills unchanged. Nothing
+  else. Escalated with alternatives.
+- **Attach (D9)**: no new pill affordance. After D4 the clicked file is selected and
+  revealed, so the panel's existing "attach" button is one click away.
+- Rejected: server-side `/files/resolve` (cleaner, but a new API shape while the client
+  resolver already works); adopting `MediaDocumentViewer` in the panel (900 lines with an
+  edit mode — the chat must not grow an editor); rehype wikilink plugin (would run inside
+  the sanitised tree; remark is earlier and simpler); a badge on every pill (D7).
 
-## Corrections to the brief's established facts
+## Task graph (ids appended below after seeding)
 
-Both measured on this host, 2026-08-25, and both change what a builder should do:
+Workstreams: main, detect, preview, panel, markdown, test (6 = the cap).
 
-1. **"Right now NOTHING listens in 6900-6959 or 5990-6049" is no longer true.** `ss -ltnp`
-   shows `websockify` on `127.0.0.1:6941` (pid 3831317) and `x11vnc` on `127.0.0.1:6031`
-   and `[::1]:6031` (pid 3831277) — a live takeover stack on display `:131`. Both are
-   loopback-only, so the "never on 0.0.0.0" rule holds. Do not assume a clean slate.
-2. **The driver IS in this repo.** The brief says the driver is at
-   `/opt/ai-os/scratch/gemfix/scripts/research-browser.mjs` and "NOT /opt/ai-os/scripts/".
-   True, but incomplete: `scripts/research-browser.mjs` is **tracked in this repo**
-   (last touched `b0d0f4b`), 2284 lines, and byte-identical to both the scratch copy and
-   the live `/opt/forge-ai-os/scripts/research-browser.mjs`. Builders edit the **worktree
-   copy**; the deploy task ships it.
+- R0 `main` **port** — apply the preserved patch, port the 18 detect cases into
+  `scripts/checks/check-code-path-link.ts`, wire the gate. Everything depends on it.
+- R1 parallel: `detect` (A), `preview` (B), `panel` (C), `main` server `memory` root (D),
+  `test` Playwright regression (E).
+- R2: integrations of detect / preview / panel back into `project/ecacba29`.
+- R3: `markdown` (F) — depends on the detect + panel integrations (it consumes both).
+- R4: `/document` page (G, markdown workstream). R5: markdown integration.
+- R6: extend the regression test with D1–D6 cases (H, test workstream) after all
+  integrations. R7: test integration. R8: ONE reviewer. R9: deploy + verify on live.
 
-And one thing the brief overstated in our favour:
+## Constraints every builder inherits
 
-3. **`ensureTakeover` already runs on a login wall, unconditionally** — `research-browser.mjs:1774`,
-   inside `handleRequest`, before the verdict is even checked. Deliverable 3 is therefore
-   *not* "start the takeover stack"; the stack already starts. The only missing half is the
-   **marker** that lets `resolveProfileForRun` map a run id to a profile.
+- Work only in this project's worktrees. Never edit `/opt/forge-ai-os`. Never restart
+  forge-executor. forge-control restarts only via the deploy task's safe-restart.
+- `pnpm install --frozen-lockfile --prod=false` before any gate; typecheck takes ~150 s —
+  raise the Bash timeout.
+- `MessageMarkdown.tsx`: memo on `source` alone; no rehype-raw; allowlist + urlTransform.
+- `routes/files.ts`: no new write verb; every new root is `readOnly: true`.
+- No new poll. `fetchFileRoots` stays a cached module promise.
+- Read `/root/.claude/projects/-opt-forge-ai-os/memory/MEMORY.md` first; the browser
+  harness notes there (`playwright-driver-two-launch-traps`,
+  `nextauth-salt-must-equal-cookie-name`, `stale-session-cookie-fakes-a-perfect-score`,
+  `real-client-network-capture-recipe`, `chat-renders-shots-two-shapes`) cost hours each.
 
-## What owns state, what dispatches, what happens on failure
+## Seeded task ids (2026-08-25)
 
-| Concern | Owner |
-| --- | --- |
-| Signing key | `/opt/ai-os/.secrets/forge-control.env` (0600), the file `ecosystem.config.cjs` already reads |
-| Ticket mint | forge-control `:7700`, behind the authenticated `/api/proxy` hop |
-| Ticket verify | forge-control's `'upgrade'` listener, before any byte is proxied |
-| Profile → display → port | `displaySlot()` / `portsForDisplay()`, unchanged |
-| Run → profile | `browser_state.json` in the run's upload dir, written by the driver |
-| Takeover processes | `research-browser.mjs`'s `ensureTakeover`, unchanged |
-
-**On failure, everything fails closed and loudly.** Missing secret → mint and verify both
-throw; no unsigned path exists. Bad/expired ticket → the socket gets an HTTP status line and
-closes, and the reason is logged. Stack down → the mint endpoint still answers, the socket
-proxy fails to connect to loopback, and the takeover page renders the error rather than a
-blank canvas. No fallback anywhere converts a failure into a silent success.
-
-**How Konrad sees it broke:** the `/takeover/<runId>` page renders the failure text
-inline — it is the page the reminder links to, so a failure is visible at exactly the moment
-he tries to use it. forge-control logs one line per upgrade attempt (accepted or rejected)
-with run id, profile, port and outcome — never the ticket itself.
-
-### Secret provisioning — the landmine to avoid
-
-`ecosystem.config.cjs`'s `required()` **throws and refuses to boot the whole control plane**
-if a name is missing. Do **not** wire `TAKEOVER_TICKET_SECRET` through `required()`: a deploy
-that reloads pm2 before the secret file is updated would take the entire AI OS down for a
-browser feature. Pass it through as an optional env var and make the **ticket code** throw on
-mint and on verify when it is absent. The feature dies loudly; the OS stays up. The deploy
-task writes the secret to the 0600 file **before** any restart regardless.
-
-## Work
-
-Files, one owner each:
-
-- `forge-control/src/lib/takeover-ticket.ts` (+ test) — mint/verify. Payload
-  `{v:1, rid, prof, port, exp, jti}` → `base64url(json).base64url(hmac)`. Read the env var
-  **inside** the function, never at module scope (a module-level capture is what made an
-  earlier round's proxy tests run against production). `timingSafeEqual` on the signature,
-  then expiry, then `PROFILE_RE`, then the 6900-6959 port range.
-- `forge-control/src/lib/browser-takeover.ts` — new `kind: "ticket"` arm matching
-  `/api/browser-takeover/ws/<ticket>`; `handleBrowserTakeoverUpgrade` requires a valid ticket
-  on **every** arm it accepts; delete the bare run-id and bare profile upgrade arms. Reuse
-  `proxyTakeoverUpgrade` untouched. Keep both port-allowlist checks. **Fix the false comment
-  at lines 665-666** — `next.config.mjs` contains no `rewrites()` at all (verified: 14 lines,
-  `reactStrictMode` and a webpack alias only).
-- `forge-control/src/routes/uploads.ts` — `GET .../vnc/ticket`, registered **before** the
-  `r.all("/:id/vnc/*")` catch-all, which would otherwise swallow it.
-- `forge-control-web/app/desktop/chat/browser-shots.ts` — `vncProxyUrl` takes a ticket,
-  emits `path=api/browser-takeover/ws/<ticket>` and `reconnect=0`.
-- `forge-control-web/app/takeover/[runId]/page.tsx` — the reminder's landing page. Needed
-  because `/desktop` is a single client-state route with no deep links, so a phone
-  notification has nowhere else to point.
-- `scripts/research-browser.mjs` — write `browser_state.json` into the run's upload dir at
-  login-wall time; replace the `ssh -N -L` line with the https URL.
-- `deploy/nginx/os.schreinercontentsystems.com.conf` — the location block, reviewable in
-  git. Note the live file `/etc/nginx/sites-enabled/os.schreinercontentsystems.com` is a
-  **real file, not a symlink** to `sites-available`. `$connection_upgrade` is already mapped
-  globally in `/etc/nginx/conf.d/00-gzip-and-upgrade.conf:30`. `access_log off` on this
-  location — the ticket is in the URI.
-- `scripts/checks/check-browser-takeover-ticket.ts` — the gate.
-
-## Proof the deploy task must produce
-
-Real browser, signed in, screenshots to `/opt/ai-os/uploads/$FORGE_RUN_ID/`, each one read
-back with the Read tool:
-
-1. The takeover page connected — a live Chrome canvas, not a shell.
-2. **No ticket** → socket refused.
-3. **Expired ticket** → socket refused.
-4. **Tampered ticket** (flipped byte in the signature) → socket refused.
-
-A route that cannot be shown to reject is not secured. If any of these cannot be produced,
-the task says so plainly rather than reporting success.
+- 0c92ecdf-7dba-4ced-af77-5d0006b21b21 builder r0 [main] Port the live chat-reference-navigation patch onto the branch + detect unit check
+- 07002755-264f-4ec0-8f66-68e7649f6ad2 builder r1 [detect] detectPath: line refs, folders, wikilink parsing, memory root, no false affordances
+- 8c875963-ef2f-4306-b694-8539811cc57e builder r1 [preview] FilePreview: frontmatter strip, line-numbered code viewer with highlighted line, real previews per format
+- e462d94a-d6bc-484b-ad20-93e4c6c23b7b builder r1 [panel] Files panel: reveal + flash the opened entry, open folders, carry the line, bus listener count
+- 7f57052a-1c5c-407d-816e-3dc4b5cbc6c2 builder r1 [main] files.ts: read-only memory root for the fleet knowledge base + node:test for readOnly and roots
+- 155bcf50-e3b5-4579-90fe-dd4e5dcccee8 builder r1 [test] Playwright regression: click a path pill from the Team tab, assert tab flip, no new tab, content rendered
+- ff136563-a4eb-43d8-a435-4cfc9a768a64 builder r2 [main] Integrate workstream detect into project/ecacba29
+- 3c047062-3f60-4303-8956-f9e27a7daea8 builder r2 [main] Integrate workstream preview into project/ecacba29
+- 8f48e1c4-de49-498e-8953-556269d3a63a builder r2 [main] Integrate workstream panel into project/ecacba29
+- e99810f4-285a-45f4-9e44-6878bda3583c builder r3 [markdown] MessageMarkdown: wikilinks, line refs, resolution order, pending state, no-listener fallback, discoverability
+- f687d7f7-f1c6-46fc-a6cb-a966b50f71aa builder r4 [markdown] /document: accept ?line= and ?wikilink= via the shared resolver
+- 796e0c33-377e-4a29-bfe7-f56ae61b3b62 builder r5 [main] Integrate workstream markdown into project/ecacba29
+- 27ed1984-3a1c-4dce-a852-cc7f77bc40e1 builder r6 [test] Extend the regression test: line highlight, wikilink, folder, frontmatter strip, memory root, dead-pill guard
+- d6fa60e3-2ea7-40b6-9685-b9fbfdcc91a4 builder r7 [main] Integrate workstream test into project/ecacba29
+- 3d7b732c-8910-4ab3-81fe-f8619ccd0431 reviewer r8 [main] Review chat reference navigation: the whole diff of project/ecacba29 against main
+- f7232d26-b44f-486c-a3ff-084ddda3a99b builder r9 [main] Deploy chat reference navigation to live and verify by clicking, with screenshots
