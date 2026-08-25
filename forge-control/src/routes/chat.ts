@@ -73,6 +73,14 @@ import {
   workingTimeFromRollup,
   type WorkingMsSource,
 } from "./working-time.ts";
+/* round 1873 (T3) — the two live facts the sidebar was missing. Both
+ * derivations are pure and live in `lib/team-live.ts` so a unit test can
+ * import them without booting this route's pg pool. */
+import {
+  badgeEngineForModel,
+  projectActivity,
+  type LiveActivity,
+} from "../lib/team-live.ts";
 
 const r = new Hono();
 
@@ -412,6 +420,23 @@ interface TeamNode {
   /** The project task this run executed, when resolvable. Null for the
    *  manager, and for a worker whose task row was deleted. */
   task: TeamTask | null;
+  /** Which engine is running this node, DERIVED FROM THE MODEL — never from
+   *  `metadata.engine`, which means "dispatch branch" and is wrong on the 46
+   *  measured rows that pair `claude-code` with a Gemini model. Null when the
+   *  model is unknown: see `badgeEngineForModel`'s header for why the badge
+   *  refuses the `engineForModel` default here.
+   *
+   *  Optional on the type so an older client cannot crash on it and a newer
+   *  one can tell ABSENT (old server) from `null` (measured, unknown). */
+  engine?: string | null;
+  /** What this node is doing right now — the rollup's `current_activity` for a
+   *  run, `latest_activity` for a sub-agent, projected by `projectActivity`.
+   *
+   *  Shipped ONLY on non-settled nodes, and `text` clipped to
+   *  `ACTIVITY_TEXT_CAP`, so the growth of this response follows the LIVE
+   *  count (typically under ten) and not the tree size (measured at 165).
+   *  Optional for the same absent-vs-empty reason as `engine`. */
+  activity?: LiveActivity | null;
 }
 
 /** A named failure of an enrichment step. The tree still renders; the panel
@@ -545,6 +570,17 @@ function teamNodeFromRun(
       dismissed_at: subDismissedAt.get(sub.tool_use_id) ?? null,
       subagents: [],
       task: null,
+      // The badge is derived from the MODEL, not from any stored engine key:
+      // `metadata.engine` is the dispatch branch and lies on the collided
+      // generation of rows. `badgeEngineForModel` refuses the
+      // `engineForModel(null) === "claude-code"` default, which is correct for
+      // dispatch and wrong for a badge — an unmeasured model must print "—",
+      // not a plausible engine nobody measured. Do not collapse this into a
+      // direct `engineForModel` call.
+      engine: badgeEngineForModel(sub.model),
+      // `settled` on a sub-agent already folds in "its parent process exited",
+      // so a frozen child cannot leak a stale activity onto the wire.
+      activity: projectActivity(sub.latest_activity, { settled: !live }),
     };
     return node;
   });
@@ -566,6 +602,16 @@ function teamNodeFromRun(
     dismissed_at: run.dismissed_at,
     subagents,
     task,
+    // Same rule as the sub-agent node above, and for the same measured
+    // reason — see `badgeEngineForModel`. `run.model` is what
+    // `agentFromRow` already resolved (it prefers the rollup's
+    // `model_resolved` over the claim-time value), so this is the freshest
+    // model this row has.
+    engine: badgeEngineForModel(run.model),
+    // `run.current_activity` was already parsed by `pickCurrentActivity`
+    // (agents-shared.ts) on the way in. No new SQL, no new metadata read —
+    // this is a projection of data already in hand.
+    activity: projectActivity(run.current_activity, { settled: run.settled }),
   };
 }
 
