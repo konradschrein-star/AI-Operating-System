@@ -30,6 +30,29 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# REFUSE TO INSTALL OUT OF A WORKTREE.
+#
+# REPO_ROOT is derived from this script's own location, so running it from a
+# project worktree points /opt/ai-os/scripts/* at
+# /opt/ai-os/workspace/projects/<uuid>/scripts/ops/*. That directory is DELETED
+# when the project finishes. Every symlink then dangles at once — and since this
+# list now carries all three PreToolUse hooks and hooks.settings.json, the guard
+# layer would vanish from every agent turn on the box silently, which is exactly
+# the failure hooks.settings.json's own header warns about.
+#
+# `--target-dir` is not a way around it: the target is not what is wrong here,
+# the SOURCE is. A test that wants a scratch target dir does not need this
+# script — scripts/checks/prove-ops-mode-bites.sh makes the one symlink it needs.
+case "$REPO_ROOT" in
+  /opt/ai-os/workspace/projects/*)
+    echo "REFUSING: this checkout is a project worktree ($REPO_ROOT)." >&2
+    echo "  Symlinks into a worktree dangle the moment the project is cleaned up," >&2
+    echo "  taking every PreToolUse guard hook on the box with them." >&2
+    echo "  Install from the live checkout (/opt/forge-ai-os) in a deploy task." >&2
+    exit 1
+    ;;
+esac
+
 # Every file the ops migration manages. Order doesn't matter — none of these
 # depend on another already being installed, only on ending up at TARGET_DIR.
 FILES=(
@@ -52,12 +75,35 @@ FILES=(
   goal-files-pane.json
   goal-manager-split.json
   goal-operator-visibility.json
+  guard-service-restart.py
+  guard-autonomy.py
+  guard-protected-paths.py
+  test-guard-service-restart.py
+  test-guard-autonomy.py
+  test-guard-protected-paths.py
+  install-hooks.sh
+  hooks.settings.json
 )
 
 # git only tracks the executable bit (100644/100755) — it cannot represent
 # check-vps2-backup.sh's tighter 750 (group r-x, world none). Restore it here
 # on every install rather than relying on the checkout's mode.
 RESTRICTED_MODE_FILES=(check-vps2-backup.sh)
+
+# The three PreToolUse hooks are invoked by the Claude CLI as commands. A hook
+# that has lost its executable bit does not fail loudly — it fails as a hook
+# that did not run, which is indistinguishable from a box with no guard on it
+# at all. git DOES round-trip 755, so this is belt-and-braces rather than a
+# workaround; it costs one chmod and removes a silent-disable path.
+EXEC_MODE_FILES=(
+  guard-service-restart.py
+  guard-autonomy.py
+  guard-protected-paths.py
+  test-guard-service-restart.py
+  test-guard-autonomy.py
+  test-guard-protected-paths.py
+  install-hooks.sh
+)
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 fail=0
@@ -103,6 +149,9 @@ done
 if [ "$DRY_RUN" = 0 ]; then
   for f in "${RESTRICTED_MODE_FILES[@]}"; do
     chmod 750 "$REPO_ROOT/scripts/ops/$f"
+  done
+  for f in "${EXEC_MODE_FILES[@]}"; do
+    chmod 755 "$REPO_ROOT/scripts/ops/$f"
   done
 fi
 

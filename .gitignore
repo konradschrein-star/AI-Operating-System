@@ -5,3 +5,8 @@ logs/
 # one to GitHub. (Added 2026-08-03 after finding a .bak with 4 postgres URLs.)
 *.cjs.bak-*
 ecosystem.config.cjs.bak*
+# The three guard-hook suites import the hook under test with importlib, and
+# check-ops-scripts.sh py_compiles it, so both drop bytecode into
+# scripts/ops/__pycache__/. Without this, running the gates dirties the working
+# tree and gates-808's reproduce-cleanliness gate goes red for having been run.
+__pycache__/
