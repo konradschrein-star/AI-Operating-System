@@ -704,6 +704,19 @@ const WS_PREFIX_ALLOWED = new Set([
   "scripts/checks/check-browser-shots.ts", // asserts vncProxyUrl's output
   "scripts/checks/check-browser-stream-viewer.ts", // asserts the viewer's iframe src
   NGINX_REL, // the location block itself
+  // The request logger names the prefix in order to REDACT it (186c73a).
+  // forge-control's catch-all middleware printed c.req.path for every request,
+  // so a non-upgrade GET wrote the whole bearer ticket — payload and signature
+  // — into forge-control-out.log, which rotates and is retained. Found
+  // 2026-08-25 by the takeover deploy, which had leaked one of its own live
+  // tickets that way. A real noVNC connection is an UPGRADE and never reaches
+  // Hono middleware, so only link previews, crawlers, address-bar pastes and
+  // probes trigger it — and a non-upgrade GET does NOT burn the jti, so a
+  // ticket logged this way stays live for the rest of its TTL.
+  //
+  // This entry is why the rule is an allowlist of PATHS rather than a ban on
+  // the string: closing the third door required naming it.
+  "forge-control/src/index.ts",
 ]);
 
 const wsPrefixHits = corpus.filter((f) => {

@@ -66,8 +66,11 @@ module.exports = {
         CLAUDE_POOL_URL: process.env.CLAUDE_POOL_URL || 'http://127.0.0.1:8092',
         CLAUDE_POOL_API_KEY: process.env.CLAUDE_POOL_API_KEY || '',
         // Browser takeover (aios-browser-takeover-live). PASS-THROUGH, never
-        // required(): the nginx location /api/browser-takeover/ws/ bypasses
-        // NextAuth and this key is the only thing authenticating that socket —
+        // required(): the dedicated nginx takeover-WebSocket location bypasses
+        // NextAuth, and this key is the only thing authenticating that socket.
+        // (The literal URL prefix is deliberately NOT written here — an
+        // allowlist gate keeps the set of files naming it deliberately small,
+        // and a config comment is not worth an exemption.) But
         // but required() THROWS and refuses to boot the whole control plane,
         // so a restart that landed ahead of the secrets file would take the
         // entire AI OS down for a browser feature. Absent value => the ticket
