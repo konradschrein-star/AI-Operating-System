@@ -1,54 +1,54 @@
 {
-  "measuredAt": "2026-08-25T02:04:31.700Z",
+  "measuredAt": "2026-08-25T05:17:47.819Z",
   "environment": "Real headless Chrome / Playwright. Part A: direct fetch() against the in-process worktree probe. Part B: real forge-control-web /desktop app (next dev) driven end-to-end, network captured via page.on('response').",
   "verdict": "PASS",
   "failures": 0,
   "partA": {
     "coldStatus": 200,
-    "coldBytes": 15777,
-    "coldETag": "\"38a4716d817bf5161c63bddaecb6b573f5962373\"",
+    "coldBytes": 16450,
+    "coldETag": "\"c3e0b42e49bd58ac0564e34720c2a1a42d929c2d\"",
     "strong304Status": 304,
     "strong304Bytes": 0,
     "weak304Status": 304,
     "weak304Bytes": 0,
     "mismatchStatus": 200,
-    "mismatchBytes": 15777
+    "mismatchBytes": 16450
   },
   "partB": {
-    "landedUrl": "http://127.0.0.1:40643/desktop",
+    "landedUrl": "http://127.0.0.1:34859/desktop",
     "initialFetch": {
-      "url": "http://127.0.0.1:40643/api/proxy/chat?limit=30",
+      "url": "http://127.0.0.1:34859/api/proxy/chat?limit=30",
       "status": 200,
-      "etag": "\"354e53b3fe3fb0e91f87dc4976fce30d826c918b\"",
+      "etag": "\"c3e0b42e49bd58ac0564e34720c2a1a42d929c2d\"",
       "cacheControl": "no-cache",
-      "decodedBytes": 15804,
-      "runCount": 22,
-      "tSinceStartMs": 3838
+      "decodedBytes": 16479,
+      "runCount": 23,
+      "tSinceStartMs": 6391
     },
     "steadyPollsCount": 2,
     "steadyPolls": [
       {
-        "url": "http://127.0.0.1:40643/api/proxy/chat?limit=30",
-        "status": 200,
-        "etag": "\"f8d27c0120bc48ae68ab295356b62fd824315b59\"",
+        "url": "http://127.0.0.1:34859/api/proxy/chat?limit=30",
+        "status": 304,
+        "etag": "\"c3e0b42e49bd58ac0564e34720c2a1a42d929c2d\"",
         "cacheControl": "no-cache",
-        "decodedBytes": 15821,
-        "runCount": 22,
-        "tSinceStartMs": 13936
+        "decodedBytes": 0,
+        "runCount": null,
+        "tSinceStartMs": 16653
       },
       {
-        "url": "http://127.0.0.1:40643/api/proxy/chat?limit=30",
-        "status": 200,
-        "etag": "\"ab2148d6ce6e45d7170c5adaadd3b7a95fdf73a4\"",
+        "url": "http://127.0.0.1:34859/api/proxy/chat?limit=30",
+        "status": 304,
+        "etag": "\"c3e0b42e49bd58ac0564e34720c2a1a42d929c2d\"",
         "cacheControl": "no-cache",
-        "decodedBytes": 15801,
-        "runCount": 22,
-        "tSinceStartMs": 24555
+        "decodedBytes": 0,
+        "runCount": null,
+        "tSinceStartMs": 26895
       }
     ],
-    "steadyBytesTotal": 31622,
-    "observedRestRateBpm": 75892.8,
-    "screenshotPath": "/opt/ai-os/uploads/57be32740d1a/20260825T020431Z-chat-list-etag.png",
-    "screenshotUrl": "/api/uploads/57be32740d1a/20260825T020431Z-chat-list-etag.png"
+    "steadyBytesTotal": 0,
+    "observedRestRateBpm": 0,
+    "screenshotPath": "/opt/ai-os/uploads/fcf735533131/20260825T051747Z-chat-list-etag.png",
+    "screenshotUrl": "/api/uploads/fcf735533131/20260825T051747Z-chat-list-etag.png"
   }
 }

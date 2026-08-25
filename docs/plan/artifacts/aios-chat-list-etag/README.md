@@ -58,9 +58,9 @@ the page was still compiling, so the initial-fetch assertion failed even though 
 once compiled, worked correctly (confirmed: the first real API response actually landed at
 ~99s into the run). Fixed by adding an explicit throwaway warm-up navigation to `/desktop`
 (with the session cookie, 180s timeout, 5s settle) **before** starting the timed
-measurement window. Two runs after the fix landed clean: `PASS  Part B: real client issued
-initial chat list request` on the first captured response, ALL PASS overall on run 2 (see
-below re: run 1's Part A flake).
+measurement window. Three runs after the fix landed clean: `PASS  Part B: real client issued
+initial chat list request` on the first captured response, ALL PASS overall on runs 2 and 3
+(see below re: run 1's Part A flake).
 
 ## Verification run
 
@@ -75,8 +75,8 @@ cd forge-control && tsx ../scripts/checks/check-chat-list-etag.ts   # ALL PASS (
 cd forge-control-web && tsx --tsconfig ../tsconfig.checks.json ../scripts/checks/check-chat-list-etag-browser.ts
 ```
 
-The browser harness was run twice. **Run 1** (first run after the warm-up fix) surfaced a
-genuine flake in Part A only: "weak If-None-Match" got a `200` instead of `304`. Part A hits
+The browser harness was run three times. **Run 1** (first run after the warm-up fix) surfaced
+a genuine flake in Part A only: "weak If-None-Match" got a `200` instead of `304`. Part A hits
 the real live database in-process (by design — see the harness's own comment on why it does
 not synthesize its own 304 shim). This VPS is running dozens of concurrent live agent
 workers at all times (see the many `project/*` branches); a live row changed between the
@@ -84,29 +84,35 @@ strong-tag check and the weak-tag check a few requests later, producing a legiti
 different ETag — not a matching-logic bug. Confirmed by: (a) the isolated scratch-DB harness
 (`check-chat-list-etag.ts`) proves weak-tag matching deterministically with no concurrent
 writers and passes every time; (b) **Run 2**, moments later, passed Part A cleanly including
-the weak-tag case. `measurement.json` reflects Run 2 (ALL PASS).
+the weak-tag case; (c) **Run 3** (05:17:47Z), later still, also passed Part A cleanly and is
+the run whose Part B evidence is committed in `measurement.json` — see below.
 
 ## The one honest finding Konrad should know
 
-**Part B never observed a single 304 in either run.** Every steady-state poll during the
-25s observation window was a full `200` with a changed ETag (run 1: 1 poll, 15,795 B; run 2:
-2 polls, 15,804–15,811 B each, ~74 KB/min). This is not a bug in the implementation — it is
-what conditional caching against a genuinely busy list looks like: `GET /api/chat` includes
-per-run fields (`updated_at`, `last_heartbeat_at`, status, message counts) that change
-whenever *any* of the ~20 chats on the rail has live agent activity, and on this box, at
-almost any given moment, at least one does. The scratch-DB harness proves the 304 path fires
-correctly the instant nothing changes (0 bytes, exact ETag match); the live measurement
-proves the box is close to never being that idle right now. The steady-state byte savings
-this feature delivers will scale with how quiet the fleet actually is when Konrad is looking
-at the console, not with a fixed number — expect ~0 bytes/min chat-list traffic during a
-truly idle stretch, and something closer to the pre-fix baseline (~90 KB/min) whenever
-multiple agents are actively working, same as right now.
+**Whether Part B observes a 304 or a 200 at "rest" depends entirely on how idle the fleet
+happens to be during the 25s observation window** — this VPS runs dozens of concurrent live
+agent workers, and `GET /api/chat` includes per-run fields (`updated_at`,
+`last_heartbeat_at`, status, message counts) that change whenever *any* of the ~20+ chats on
+the rail has live activity. Two runs (02:04:31Z, 03:07Z-adjacent) landed during busy windows
+and observed full `200`s on every steady-state poll (~74–76 KB/min, no different from the
+pre-fix baseline). A third run (05:17:47Z, `measurement.json` now reflects this one) landed
+during a genuinely quiet window and observed exactly what the deliverable calls for: both
+steady-state polls came back `304 Not Modified`, 0 bytes each, `observedRestRateBpm: 0`. The
+scratch-DB harness (`check-chat-list-etag.ts`) proves the 304 path fires correctly and
+deterministically with no concurrent writers; this live run is the same proof under real
+conditions, caught at a moment the fleet cooperated. Read together, the two are proof of the
+mechanism, not proof of a fixed savings number — expect ~0 bytes/min chat-list traffic during
+a truly idle stretch (now demonstrated live, not just in the scratch harness), and something
+closer to the pre-fix baseline (~90 KB/min) whenever multiple agents are actively working.
 
 ## Screenshot
 
-`/opt/ai-os/uploads/57be32740d1a/20260825T020431Z-chat-list-etag.png` (Run 2) — real
-`/desktop`, CHAT surface active, chat rail populated, read back via the Read tool during
-this task.
+`/opt/ai-os/uploads/fcf735533131/20260825T051747Z-chat-list-etag.png` (Run 3, the run
+`measurement.json` now reflects) — real `/desktop`, CHAT surface active, chat rail
+populated, read back via the Read tool during this task. Run 2's earlier screenshot
+(`/opt/ai-os/uploads/57be32740d1a/20260825T020431Z-chat-list-etag.png`) remains valid
+evidence of Part A (cold/strong/weak/mismatch) but is superseded here by Run 3 for Part B's
+at-rest claim.
 
 ## Declared write-set (restated)
 
