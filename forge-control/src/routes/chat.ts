@@ -76,6 +76,11 @@ import {
 
 const r = new Hono();
 
+/** Default page/window size shared by the HTTP delta route's `parseLimitParam`
+ *  and the SSE snapshot fallback (below) — one constant so a future change to
+ *  the default can't desync the two paths (round 4 review finding #3). */
+const DEFAULT_CHAT_WINDOW = 60;
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1549,7 +1554,14 @@ r.get("/:id/events", (c) => {
           });
           if (!(await send("append", payload))) break;
         } else {
-          if (!(await send("snapshot", JSON.stringify({ run })))) break;
+          const from = Math.max(0, thread.length - DEFAULT_CHAT_WINDOW);
+          const snapshotRun = {
+            ...run,
+            thread: thread.slice(from),
+            from,
+            total: thread.length,
+          };
+          if (!(await send("snapshot", JSON.stringify({ run: snapshotRun })))) break;
         }
         sentLen = thread.length;
         sentPrefix = prefixKey(thread, sentLen);
@@ -1561,6 +1573,30 @@ r.get("/:id/events", (c) => {
     }
   });
 });
+
+export interface ChatQueryParams {
+  since?: number;
+  before?: number;
+  limit?: number;
+}
+
+export function parseLimitParam(
+  raw: string | undefined,
+  defaultLimit = DEFAULT_CHAT_WINDOW,
+  maxLimit = 500,
+): number {
+  if (raw === undefined || raw === "") return defaultLimit;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) return defaultLimit;
+  return Math.min(n, maxLimit);
+}
+
+export function parseBeforeParam(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) return undefined;
+  return n;
+}
 
 /**
  * Parse the `since` query param for GET /:id delta support.
@@ -1582,45 +1618,79 @@ export function parseSinceParam(raw: string | undefined): number | undefined {
 export type RunDelta = Omit<RunDetail, "prompt"> & { prompt?: string };
 
 /**
- * Shape the GET /:id response body given an already-validated (or absent)
- * `since`.
+ * Shape the GET /:id response body given query params (since, before, limit).
  *
- * `since` omitted, or `since > total`: the full run (including `prompt`),
- * `from: 0`. The second case is the client-recovery path — a bigger cursor
- * than the thread holds means the client's own count cannot be trusted (a
- * compacted/replaced thread, or a stale cache from a different chat entirely),
- * and the honest recovery is the WHOLE thread, not an empty slice that would
- * silently drop everything the client thinks it never saw.
+ * 1. Backward pagination: ?before=<idx>&limit=<n>
+ *    Returns the window [Math.max(0, before - limit), Math.min(before, total)),
+ *    with `from = Math.max(0, before - limit)`, and `prompt` omitted.
  *
- * `since <= total` otherwise: delta response — `run.prompt` is omitted to save
- * steady-state bandwidth, and `run.thread` is replaced with the slice from
- * `since` onward (`since === total` yields `[]`, `since === 0` yields the full
- * array). Every other field of `run` is untouched.
+ * 2. Forward delta polling: ?since=<idx>
+ *    If `since > total`, recovers by returning the newest bounded window with `prompt`.
+ *    Otherwise, returns the slice [since, total) with `prompt` omitted.
+ *
+ * 3. Initial bounded load (since and before omitted):
+ *    Returns the newest bounded window [Math.max(0, total - limit), total)
+ *    with `prompt` included, defaulting limit to 60.
  */
 export function chatDeltaResponse(
   run: RunDetail,
-  since: number | undefined,
+  params: number | ChatQueryParams = {},
 ): { run: RunDelta; from: number; total: number } {
-  const total = run.thread.length;
-  if (since === undefined || since > total) {
-    return { run, from: 0, total };
+  const total = Array.isArray(run.thread) ? run.thread.length : 0;
+  const thread = Array.isArray(run.thread) ? run.thread : [];
+  const p: ChatQueryParams = typeof params === "number" ? { since: params } : params;
+  const limit = p.limit ?? 60;
+
+  // 1. Backward pagination: ?before=<idx>&limit=<n>
+  if (p.before !== undefined) {
+    const end = Math.max(0, Math.min(p.before, total));
+    const start = Math.max(0, end - limit);
+    const { prompt: _omitted, ...runWithoutPrompt } = run;
+    return {
+      run: { ...runWithoutPrompt, thread: thread.slice(start, end) },
+      from: start,
+      total,
+    };
   }
-  const { prompt: _omitted, ...runWithoutPrompt } = run;
-  return { run: { ...runWithoutPrompt, thread: run.thread.slice(since) }, from: since, total };
+
+  // 2. Forward delta polling: ?since=<idx>
+  if (p.since !== undefined) {
+    if (p.since > total) {
+      // Recovery fallback: return bounded newest window with prompt
+      const from = Math.max(0, total - limit);
+      return { run: { ...run, thread: thread.slice(from) }, from, total };
+    }
+    const { prompt: _omitted, ...runWithoutPrompt } = run;
+    const sliceStart = Math.max(0, p.since);
+    return {
+      run: { ...runWithoutPrompt, thread: thread.slice(sliceStart) },
+      from: sliceStart,
+      total,
+    };
+  }
+
+  // 3. Initial bounded load (since & before omitted): return newest limit entries with prompt
+  const from = Math.max(0, total - limit);
+  return {
+    run: { ...run, thread: thread.slice(from) },
+    from,
+    total,
+  };
 }
 
 export { trimRailMetadata };
 
 
-/* Full thread detail, or a delta since `?since=<n>` thread entries already
- * held by the caller (round: chat delta API). */
+/* Bounded thread detail, forward delta since `?since=<n>`, or backward pagination with `?before=<n>&limit=<m>` */
 r.get("/:id", async (c) => {
   const id = c.req.param("id");
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
   const run = await getRun(id);
   if (!run) return c.json({ error: "run not found" }, 404);
   const since = parseSinceParam(c.req.query("since"));
-  return c.json(chatDeltaResponse(run, since));
+  const before = parseBeforeParam(c.req.query("before"));
+  const limit = parseLimitParam(c.req.query("limit"));
+  return c.json(chatDeltaResponse(run, { since, before, limit }));
 });
 
 /* New chat. */

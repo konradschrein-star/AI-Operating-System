@@ -119,8 +119,7 @@ export function MentorAgentDeck({
      * hundreds of entries like any other thread, and this deck was the one
      * transcript in the codebase still re-downloading all of it every tick. */
     queryFn: () =>
-      fetchChatDelta(
-        activeRunId!,
+      fetchChatDelta(activeRunId!, () =>
         queryClient.getQueryData<RunDetail>(["chat", "run", activeRunId]),
       ),
     enabled: !!activeRunId,

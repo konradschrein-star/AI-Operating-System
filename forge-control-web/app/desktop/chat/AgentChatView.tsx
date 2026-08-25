@@ -419,8 +419,7 @@ export function AgentChatView({
   const detailQ = useQuery({
     queryKey: ["chat", "run", frame.runId],
     queryFn: () =>
-      fetchChatDelta(
-        frame.runId,
+      fetchChatDelta(frame.runId, () =>
         qc.getQueryData<RunDetail>(["chat", "run", frame.runId]),
       ),
     /* The same two periods ChatSurface's own detail query runs at, from

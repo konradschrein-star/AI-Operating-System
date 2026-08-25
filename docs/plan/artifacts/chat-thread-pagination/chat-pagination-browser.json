@@ -1,0 +1,97 @@
+{
+  "measuredAt": "2026-08-25T00:22:59.903Z",
+  "environment": "Real headless Chrome / Playwright. Part A: scripted fetch() against the worktree's own chat router (in-process). Part B: real forge-control-web /desktop app (next dev) driven end to end, pointed at the same worktree router through the real /api/proxy route handler — network captured via page.on('response'), not scripted.",
+  "verdict": "PASS",
+  "failures": 0,
+  "steadyWindowMs": 26000,
+  "chats": {
+    "11dd264b-f173-44d7-ada4-f1eb39fb4abd": {
+      "chatId": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+      "title": "Okay this session is very important as I want to plan and expand on the AI operating system since th",
+      "totalMessages": 2477,
+      "before": {
+        "fullFetchDecodedBytes": 2528262,
+        "fullFetchGzipBytes": 550495,
+        "restRateFallbackDecodedBpm": 37923930
+      },
+      "partA": {
+        "initialBoundedDecodedBytes": 85222,
+        "initialBoundedGzipBytes": 20879,
+        "initialThreadCount": 60,
+        "initialFrom": 2417,
+        "steadyStateDecodedBytes": 1696,
+        "steadyStateGzipBytes": 813,
+        "steadyStateThreadCount": 0,
+        "steadyStatePromptOmitted": true,
+        "backwardPageDecodedBytes": 74621,
+        "backwardPageGzipBytes": 16300,
+        "backwardPageThreadCount": 60,
+        "backwardPageFrom": 2357
+      },
+      "partB": {
+        "landedUrl": "http://127.0.0.1:36321/desktop",
+        "initialDecodedBytes": 85222,
+        "initialThreadCount": 60,
+        "steadyPollCount": 6,
+        "steadyPollDecodedBytesEach": [
+          1696,
+          1696,
+          1696,
+          1696,
+          1696,
+          1696
+        ],
+        "steadyPollAllPromptOmitted": true,
+        "steadyPollAllThreadEmpty": true,
+        "observedRestRateDecodedBpm": 23483.076923076922,
+        "olderPageDecodedBytes": 74621,
+        "olderPageThreadCount": 60,
+        "olderPagePromptOmitted": true
+      }
+    },
+    "ece63bdb-884c-4d2c-9680-deca13cf2dda": {
+      "chatId": "ece63bdb-884c-4d2c-9680-deca13cf2dda",
+      "title": "Execute AI OS/Specs/CRM Integration Plan (Twenty).md, Phases 1–3, on VPS2 (ssh -i /root/.ssh/vps2_mg",
+      "totalMessages": 1911,
+      "before": {
+        "fullFetchDecodedBytes": 2116650,
+        "fullFetchGzipBytes": 491447,
+        "restRateFallbackDecodedBpm": 31749750
+      },
+      "partA": {
+        "initialBoundedDecodedBytes": 65396,
+        "initialBoundedGzipBytes": 13897,
+        "initialThreadCount": 60,
+        "initialFrom": 1851,
+        "steadyStateDecodedBytes": 958,
+        "steadyStateGzipBytes": 605,
+        "steadyStateThreadCount": 0,
+        "steadyStatePromptOmitted": true,
+        "backwardPageDecodedBytes": 84026,
+        "backwardPageGzipBytes": 14998,
+        "backwardPageThreadCount": 60,
+        "backwardPageFrom": 1791
+      },
+      "partB": {
+        "landedUrl": "http://127.0.0.1:36321/desktop",
+        "initialDecodedBytes": 65396,
+        "initialThreadCount": 60,
+        "steadyPollCount": 6,
+        "steadyPollDecodedBytesEach": [
+          958,
+          958,
+          958,
+          958,
+          958,
+          958
+        ],
+        "steadyPollAllPromptOmitted": true,
+        "steadyPollAllThreadEmpty": true,
+        "observedRestRateDecodedBpm": 13264.615384615385,
+        "olderPageDecodedBytes": 84026,
+        "olderPageThreadCount": 60,
+        "olderPagePromptOmitted": true
+      }
+    }
+  }
+}
