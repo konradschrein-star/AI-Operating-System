@@ -68,12 +68,23 @@
 ## Task Graph
 
 ```
-T1 builder [standard]   db-and-api-runtime-tier-switch (4d7717aa-b64e-4873-82b5-9f18f16f9bd8) — depends: []
-T2 builder [standard]   project-tick-tier-guide-and-dispatch (471a3b62-1ce6-4030-865a-7b8f4debe7ee) — depends: [T1]
-T3 builder [standard]   ui-surface-fleet-default-tier (cb7c957f-6528-44f5-80de-4bafa86894e0) — depends: [T1]
-T4 builder [standard]   live-acceptance-and-evidence (247fb66a-ff9f-41db-89c2-3e27e8792f03) — depends: [T2, T3]
+T1 builder  [gemini]    db-and-api-runtime-tier-switch (4d7717aa-b64e-4873-82b5-9f18f16f9bd8) — depends: []
+T2 builder  [standard]  project-tick-tier-guide-and-dispatch (471a3b62-1ce6-4030-865a-7b8f4debe7ee) — depends: [T1]
+T3 builder  [gemini]    ui-surface-fleet-default-tier (cb7c957f-6528-44f5-80de-4bafa86894e0) — depends: [T1]
+T4 builder  [gemini]    live-acceptance-and-evidence (247fb66a-ff9f-41db-89c2-3e27e8792f03) — depends: [T2, T3]
 T5 reviewer [standard]  review-aios-gemini-default-tier (a07d6e8e-76c5-4875-811d-01975ca5c735) — depends: [T4]
 ```
+
+Tier rationale (see §7 for why this differs from the tiers first recorded): T1/T3/T4 are
+plumbing, UI display, and evidence-writing respectively — exactly the categories the brief
+names as gemini's default territory, with no forbidden-file risk. T2 edits
+`project-tick.ts` (forbidden-file-gated, and the file that decides every other task's
+engine fleet-wide) — a silent misedit here is a fleet-wide correctness bug, so it is
+"implementation needing judgement" per the general tier policy, independent of the brief's
+named exceptions. T5 is the one gating review of a diff touching forbidden files — the
+brief names this exception explicitly ("the one gating review of product code stay on
+Claude"), because a gemini review can report SUCCESS without having actually caught
+anything (`agy-cannot-create-new-files.md` / `gemini-tier-drops-half-its-tasks.md`).
 
 ---
 
@@ -84,3 +95,40 @@ T5 reviewer [standard]  review-aios-gemini-default-tier (a07d6e8e-76c5-4875-811d
 3. `PUT /api/fleet/default-tier {"tier": "junior"}` returns 200, and the subsequent created task row lands with `tier = 'junior'`.
 4. `guard.sh --fast` passes typecheck and static tests.
 5. Evidence documented in `docs/plan/evidence/acceptance-gemini-default-tier.md`.
+
+---
+
+## 7. Round-0 self-correction (2026-08-25, this session)
+
+Round 0 (this plan + the T1–T5 task graph above) had already run and committed
+(`c33eefa`, `cc0e0d2`) before this session started. This session is a second dispatch of
+the same "round 0" brief onto a project whose planning was already done — the CHRONIC
+"already done" dispatch defect (see
+`/root/.claude/projects/-opt-forge-ai-os/memory/already-done-dispatch-defect-index.md`).
+No new plan or task graph was created. Two live defects were found and fixed instead:
+
+**a) `metadata.tier_pin: "gemini"` silently overrode every task's declared tier.**
+This project was created with `architect_tier: "gemini"`, which `routes/projects.ts`
+writes into `projects.metadata.tier_pin` and then applies unconditionally to every task
+created afterward — including the round-0 architect's own `T2`/`T5` tier choices
+(documented failure mode: `project-tier-pin-overrides-task-tier.md`). All five live tasks
+had landed with `tier='gemini'` regardless of what the architect intended, which meant
+`T5` — the gating reviewer of a forbidden-file diff — was about to run on the exact engine
+the brief says must not gate that review. Fixed by direct DB write (precedent:
+`project-tier-pin-overrides-task-tier.md` §2026-08-25): `UPDATE project_tasks SET tier=…
+WHERE id IN (T1..T5) AND status IN ('pending','ready')` to the differentiated set in the
+Task Graph above, then `UPDATE projects SET metadata = metadata - 'tier_pin'` so future
+task creation on this project honours whatever tier is requested.
+
+**b) A duplicate builder task existed in the same workstream.**
+`29a81f8d-8929-442a-96f9-1d1174a6dfd3` ("Runtime fleet default tier in app_settings and
+routes"), created 5 minutes after `T1`, declared an overlapping `write_set`
+(`routes/fleet.ts`, `routes/projects.ts`, `fleet-tier.test.ts`) in the same `main`
+workstream as `T1` — two builders in one workstream may never declare the same file. It
+had no `run_id` (never spawned), so no live process was interrupted. Cancelled via
+`UPDATE project_tasks SET status='cancelled' WHERE id='29a81f8d-…'`.
+
+Both fixes are DB-only; no code was written or committed by this session beyond this
+PLAN.md update. The five canonical tasks (T1–T5) are unchanged in identity, dependency
+graph, and write_set — only `tier` was corrected and the pin cleared. Reported to Konrad
+via the manager chat (`e21f52b4-77b0-416b-8892-c83578715b90`).
