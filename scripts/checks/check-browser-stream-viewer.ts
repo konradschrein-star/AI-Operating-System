@@ -29,6 +29,7 @@
  *   cd forge-control-web && ../forge-control/node_modules/.bin/tsx --tsconfig ../tsconfig.checks.json ../scripts/checks/check-browser-stream-viewer.ts
  */
 
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { tokens } from "../../forge-control-web/app/tokens.ts";
@@ -403,6 +404,88 @@ check("closed modal renders empty output (null)", closedHtml, "");
 
 // Alias export check
 checkTrue("FullscreenShotViewer is alias of BrowserStreamViewer", FullscreenShotViewer === BrowserStreamViewer);
+
+/* ── State 5: manual mode, the in-chat "Take Control" destination ──────────
+ *
+ * Round-4 review, finding 4: all three in-chat Take Control affordances funnel
+ * into this pane, and it called `vncProxyUrl(dirId)` with ONE argument. That
+ * function returns null without a ticket, by design — so the pane was
+ * unconditionally the error branch, for every run, forever, while
+ * /takeover/<runId> (which mints) worked fine. It typechecked and it rendered.
+ *
+ * renderToStaticMarkup runs no effects, so the mint has not fired here; what is
+ * asserted is that the pane now has a ticket LIFECYCLE at all — a state the
+ * previous code had no way to express. The wiring itself is asserted by the
+ * twice-run scanner below, because a static render cannot reach it. */
+const manualHtml = renderToStaticMarkup(
+  createElement(
+    Providers,
+    null,
+    createElement(BrowserStreamViewer, {
+      shots: WALL_SHOTS,
+      initialIndex: 0,
+      dirId: TEST_DIR_ID,
+      mode: "needs_human",
+      state: { needs_login: true, service: "perplexity" },
+      isOpen: true,
+      initialViewMode: "manual",
+      onClose: noop,
+    }),
+  ),
+);
+checkTrue(
+  "initialViewMode='manual' opens straight into the takeover pane",
+  manualHtml.includes("Manual Browser Takeover"),
+);
+checkTrue(
+  "…and the pane reports a ticket state rather than a bare failure",
+  manualHtml.includes("data-takeover-ticket-state=") && manualHtml.includes("data-takeover-fallback="),
+);
+checkTrue(
+  "…and offers a retry for a mint that failed",
+  manualHtml.includes("data-retry-takeover-ticket"),
+);
+checkTrue(
+  "the dead 'could not construct proxy URL' copy is gone",
+  !manualHtml.includes("Could not construct authenticated proxy URL"),
+);
+
+/* THE WIRING SCANNER. Pure function, run twice: once on the real component,
+ * which must be clean, and once on a synthetic component carrying exactly the
+ * defect of round 4 (a one-argument vncProxyUrl and no mint), which must be
+ * dirty. A scanner that has never been shown to fire proves nothing. */
+interface TicketWiringScan {
+  oneArgCalls: string[];
+  mintsTicket: boolean;
+}
+function scanTicketWiring(src: string): TicketWiringScan {
+  const oneArgCalls: string[] = [];
+  for (const m of src.matchAll(/vncProxyUrl\(([^)]*)\)/g)) {
+    const args = m[1]
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (args.length < 2) oneArgCalls.push(m[0]);
+  }
+  return { oneArgCalls, mintsTicket: /mintTakeoverTicket\s*\(/.test(src) };
+}
+
+const viewerSrc = readFileSync(
+  new URL("../../forge-control-web/app/desktop/chat/BrowserStreamViewer.tsx", import.meta.url),
+  "utf8",
+);
+const viewerScan = scanTicketWiring(viewerSrc);
+checkTrue(
+  "BrowserStreamViewer never calls vncProxyUrl without a ticket",
+  viewerScan.oneArgCalls.length === 0,
+);
+checkTrue("BrowserStreamViewer mints its own ticket", viewerScan.mintsTicket);
+
+const brokenScan = scanTicketWiring("const vncUrl = vncProxyUrl(dirId);");
+checkTrue(
+  "discrimination · the scanner catches a one-argument vncProxyUrl",
+  brokenScan.oneArgCalls.length === 1 && !brokenScan.mintsTicket,
+);
 
 /* ════════════════════════════════════════════════════════════════════════════
  * SECTION 4: RunShotsIndicator & ShotStrip Rendering

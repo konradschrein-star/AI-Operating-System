@@ -801,7 +801,9 @@ export function ChatSurface({
     // thread instead of re-shipping the whole ~2.1 MB run every tick. See
     // fetchChatDelta's own doc for the recovery/merge rules.
     queryFn: () =>
-      fetchChatDelta(selId!, qc.getQueryData<RunDetail>(["chat", "run", selId])),
+      fetchChatDelta(selId!, () =>
+        qc.getQueryData<RunDetail>(["chat", "run", selId]),
+      ),
     // `navStack.length === 0` is the poll-budget half of the drill-in (NFU3).
     // A drilled view runs its own detail query at the same intervals; leaving
     // this one enabled underneath it would DOUBLE the surface's request rate

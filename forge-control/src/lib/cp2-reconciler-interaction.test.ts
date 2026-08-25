@@ -632,7 +632,10 @@ describe("finding F1 — E1/E2 is a two-statement handshake with a 60s sweep flo
     // its thread. markVerdictTaskDone used to accept exactly that row; since
     // R1005 its predicate carries the pending_input term, so the round waits
     // for the sweep instead of closing on the pre-message verdict.
-    assert.match(complete, /RETURNING status, metadata->>'pending_input' AS pending_input/);
+    // The RETURNING clause reports the PRE-IMAGE status since the stuck-trapdoor
+    // fix (COMPLETABLE_STATUS_SQL admits two prior statuses, so rowCount alone
+    // no longer identifies which one matched). The flag it hands E2 is unchanged.
+    assert.match(complete, /RETURNING old\.prev, metadata->>'pending_input' AS pending_input/);
     assert.match(complete, /WHERE id = \$1 AND status = 'completed'/); // E2's own guard
     assert.ok(
       (complete.match(/await pool\.query/g) ?? []).length >= 2,

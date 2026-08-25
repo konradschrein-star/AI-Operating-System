@@ -17,6 +17,7 @@
 
 forge-control-web/app/Providers.tsx	spend	react-query key list in a comment enumerating cached domains ("chat list, file tree, memory, skills, projects, spend"); not a rendered value.
 forge-control-web/app/api.ts	Spend|spend|budget_usd|spent_usd	Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+forge-control-web/app/api.test.ts	budget_usd|spent_usd	fixture matches RunSummary wire type, never rendered.
 forge-control-web/app/desktop/live/agentsApi.ts	spent_usd|cost_usd|spend row	Wire types (spent_usd, cost_usd, spent_usd_last_hour) — types stay (NFU4 additive API); AgentActivity.tsx no longer renders any of them after this round.
 forge-control-web/app/desktop/MoneySurface.tsx	.*	The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
 forge-control-web/app/desktop/MemorySurface.tsx	h\.score\.toFixed\(2\)	toFixed(2) here formats a relevance SCORE, not currency.

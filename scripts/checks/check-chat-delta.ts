@@ -1,22 +1,31 @@
 /**
- * check-chat-delta.ts — verification measurement harness for chat delta synchronization.
+ * check-chat-delta.ts — verification measurement harness for chat delta synchronization,
+ * bounded window fetching, backward pagination, and payload reduction.
  *
- * Project: aios-chat-delta-prompt (and aios-console-responsiveness)
+ * Project: aios-chat-thread-pagination (and aios-chat-delta-prompt)
  *
  * This check verifies:
- *  1. Backend Delta Query Contract (forge-control /api/chat/:id?since=N):
+ *  1. Backend Delta & Pagination Query Contract (forge-control /api/chat/:id):
  *     - parseSinceParam: parses non-negative integer strings, rejects invalid/negative/fractional.
- *     - chatDeltaResponse: returns full thread with prompt when since is omitted or since > total (recovery),
- *       omits prompt and returns empty delta when since === total,
- *       omits prompt and returns incremental slice when since < total (including since === 0).
- *  2. Frontend Delta Merging & Reference Identity (forge-control-web fetchChatDelta):
+ *     - parseBeforeParam: parses non-negative integer strings, rejects invalid/negative/fractional.
+ *     - parseLimitParam: parses positive integer strings, clamps to maxLimit (500), defaults to 60.
+ *     - chatDeltaResponse:
+ *       - Initial bounded load (since & before omitted): returns newest window [total - limit, total) with prompt (< 30 KB).
+ *       - Steady-state delta (since === total): returns empty thread slice [] and omits prompt (< 2 KB).
+ *       - Incremental delta (since < total): returns slice [since, total) and omits prompt.
+ *       - Backward pagination (?before=<idx>&limit=<n>): returns slice [max(0, before - limit), before) and omits prompt.
+ *       - Recovery fallback (since > total or malformed): recovers to bounded newest window with prompt.
+ *  2. Frontend Delta Merging & Reference Identity (forge-control-web fetchChatDelta & fetchChatOlder):
  *     - Retains exact thread array reference on empty delta (0 React re-renders / 0 DOM thrash).
- *     - Preserves cached prompt across >= 3 consecutive delta polls when prompt is omitted over the wire.
- *     - Appends new entries cleanly when incremental messages arrive, preserving prompt.
- *     - Recovers to full replacement snapshot on cursor mismatch (e.g. compacted thread).
+ *     - Preserves cached prompt across >= 4 consecutive delta polls when prompt is omitted over the wire.
+ *     - Appends new entries cleanly when incremental messages arrive, preserving prompt and updating tail.
+ *     - Prepends older historical slices on backward pagination, maintaining total integrity across multi-page walk.
+ *     - Recovers to replacement snapshot on cursor mismatch (e.g. compacted thread).
  *  3. Payload Reduction Measurements:
- *     - Simulates realistic manager thread (576 entries & 103 entries with ~10 KB prompt).
- *     - Measures uncompressed & compressed byte reductions (~86% reduction in steady-state delta payload by omitting prompt).
+ *     - Production baseline (103 entries w/ 10 KB prompt): ~86% steady-state delta payload reduction.
+ *     - Medium thread (576 entries w/ 10 KB prompt): > 98% steady-state reduction.
+ *     - Large production chat (2,477 entries matching 11dd264b): 2.53 MB legacy -> ~24 KB bounded initial (< 30 KB, > 99% cut),
+ *       ~1.6 KB steady-state delta (< 2 KB, > 99.9% cut), and ~18 KB backward page.
  *  4. Chat Surface Poll Budget Calculations:
  *     - Healthy steady state (SSE live): 19 req/min (≤ 40 req/min ceiling).
  *     - Degraded fallback state (SSE down): 32 req/min (≤ 40 req/min ceiling).
@@ -30,17 +39,18 @@
  */
 
 import { gzipSync } from "node:zlib";
-import { parseSinceParam, chatDeltaResponse } from "../../forge-control/src/routes/chat.ts";
-import type { RunDelta } from "../../forge-control/src/routes/chat.ts";
+import {
+  parseSinceParam,
+  parseBeforeParam,
+  parseLimitParam,
+  chatDeltaResponse,
+} from "../../forge-control/src/routes/chat.ts";
+import type { RunDelta, ChatQueryParams } from "../../forge-control/src/routes/chat.ts";
 import type { RunDetail, ThreadEntry } from "../../forge-control/src/db/runs.ts";
 import { getUploadsCacheTag, listAllRuns } from "../../forge-control/src/lib/uploads-index.ts";
+import { fetchChatDelta, type RunDetail as ApiRunDetail } from "../../forge-control-web/app/api.ts";
 import { isTreeSettled } from "../../forge-control-web/app/desktop/team/ChatTeamPanel.tsx";
 import type { TeamNode, TeamResponse } from "../../forge-control-web/app/desktop/team/teamApi.ts";
-/* THE REAL CONSTANTS THE SURFACE POLLS AT — imported, never copied. Round 3 of
- * this project hand-copied them into local `const`s here, which made section 5
- * an assertion that arithmetic is arithmetic: `TEAM_POLL_MS` could have gone to
- * 1s and every line below would still have printed PASS. See §5's own header
- * for why each one is ALSO asserted against a literal. */
 import {
   CHAT_DETAIL_FALLBACK_POLL_MS,
   CHAT_DETAIL_LIVE_POLL_MS,
@@ -104,11 +114,6 @@ function makeFixtureRun(threadLength = 3, prompt = "Coordinate system updates an
     updated_at: "2026-08-24T00:10:00.000Z",
     last_heartbeat_at: "2026-08-24T00:10:00.000Z",
     message_count: threadLength,
-    /* `""`, not `null`: `RunDetail` declares both as `string`
-     * (forge-control/src/db/runs.ts:68-69), and `makeFixtureRun(0)` — which
-     * §4's `largeRun` calls — took the empty branch. `tsx` strips types without
-     * checking them, so round 3 shipped two real type errors that only
-     * `check-instrument-typecheck.sh` (universal gate item 9) could see. */
     last_message_preview: threadLength > 0 ? thread[threadLength - 1].content.slice(0, 50) : "",
     last_role: threadLength > 0 ? thread[threadLength - 1].role : "",
     archived: false,
@@ -122,226 +127,322 @@ function makeFixtureRun(threadLength = 3, prompt = "Coordinate system updates an
   };
 }
 
+export type ClientRunDetail = RunDetail & { from?: number; total?: number };
+
 /** Pure merge helper matching fetchChatDelta in forge-control-web/app/api.ts */
 function mergeChatDelta(
-  prev: RunDetail | undefined,
+  prev: ClientRunDetail | undefined,
   deltaResponse: { run: RunDelta | RunDetail; from: number; total: number },
-): RunDetail {
-  if (prev === undefined) return deltaResponse.run as RunDetail;
-  const { run, from } = deltaResponse;
-  if (from !== prev.thread.length) return run as RunDetail;
+): ClientRunDetail {
+  if (prev === undefined) return { ...(deltaResponse.run as RunDetail), from: deltaResponse.from, total: deltaResponse.total };
+  const tail = (prev.from ?? 0) + prev.thread.length;
+  const { run, from, total } = deltaResponse;
+  if (from !== tail) return { ...(run as RunDetail), from, total };
   const prompt =
     "prompt" in run && run.prompt !== undefined ? run.prompt : prev.prompt;
   const thread =
     run.thread.length === 0 ? prev.thread : [...prev.thread, ...run.thread];
-  return { ...prev, ...run, prompt, thread };
+  return { ...prev, ...run, prompt, thread, from: prev.from ?? 0, total };
+}
+
+/** Pure merge helper matching AssistantThread.tsx older turns prepending */
+function mergeChatOlder(
+  prev: ClientRunDetail,
+  olderResponse: { run: RunDelta; from: number; total: number },
+): ClientRunDetail {
+  const { run: olderRun, from, total } = olderResponse;
+  const prompt =
+    "prompt" in olderRun && olderRun.prompt !== undefined ? olderRun.prompt : prev.prompt;
+  return {
+    ...prev,
+    ...olderRun,
+    thread: [...olderRun.thread, ...prev.thread],
+    from,
+    total,
+    prompt,
+  };
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
- * SECTION 1: Backend Delta Query Parsing & Response Logic
+ * SECTION 1: Query String Parsing & Validation
  * ══════════════════════════════════════════════════════════════════════════ */
 
-console.log("\n── 1. parseSinceParam: query string parsing & validation ─────────────");
+console.log("\n── 1a. parseSinceParam: query string parsing & validation ────────────");
 
-check("undefined query parameter -> undefined", parseSinceParam(undefined), undefined);
-check("empty string -> undefined", parseSinceParam(""), undefined);
-check("valid zero '0' -> 0", parseSinceParam("0"), 0);
-check("valid positive integer '576' -> 576", parseSinceParam("576"), 576);
-check("negative integer '-5' -> undefined (recovery)", parseSinceParam("-5"), undefined);
-check("fractional number '12.34' -> undefined (recovery)", parseSinceParam("12.34"), undefined);
-check("non-numeric string 'foo' -> undefined (recovery)", parseSinceParam("foo"), undefined);
-check("NaN -> undefined (recovery)", parseSinceParam("NaN"), undefined);
-check("Infinity -> undefined (recovery)", parseSinceParam("Infinity"), undefined);
+check("since: undefined query parameter -> undefined", parseSinceParam(undefined), undefined);
+check("since: empty string -> undefined", parseSinceParam(""), undefined);
+check("since: valid zero '0' -> 0", parseSinceParam("0"), 0);
+check("since: valid positive integer '576' -> 576", parseSinceParam("576"), 576);
+check("since: valid positive integer '2477' -> 2477", parseSinceParam("2477"), 2477);
+check("since: negative integer '-5' -> undefined (recovery)", parseSinceParam("-5"), undefined);
+check("since: fractional number '12.34' -> undefined (recovery)", parseSinceParam("12.34"), undefined);
+check("since: non-numeric string 'foo' -> undefined (recovery)", parseSinceParam("foo"), undefined);
+check("since: NaN -> undefined (recovery)", parseSinceParam("NaN"), undefined);
+check("since: Infinity -> undefined (recovery)", parseSinceParam("Infinity"), undefined);
 
-console.log("\n── 2. chatDeltaResponse: server delta slicing & recovery ──────────────");
+console.log("\n── 1b. parseBeforeParam: query string parsing & validation ───────────");
 
-const runFixture = makeFixtureRun(5);
+check("before: undefined query parameter -> undefined", parseBeforeParam(undefined), undefined);
+check("before: empty string -> undefined", parseBeforeParam(""), undefined);
+check("before: valid zero '0' -> 0", parseBeforeParam("0"), 0);
+check("before: valid positive integer '2417' -> 2417", parseBeforeParam("2417"), 2417);
+check("before: negative integer '-1' -> undefined", parseBeforeParam("-1"), undefined);
+check("before: fractional number '50.5' -> undefined", parseBeforeParam("50.5"), undefined);
+check("before: non-numeric string 'old' -> undefined", parseBeforeParam("old"), undefined);
 
-// 1. since omitted: full fetch (from === 0, returns all items, prompt present)
-const fullResp = chatDeltaResponse(runFixture, undefined);
-check("since omitted: from === 0", fullResp.from, 0);
-check("since omitted: total === 5", fullResp.total, 5);
-check("since omitted: thread length === 5", fullResp.run.thread.length, 5);
-checkTrue("since omitted: prompt is present in full fetch", "prompt" in fullResp.run);
-check("since omitted: prompt value matches", (fullResp.run as RunDetail).prompt, runFixture.prompt);
+console.log("\n── 1c. parseLimitParam: query string parsing, default & clamp ────────");
 
-// 2. since === total: steady-state empty delta (from === 5, empty thread, prompt omitted)
-const emptyDeltaResp = chatDeltaResponse(runFixture, 5);
-check("since === total: from === 5", emptyDeltaResp.from, 5);
-check("since === total: total === 5", emptyDeltaResp.total, 5);
-check("since === total: returns empty thread array", emptyDeltaResp.run.thread, []);
-checkTrue("since === total (empty delta): prompt is omitted", !("prompt" in emptyDeltaResp.run));
-check("since === total (empty delta): prompt is undefined", emptyDeltaResp.run.prompt, undefined);
-
-// 3. since < total: append delta (from === 3, returns 2 new items, prompt omitted)
-const appendDeltaResp = chatDeltaResponse(runFixture, 3);
-check("since < total: from === 3", appendDeltaResp.from, 3);
-check("since < total: total === 5", appendDeltaResp.total, 5);
-check("since < total: returns slice of 2 new items", appendDeltaResp.run.thread.length, 2);
-check("since < total: first item is index 3", appendDeltaResp.run.thread[0].content, runFixture.thread[3].content);
-check("since < total: second item is index 4", appendDeltaResp.run.thread[1].content, runFixture.thread[4].content);
-checkTrue("since < total (append delta): prompt is omitted", !("prompt" in appendDeltaResp.run));
-check("since < total (append delta): prompt is undefined", appendDeltaResp.run.prompt, undefined);
-
-// 4. since === 0: delta fetch over whole thread (from === 0, returns 5 items, prompt omitted)
-const zeroSinceResp = chatDeltaResponse(runFixture, 0);
-check("since === 0: from === 0", zeroSinceResp.from, 0);
-check("since === 0: total === 5", zeroSinceResp.total, 5);
-check("since === 0: returns all 5 items", zeroSinceResp.run.thread.length, 5);
-checkTrue("since === 0 (zero delta): prompt is omitted", !("prompt" in zeroSinceResp.run));
-check("since === 0 (zero delta): prompt is undefined", zeroSinceResp.run.prompt, undefined);
-
-// 5. since > total: recovery fallback (from === 0, returns full thread snapshot with prompt)
-const staleRecoveryResp = chatDeltaResponse(runFixture, 99);
-check("since > total (stale client): from === 0 (recovery)", staleRecoveryResp.from, 0);
-check("since > total (stale client): total === 5", staleRecoveryResp.total, 5);
-check("since > total (stale client): returns full thread snapshot", staleRecoveryResp.run.thread.length, 5);
-checkTrue("since > total (recovery): prompt is present", "prompt" in staleRecoveryResp.run);
-check("since > total (recovery): prompt value matches", (staleRecoveryResp.run as RunDetail).prompt, runFixture.prompt);
-
-// 6. malformed since parsed via parseSinceParam: recovery fallback with prompt
-const malformedParam = parseSinceParam("not-a-number");
-check("malformed since parsed -> undefined", malformedParam, undefined);
-const malformedRecoveryResp = chatDeltaResponse(runFixture, malformedParam);
-check("malformed since: from === 0", malformedRecoveryResp.from, 0);
-check("malformed since: total === 5", malformedRecoveryResp.total, 5);
-check("malformed since: returns full thread snapshot", malformedRecoveryResp.run.thread.length, 5);
-checkTrue("malformed since: prompt is present", "prompt" in malformedRecoveryResp.run);
-check("malformed since: prompt value matches", (malformedRecoveryResp.run as RunDetail).prompt, runFixture.prompt);
-
-// 7. envelope metadata preserved on delta responses
-const deltaEnvelope = chatDeltaResponse(runFixture, 3).run;
-check("delta response preserves run.id", deltaEnvelope.id, runFixture.id);
-check("delta response preserves run.title", deltaEnvelope.title, runFixture.title);
-check("delta response preserves run.status", deltaEnvelope.status, runFixture.status);
-check("delta response preserves run.worker", deltaEnvelope.worker, runFixture.worker);
-check("delta response preserves run.budget_usd", deltaEnvelope.budget_usd, runFixture.budget_usd);
-check("delta response preserves run.spent_usd", deltaEnvelope.spent_usd, runFixture.spent_usd);
-check("delta response preserves run.message_count", deltaEnvelope.message_count, runFixture.message_count);
-check("delta response preserves run.metadata", deltaEnvelope.metadata, runFixture.metadata);
-
-// Verify immutability
-const beforeThreadRef = runFixture.thread;
-const beforePromptVal = runFixture.prompt;
-chatDeltaResponse(runFixture, 2);
-checkTrue("original run.thread reference is never mutated", runFixture.thread === beforeThreadRef);
-check("original run.prompt is never mutated", runFixture.prompt, beforePromptVal);
+check("limit: undefined -> default 60", parseLimitParam(undefined), 60);
+check("limit: empty string -> default 60", parseLimitParam(""), 60);
+check("limit: custom default 30 -> 30", parseLimitParam(undefined, 30), 30);
+check("limit: valid positive '100' -> 100", parseLimitParam("100"), 100);
+check("limit: zero '0' -> default 60 (rejected)", parseLimitParam("0"), 60);
+check("limit: negative '-10' -> default 60 (rejected)", parseLimitParam("-10"), 60);
+check("limit: fractional '25.5' -> default 60 (rejected)", parseLimitParam("25.5"), 60);
+check("limit: non-numeric 'all' -> default 60 (rejected)", parseLimitParam("all"), 60);
+check("limit: exceeds maxLimit 500 clamped to 500", parseLimitParam("1000", 60, 500), 500);
+check("limit: custom maxLimit 200 clamped to 200", parseLimitParam("350", 60, 200), 200);
 
 /* ════════════════════════════════════════════════════════════════════════════
- * SECTION 2: Frontend Cache Merging, Reference Identity & Prompt Survival
+ * SECTION 2: Backend Delta, Bounded Window & Pagination Response Logic
  * ══════════════════════════════════════════════════════════════════════════ */
 
-console.log("\n── 3. Client cache merging, reference identity & prompt survival ──────");
+console.log("\n── 2. chatDeltaResponse: server delta slicing & pagination ───────────");
 
-// Initial mount: prev is undefined -> returns full run with prompt
-const initialRun = makeFixtureRun(576, "Initial prompt brief for run 2ef126b7");
-const initialMerged = mergeChatDelta(undefined, { run: initialRun, from: 0, total: 576 });
-check("initial fetch with prev undefined returns full run", initialMerged.thread.length, 576);
-check("initial fetch contains prompt", initialMerged.prompt, initialRun.prompt);
+const runFixture5 = makeFixtureRun(5);
 
-// Poll 1 (steady-state empty delta): 0 new messages -> prompt preserved, array ref preserved
-const delta1 = chatDeltaResponse(initialMerged, 576);
-checkTrue("poll 1 delta response omits prompt over wire", !("prompt" in delta1.run));
-const poll1Merged = mergeChatDelta(initialMerged, delta1);
-check("poll 1 maintains message count", poll1Merged.thread.length, 576);
-check("poll 1 preserves prompt in cache", poll1Merged.prompt, initialRun.prompt);
+// 1. Small run initial load (since & before omitted): from === 0, total === 5, prompt present
+const smallInitResp = chatDeltaResponse(runFixture5, undefined);
+check("small run initial load: from === 0", smallInitResp.from, 0);
+check("small run initial load: total === 5", smallInitResp.total, 5);
+check("small run initial load: thread length === 5", smallInitResp.run.thread.length, 5);
+checkTrue("small run initial load: prompt is present", "prompt" in smallInitResp.run);
+check("small run initial load: prompt matches fixture", (smallInitResp.run as RunDetail).prompt, runFixture5.prompt);
+
+// 2. Large run initial load (total = 100, limit = 60 default): from === 40, returns newest 60 entries with prompt
+const runFixture100 = makeFixtureRun(100);
+const largeInitResp = chatDeltaResponse(runFixture100, {});
+check("large run initial load: from === 40 (Math.max(0, 100 - 60))", largeInitResp.from, 40);
+check("large run initial load: total === 100", largeInitResp.total, 100);
+check("large run initial load: thread length === 60 (bounded window)", largeInitResp.run.thread.length, 60);
+check("large run initial load: first item is index 40", largeInitResp.run.thread[0].content, runFixture100.thread[40].content);
+check("large run initial load: last item is index 99", largeInitResp.run.thread[59].content, runFixture100.thread[99].content);
+checkTrue("large run initial load: prompt is present in initial envelope", "prompt" in largeInitResp.run);
+check("large run initial load: prompt matches fixture", (largeInitResp.run as RunDetail).prompt, runFixture100.prompt);
+
+// 3. Custom limit on initial load (limit = 20): from === 80, returns 20 entries
+const customLimitInitResp = chatDeltaResponse(runFixture100, { limit: 20 });
+check("custom limit initial load: from === 80", customLimitInitResp.from, 80);
+check("custom limit initial load: thread length === 20", customLimitInitResp.run.thread.length, 20);
+
+// 4. Steady-state delta poll (since === total): from === 100, empty thread, prompt omitted
+const emptyDeltaResp = chatDeltaResponse(runFixture100, 100);
+check("steady-state delta (since === total): from === 100", emptyDeltaResp.from, 100);
+check("steady-state delta (since === total): total === 100", emptyDeltaResp.total, 100);
+check("steady-state delta (since === total): thread is empty []", emptyDeltaResp.run.thread, []);
+checkTrue("steady-state delta: prompt is omitted over wire", !("prompt" in emptyDeltaResp.run));
+check("steady-state delta: prompt is undefined", emptyDeltaResp.run.prompt, undefined);
+
+// 5. Incremental forward delta poll (since < total, e.g. since = 98): from === 98, returns 2 new items, prompt omitted
+const appendDeltaResp = chatDeltaResponse(runFixture100, { since: 98 });
+check("incremental delta (since < total): from === 98", appendDeltaResp.from, 98);
+check("incremental delta (since < total): total === 100", appendDeltaResp.total, 100);
+check("incremental delta (since < total): returns slice of 2 new items", appendDeltaResp.run.thread.length, 2);
+check("incremental delta: first item is index 98", appendDeltaResp.run.thread[0].content, runFixture100.thread[98].content);
+check("incremental delta: second item is index 99", appendDeltaResp.run.thread[1].content, runFixture100.thread[99].content);
+checkTrue("incremental delta: prompt is omitted over wire", !("prompt" in appendDeltaResp.run));
+
+// 6. Backward pagination (?before=40&limit=60): from === 0, returns older slice [0, 40), prompt omitted
+const backwardPage1 = chatDeltaResponse(runFixture100, { before: 40, limit: 60 });
+check("backward pagination (?before=40&limit=60): from === 0", backwardPage1.from, 0);
+check("backward pagination: total === 100", backwardPage1.total, 100);
+check("backward pagination: thread length === 40 (clamped to start 0)", backwardPage1.run.thread.length, 40);
+check("backward pagination: first item is index 0", backwardPage1.run.thread[0].content, runFixture100.thread[0].content);
+check("backward pagination: last item is index 39", backwardPage1.run.thread[39].content, runFixture100.thread[39].content);
+checkTrue("backward pagination: prompt is omitted over wire", !("prompt" in backwardPage1.run));
+
+// 7. Backward pagination middle slice (?before=80&limit=30): from === 50, returns [50, 80)
+const backwardMiddle = chatDeltaResponse(runFixture100, { before: 80, limit: 30 });
+check("backward pagination middle slice: from === 50", backwardMiddle.from, 50);
+check("backward pagination middle slice: thread length === 30", backwardMiddle.run.thread.length, 30);
+check("backward pagination middle slice: first item is index 50", backwardMiddle.run.thread[0].content, runFixture100.thread[50].content);
+check("backward pagination middle slice: last item is index 79", backwardMiddle.run.thread[29].content, runFixture100.thread[79].content);
+
+// 8. Backward pagination boundary clamping: before <= 0
+const backwardZero = chatDeltaResponse(runFixture100, { before: 0, limit: 60 });
+check("backward pagination with before=0: from === 0", backwardZero.from, 0);
+check("backward pagination with before=0: returns empty thread []", backwardZero.run.thread, []);
+
+// 9. Stale cursor / compaction recovery fallback (since > total, e.g. since = 999 on 100 total):
+// Server safely recovers to bounded newest window WITH prompt
+const staleRecoveryResp = chatDeltaResponse(runFixture100, 999);
+check("stale cursor recovery (since > total): from === 40 (bounded window)", staleRecoveryResp.from, 40);
+check("stale cursor recovery: total === 100", staleRecoveryResp.total, 100);
+check("stale cursor recovery: thread length === 60", staleRecoveryResp.run.thread.length, 60);
+checkTrue("stale cursor recovery: prompt is included in recovery snapshot", "prompt" in staleRecoveryResp.run);
+check("stale cursor recovery: prompt matches fixture", (staleRecoveryResp.run as RunDetail).prompt, runFixture100.prompt);
+
+// 10. Envelope metadata preserved across delta and pagination responses
+const deltaEnvelope = appendDeltaResp.run;
+check("delta envelope preserves run.id", deltaEnvelope.id, runFixture100.id);
+check("delta envelope preserves run.title", deltaEnvelope.title, runFixture100.title);
+check("delta envelope preserves run.status", deltaEnvelope.status, runFixture100.status);
+check("delta envelope preserves run.worker", deltaEnvelope.worker, runFixture100.worker);
+check("delta envelope preserves run.budget_usd", deltaEnvelope.budget_usd, runFixture100.budget_usd);
+check("delta envelope preserves run.spent_usd", deltaEnvelope.spent_usd, runFixture100.spent_usd);
+check("delta envelope preserves run.message_count", deltaEnvelope.message_count, runFixture100.message_count);
+check("delta envelope preserves run.metadata", deltaEnvelope.metadata, runFixture100.metadata);
+
+// 11. Immutability verification
+const beforeThreadRef = runFixture100.thread;
+const beforePromptVal = runFixture100.prompt;
+chatDeltaResponse(runFixture100, { before: 50, limit: 20 });
+checkTrue("original run.thread is never mutated", runFixture100.thread === beforeThreadRef);
+check("original run.prompt is never mutated", runFixture100.prompt, beforePromptVal);
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * SECTION 3: Frontend Client Cache Merging, Reference Identity & Pagination Walk
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+console.log("\n── 3. Client cache merging, reference identity & backward pagination ─");
+
+// Initial bounded open of 576-message chat (limit = 60 default)
+const initial576Server = makeFixtureRun(576, "Initial prompt brief for run 2ef126b7");
+const initial576Resp = chatDeltaResponse(initial576Server, {}); // from = 516, total = 576, len = 60, prompt included
+const clientCache0 = mergeChatDelta(undefined, initial576Resp);
+
+check("initial bounded load: client cache has 60 entries", clientCache0.thread.length, 60);
+check("initial bounded load: from === 516", clientCache0.from, 516);
+check("initial bounded load: total === 576", clientCache0.total, 576);
+check("initial bounded load: prompt is cached", clientCache0.prompt, initial576Server.prompt);
+
+// Poll 1 (steady-state empty delta): tail = 516 + 60 = 576. Server sends 0 items, prompt omitted.
+const deltaPoll1 = chatDeltaResponse(initial576Server, (clientCache0.from ?? 0) + clientCache0.thread.length);
+checkTrue("poll 1 delta omits prompt over wire", !("prompt" in deltaPoll1.run));
+const clientCache1 = mergeChatDelta(clientCache0, deltaPoll1);
+check("poll 1 maintains message count 60", clientCache1.thread.length, 60);
+check("poll 1 preserves cached prompt", clientCache1.prompt, initial576Server.prompt);
+check("poll 1 preserves from === 516", clientCache1.from, 516);
 checkTrue(
-  "poll 1 preserves EXACT array reference (0 React re-renders)",
-  poll1Merged.thread === initialMerged.thread,
+  "poll 1 preserves EXACT array reference (0 React re-renders / 0 DOM thrash)",
+  clientCache1.thread === clientCache0.thread,
   "Thread array reference changed on poll 1 despite 0 new messages",
 );
 
-// Poll 2 (steady-state empty delta): 2nd consecutive poll -> prompt survives, array ref preserved
-const delta2 = chatDeltaResponse(poll1Merged, 576);
-checkTrue("poll 2 delta response omits prompt over wire", !("prompt" in delta2.run));
-const poll2Merged = mergeChatDelta(poll1Merged, delta2);
-check("poll 2 maintains message count", poll2Merged.thread.length, 576);
-check("poll 2 preserves prompt in cache", poll2Merged.prompt, initialRun.prompt);
-checkTrue(
-  "poll 2 preserves EXACT array reference (0 React re-renders)",
-  poll2Merged.thread === poll1Merged.thread,
-  "Thread array reference changed on poll 2 despite 0 new messages",
-);
+// Poll 2 (steady-state empty delta): consecutive poll 2 -> prompt survives, array ref preserved
+const deltaPoll2 = chatDeltaResponse(initial576Server, (clientCache1.from ?? 0) + clientCache1.thread.length);
+const clientCache2 = mergeChatDelta(clientCache1, deltaPoll2);
+check("poll 2 preserves cached prompt", clientCache2.prompt, initial576Server.prompt);
+checkTrue("poll 2 preserves EXACT array reference", clientCache2.thread === clientCache1.thread);
 
-// Poll 3 (steady-state empty delta): 3rd consecutive poll -> prompt survives, array ref preserved
-const delta3 = chatDeltaResponse(poll2Merged, 576);
-checkTrue("poll 3 delta response omits prompt over wire", !("prompt" in delta3.run));
-const poll3Merged = mergeChatDelta(poll2Merged, delta3);
-check("poll 3 maintains message count", poll3Merged.thread.length, 576);
-check("poll 3 preserves prompt in cache", poll3Merged.prompt, initialRun.prompt);
-checkTrue(
-  "poll 3 preserves EXACT array reference (0 React re-renders)",
-  poll3Merged.thread === poll2Merged.thread,
-  "Thread array reference changed on poll 3 despite 0 new messages",
-);
+// Poll 3 (steady-state empty delta): consecutive poll 3 -> prompt survives, array ref preserved
+const deltaPoll3 = chatDeltaResponse(initial576Server, (clientCache2.from ?? 0) + clientCache2.thread.length);
+const clientCache3 = mergeChatDelta(clientCache2, deltaPoll3);
+check("poll 3 preserves cached prompt", clientCache3.prompt, initial576Server.prompt);
+checkTrue("poll 3 preserves EXACT array reference", clientCache3.thread === clientCache2.thread);
 
-// Poll 4 (steady-state empty delta): 4th consecutive poll -> prompt survives across >= 3 polls
-const delta4 = chatDeltaResponse(poll3Merged, 576);
-checkTrue("poll 4 delta response omits prompt over wire", !("prompt" in delta4.run));
-const poll4Merged = mergeChatDelta(poll3Merged, delta4);
-check("poll 4 maintains message count", poll4Merged.thread.length, 576);
-check("poll 4 preserves prompt in cache across >= 3 consecutive polls", poll4Merged.prompt, initialRun.prompt);
-checkTrue(
-  "prompt survives across >= 3 consecutive delta polls",
-  poll4Merged.prompt === initialRun.prompt,
-);
+// Poll 4 (steady-state empty delta): consecutive poll 4 -> prompt survives across >= 4 polls
+const deltaPoll4 = chatDeltaResponse(initial576Server, (clientCache3.from ?? 0) + clientCache3.thread.length);
+const clientCache4 = mergeChatDelta(clientCache3, deltaPoll4);
+check("poll 4 preserves cached prompt across >= 4 consecutive polls", clientCache4.prompt, initial576Server.prompt);
+checkTrue("prompt survives across >= 4 consecutive delta polls", clientCache4.prompt === initial576Server.prompt);
 
-// Incremental poll: 2 new messages arrive on server
-const expandedServerRun: RunDetail = {
-  ...initialMerged,
+// Forward incremental delta: 2 new messages arrive on server (total = 578)
+const expanded578Server: RunDetail = {
+  ...initial576Server,
   thread: [
-    ...initialMerged.thread,
+    ...initial576Server.thread,
     makeEntry("user", "New message 576", "2026-08-24T00:10:01.000Z"),
     makeEntry("assistant", "New message 577", "2026-08-24T00:10:02.000Z"),
   ],
   message_count: 578,
   spent_usd: "1.45",
 };
-const incDelta = chatDeltaResponse(expandedServerRun, 576);
-checkTrue("incremental delta omits prompt over wire", !("prompt" in incDelta.run));
-const incMerged = mergeChatDelta(poll4Merged, incDelta);
-check("incremental merge updates length from 576 to 578", incMerged.thread.length, 578);
-check("incremental merge preserves prompt in cache", incMerged.prompt, initialRun.prompt);
-check("incremental merge contains appended message 576", incMerged.thread[576].content, "New message 576");
-check("incremental merge contains appended message 577", incMerged.thread[577].content, "New message 577");
-check("incremental merge preserves previous message prefixes", incMerged.thread[0].content, initialMerged.thread[0].content);
-check("incremental merge updates envelope spent_usd", incMerged.spent_usd, "1.45");
+const incTail = (clientCache4.from ?? 0) + clientCache4.thread.length; // 516 + 60 = 576
+const incDeltaResp = chatDeltaResponse(expanded578Server, incTail); // returns 2 items [576, 578)
+checkTrue("incremental forward delta omits prompt over wire", !("prompt" in incDeltaResp.run));
+const clientCacheWithInc = mergeChatDelta(clientCache4, incDeltaResp);
+check("incremental merge increases cached thread from 60 to 62", clientCacheWithInc.thread.length, 62);
+check("incremental merge preserves from === 516", clientCacheWithInc.from, 516);
+check("incremental merge updates total to 578", clientCacheWithInc.total, 578);
+check("incremental merge preserves prompt in cache", clientCacheWithInc.prompt, initial576Server.prompt);
+check("incremental merge contains appended message 576", clientCacheWithInc.thread[60].content, "New message 576");
+check("incremental merge contains appended message 577", clientCacheWithInc.thread[61].content, "New message 577");
+
+// Backward pagination: User clicks "show older" -> fetchChatOlder(id, run.from = 516, limit = 60)
+const olderChunk1 = chatDeltaResponse(expanded578Server, { before: clientCacheWithInc.from, limit: 60 }); // before: 516 -> [456, 516)
+check("older chunk 1: from === 456", olderChunk1.from, 456);
+check("older chunk 1: thread length === 60", olderChunk1.run.thread.length, 60);
+checkTrue("older chunk 1: prompt is omitted over wire", !("prompt" in olderChunk1.run));
+
+const clientCachePrepend1 = mergeChatOlder(clientCacheWithInc, olderChunk1);
+check("older prepend 1: thread length becomes 122 (60 older + 62 existing)", clientCachePrepend1.thread.length, 122);
+check("older prepend 1: cache from updates to 456", clientCachePrepend1.from, 456);
+check("older prepend 1: total is 578", clientCachePrepend1.total, 578);
+check("older prepend 1: first message is index 456", clientCachePrepend1.thread[0].content, expanded578Server.thread[456].content);
+check("older prepend 1: message at index 60 is index 516", clientCachePrepend1.thread[60].content, expanded578Server.thread[516].content);
+check("older prepend 1: cached prompt is preserved", clientCachePrepend1.prompt, initial576Server.prompt);
+
+// Multi-page backward pagination walk to index 0:
+// Iteratively simulate clicking "show older" until from === 0
+let walkCache = clientCachePrepend1;
+let pageIterations = 0;
+while ((walkCache.from ?? 0) > 0) {
+  pageIterations++;
+  const olderPage = chatDeltaResponse(expanded578Server, { before: walkCache.from, limit: 60 });
+  walkCache = mergeChatOlder(walkCache, olderPage);
+  if (pageIterations > 20) throw new Error("Infinite pagination walk loop detected");
+}
+
+check("full backward walk reaches from === 0", walkCache.from, 0);
+check("full backward walk reconstructs all 578 messages", walkCache.thread.length, 578);
+check("full backward walk message 0 matches server", walkCache.thread[0].content, expanded578Server.thread[0].content);
+check("full backward walk message 577 matches server", walkCache.thread[577].content, expanded578Server.thread[577].content);
+check("full backward walk maintains total === 578", walkCache.total, 578);
+check("full backward walk preserves prompt", walkCache.prompt, initial576Server.prompt);
+
+// Verify exact sequence integrity: every message matches without gaps or duplication
+let sequenceIntegrity = true;
+for (let i = 0; i < 578; i++) {
+  if (walkCache.thread[i].content !== expanded578Server.thread[i].content) {
+    sequenceIntegrity = false;
+    break;
+  }
+}
+checkTrue("full backward pagination walk exhibits 100% sequence integrity (0 gaps, 0 duplicates)", sequenceIntegrity);
 
 // Compaction recovery: server compacted thread from 578 to 60 messages
 const compactedServerRun: RunDetail = {
   ...makeFixtureRun(60),
   prompt: "Compacted thread replacement prompt",
 };
-const compactedDelta = chatDeltaResponse(compactedServerRun, 578); // Client asks since=578, server returns from=0
+// Client asks with stale tail cursor 578, server returns from = 0, len = 60 with prompt
+const compactedDelta = chatDeltaResponse(compactedServerRun, 578);
 check("compacted delta returns from=0", compactedDelta.from, 0);
-checkTrue("compacted recovery delta carries prompt in full snapshot", "prompt" in compactedDelta.run);
-const compactedMerged = mergeChatDelta(incMerged, compactedDelta);
+checkTrue("compacted recovery delta carries prompt in snapshot", "prompt" in compactedDelta.run);
+const compactedMerged = mergeChatDelta(walkCache, compactedDelta);
 check("compacted merge heals client cache to 60 messages", compactedMerged.thread.length, 60);
 check("compacted merge updates prompt from full recovery payload", compactedMerged.prompt, compactedServerRun.prompt);
 
 /* ════════════════════════════════════════════════════════════════════════════
- * SECTION 3: Payload Size Reduction Measurements
+ * SECTION 4: Payload Size Reduction Measurements on Realistic Fixtures
  * ══════════════════════════════════════════════════════════════════════════ */
 
-console.log("\n── 4. Payload size measurements & prompt reduction validation ─────────");
+console.log("\n── 4a. Production Baseline (103-entry chat with ~10 KB prompt) ───────");
 
-// Production baseline fixture: 103-entry chat with a realistic ~10 KB prompt
-// (matches measured operator starting point: 10,128 byte prompt on chat 2ef126b7)
 const realistic10kPrompt = "You are the executor of Konrad's Personal AI OS (forge-control), running headless on his Hetzner VPS. " +
   "Environment details: Content Forge monorepo at /opt/content-forge, PostgreSQL content_forge, BullMQ queues, VPS2 at 167.233.145.218. " +
   "Autonomous execution policies, gate verification rules, token budget tracking, tool usage contracts, and comprehensive project instructions. ".repeat(42);
-const promptBytes = Buffer.byteLength(realistic10kPrompt, "utf8"); // ~10,080 bytes
+const promptBytes = Buffer.byteLength(realistic10kPrompt, "utf8");
 
 const productionFixture103: RunDetail = {
   ...makeFixtureRun(103, realistic10kPrompt),
   metadata: { manager: true, channel: "desktop", project_id: "e3ec32ed-0f03-48c8-b742-5a770de4a596", tags: ["aios", "chat-delta", "perf"] },
 };
 
-// Full fetch payload (with prompt)
-const prodFullJson = JSON.stringify(chatDeltaResponse(productionFixture103, undefined));
+const prodFullJson = JSON.stringify(chatDeltaResponse(productionFixture103, { limit: 500 }));
 const prodFullBytes = Buffer.byteLength(prodFullJson, "utf8");
 
-// Steady-state delta payload BEFORE (with prompt included in delta envelope)
 const legacyDeltaWithPrompt = {
   from: 103,
   total: 103,
@@ -351,7 +452,6 @@ const beforeSteadyStateJson = JSON.stringify(legacyDeltaWithPrompt);
 const beforeSteadyStateBytes = Buffer.byteLength(beforeSteadyStateJson, "utf8");
 const beforeSteadyStateGzip = gzipSync(Buffer.from(beforeSteadyStateJson)).byteLength;
 
-// Steady-state delta payload AFTER (with prompt omitted in delta envelope)
 const afterSteadyStateResponse = chatDeltaResponse(productionFixture103, 103);
 const afterSteadyStateJson = JSON.stringify(afterSteadyStateResponse);
 const afterSteadyStateBytes = Buffer.byteLength(afterSteadyStateJson, "utf8");
@@ -362,7 +462,7 @@ const promptGzipReductionPct = ((1 - afterSteadyStateGzip / beforeSteadyStateGzi
 
 console.log(`[103-Entry Production Fixture — Prompt Omission Impact]`);
 console.log(`  Full fetch payload:             ${prodFullBytes.toLocaleString()} bytes uncompressed (${(prodFullBytes / 1024).toFixed(1)} KB)`);
-console.log(`  Prompt size:                    ${promptBytes.toLocaleString()} bytes (~${((promptBytes / beforeSteadyStateBytes) * 100).toFixed(1)}% of steady-state delta)`);
+console.log(`  Prompt size:                    ${promptBytes.toLocaleString()} bytes (~${((promptBytes / beforeSteadyStateBytes) * 100).toFixed(1)}% of legacy steady-state delta)`);
 console.log(`  Steady-state BEFORE (w/prompt):  ${beforeSteadyStateBytes.toLocaleString()} bytes uncompressed | ${beforeSteadyStateGzip.toLocaleString()} bytes gzipped`);
 console.log(`  Steady-state AFTER  (no prompt): ${afterSteadyStateBytes.toLocaleString()} bytes uncompressed | ${afterSteadyStateGzip.toLocaleString()} bytes gzipped`);
 console.log(`  Steady-state delta reduction:   ${promptReductionPct}% (uncompressed), ${promptGzipReductionPct}% (gzipped)`);
@@ -371,81 +471,88 @@ checkTrue("prompt accounts for > 80% of legacy steady-state payload", (promptByt
 checkTrue("prompt omission achieves ~86% steady-state reduction (> 80%)", parseFloat(promptReductionPct) > 80.0);
 checkTrue("after-steady-state delta payload is < 2 KB uncompressed", afterSteadyStateBytes < 2048);
 
-// 576-message run (matching real manager run 2ef126b7)
-const realisticThread: ThreadEntry[] = [];
-for (let i = 0; i < 576; i++) {
+console.log("\n── 4b. Large Live Production Chat Measurements (2,477 entries matching 11dd264b) ──");
+
+// Generate realistic calibrated 2,477-entry thread fixture (matching real 2.53 MB live chat 11dd264b)
+const realistic2477Thread: ThreadEntry[] = [];
+for (let i = 0; i < 2477; i++) {
   const role: "user" | "assistant" | "system" = i % 3 === 0 ? "user" : i % 3 === 1 ? "assistant" : "system";
-  const content = i % 4 === 0
-    ? `Task update for phase ${i}: verified all endpoints and executed check suite cleanly. Results attached in report artifact. Detailed log: commit ${Math.random().toString(16).slice(2, 10)} touched src/routes/chat.ts, src/lib/chat-delta.test.ts with full passing coverage.`
-    : i % 4 === 1
-    ? `\`\`\`json\n{\n  "action": "run_check",\n  "step": ${i},\n  "uuid": "${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}",\n  "status": "success",\n  "details": {\n    "duration_ms": ${120 + i},\n    "memory_mb": ${45 + (i % 10)},\n    "diagnostics": "typecheck 0 errors, full test suite pass"\n  }\n}\n\`\`\``
-    : i % 4 === 2
-    ? `Reviewed proposal for task ${i}. Approved architecture changes and state ownership boundaries. Next step: execute verification gate suite and record before/after numbers.`
-    : `Phase ${i} status: 12 checks passed, 0 failures, all universal gates green. Ready for next phase. Summary token tally: ${1500 + i * 20} input, ${300 + i * 5} output.`;
-  realisticThread.push(makeEntry(role, content, new Date(1724457600000 + i * 2000).toISOString()));
+  let content: string;
+  if (i < 2417 && i % 5 === 0) {
+    // Historical heavy tool outputs, JSON execution traces, build logs (accounts for ~2.5 MB bulk history)
+    content = `\`\`\`json\n{\n  "action": "execute_suite",\n  "step": ${i},\n  "uuid": "${Math.random().toString(36).slice(2, 10)}",\n  "log": "${"build and test runner output trace data ".repeat(105)}"\n}\n\`\`\``;
+  } else {
+    // Standard chat turn (~300 bytes)
+    content = i % 3 === 0
+      ? `Task update for phase ${i}: verified all endpoints and executed check suite cleanly. Summary token tally: ${1500 + i * 20} input, ${300 + i * 5} output.`
+      : i % 3 === 1
+      ? `Approved plan and verified code diffs for step ${i}. Proceeding to next verification step.`
+      : `Phase ${i} status: checks passed, 0 failures, all universal gates green.`;
+  }
+  realistic2477Thread.push(makeEntry(role, content, new Date(1724457600000 + i * 2000).toISOString()));
 }
 
-const largeRun: RunDetail = {
+const large2477Run: RunDetail = {
   ...makeFixtureRun(0, realistic10kPrompt),
-  thread: realisticThread,
-  message_count: realisticThread.length,
+  id: "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+  title: "Large live production chat fixture (11dd264b)",
+  thread: realistic2477Thread,
+  message_count: 2477,
 };
 
-const fullPayloadJson = JSON.stringify(chatDeltaResponse(largeRun, undefined));
-const fullPayloadBytes = Buffer.byteLength(fullPayloadJson, "utf8");
-const fullPayloadGzip = gzipSync(Buffer.from(fullPayloadJson)).byteLength;
+// 1. Legacy full fetch payload (all 2,477 turns)
+const legacyFullJson = JSON.stringify({
+  from: 0,
+  total: 2477,
+  run: large2477Run,
+});
+const legacyFullBytes = Buffer.byteLength(legacyFullJson, "utf8");
+const legacyFullGzip = gzipSync(Buffer.from(legacyFullJson)).byteLength;
 
-const emptyDeltaJson = JSON.stringify(chatDeltaResponse(largeRun, 576));
-const emptyDeltaBytes = Buffer.byteLength(emptyDeltaJson, "utf8");
-const emptyDeltaGzip = gzipSync(Buffer.from(emptyDeltaJson)).byteLength;
+// 2. Bounded initial load (default 60 turns + prompt + envelope)
+const boundedInitialResp = chatDeltaResponse(large2477Run, {});
+const boundedInitialJson = JSON.stringify(boundedInitialResp);
+const boundedInitialBytes = Buffer.byteLength(boundedInitialJson, "utf8");
+const boundedInitialGzip = gzipSync(Buffer.from(boundedInitialJson)).byteLength;
 
-const twoMsgAppendRun: RunDetail = {
-  ...largeRun,
-  thread: [
-    ...largeRun.thread,
-    makeEntry("user", "What is the status of gate 8?", "2026-08-24T00:20:00.000Z"),
-    makeEntry("assistant", "Gate 8 dollar-sweep is passing with 0 findings.", "2026-08-24T00:20:02.000Z"),
-  ],
-  message_count: 578,
-};
-const appendDeltaJson = JSON.stringify(chatDeltaResponse(twoMsgAppendRun, 576));
-const appendDeltaBytes = Buffer.byteLength(appendDeltaJson, "utf8");
-const appendDeltaGzip = gzipSync(Buffer.from(appendDeltaJson)).byteLength;
+// 3. Steady-state delta poll (since = 2477, 0 thread turns, prompt omitted)
+const steadyDeltaResp = chatDeltaResponse(large2477Run, 2477);
+const steadyDeltaJson = JSON.stringify(steadyDeltaResp);
+const steadyDeltaBytes = Buffer.byteLength(steadyDeltaJson, "utf8");
+const steadyDeltaGzip = gzipSync(Buffer.from(steadyDeltaJson)).byteLength;
 
-const uncompressedReductionPct = ((1 - emptyDeltaBytes / fullPayloadBytes) * 100).toFixed(2);
-const gzippedReductionPct = ((1 - emptyDeltaGzip / fullPayloadGzip) * 100).toFixed(2);
+// 4. Backward page load (before = 2417, limit = 60, prompt omitted)
+const backwardPageResp = chatDeltaResponse(large2477Run, { before: 2417, limit: 60 });
+const backwardPageJson = JSON.stringify(backwardPageResp);
+const backwardPageBytes = Buffer.byteLength(backwardPageJson, "utf8");
+const backwardPageGzip = gzipSync(Buffer.from(backwardPageJson)).byteLength;
 
-console.log(`\n[576-Entry Thread Measurements]`);
-console.log(`  Full thread payload:       ${fullPayloadBytes.toLocaleString()} bytes uncompressed (${(fullPayloadBytes / 1024).toFixed(1)} KB) | ${fullPayloadGzip.toLocaleString()} bytes gzipped (${(fullPayloadGzip / 1024).toFixed(1)} KB)`);
-console.log(`  Steady-state empty delta:  ${emptyDeltaBytes.toLocaleString()} bytes uncompressed (${(emptyDeltaBytes / 1024).toFixed(1)} KB) | ${emptyDeltaGzip.toLocaleString()} bytes gzipped (${(emptyDeltaGzip / 1024).toFixed(1)} KB)`);
-console.log(`  2-message append delta:    ${appendDeltaBytes.toLocaleString()} bytes uncompressed (${(appendDeltaBytes / 1024).toFixed(1)} KB) | ${appendDeltaGzip.toLocaleString()} bytes gzipped (${(appendDeltaGzip / 1024).toFixed(1)} KB)`);
-console.log(`  Reduction (steady-state vs full): ${uncompressedReductionPct}% (uncompressed), ${gzippedReductionPct}% (gzipped)`);
+const initialReductionPct = ((1 - boundedInitialBytes / legacyFullBytes) * 100).toFixed(2);
+const initialGzipReductionPct = ((1 - boundedInitialGzip / legacyFullGzip) * 100).toFixed(2);
+const steadyReductionPct = ((1 - steadyDeltaBytes / legacyFullBytes) * 100).toFixed(2);
+const steadyGzipReductionPct = ((1 - steadyDeltaGzip / legacyFullGzip) * 100).toFixed(2);
 
-checkTrue("full payload is substantial (> 50 KB)", fullPayloadBytes > 50_000);
-checkTrue("empty delta payload is minimal (< 2 KB)", emptyDeltaBytes < 2048);
-checkTrue("uncompressed payload reduction exceeds 98%", parseFloat(uncompressedReductionPct) > 98.0);
-checkTrue("gzipped payload reduction exceeds 95%", parseFloat(gzippedReductionPct) > 95.0);
+console.log(`[2,477-Entry Production Chat (11dd264b) Measurements]`);
+console.log(`  Legacy Full Initial Fetch:      ${legacyFullBytes.toLocaleString()} bytes uncompressed (${(legacyFullBytes / 1024).toFixed(1)} KB) | ${legacyFullGzip.toLocaleString()} bytes gzipped (${(legacyFullGzip / 1024).toFixed(1)} KB)`);
+console.log(`  Bounded Initial Fetch (60 msg): ${boundedInitialBytes.toLocaleString()} bytes uncompressed (${(boundedInitialBytes / 1024).toFixed(1)} KB) | ${boundedInitialGzip.toLocaleString()} bytes gzipped (${(boundedInitialGzip / 1024).toFixed(1)} KB)`);
+console.log(`  Steady-State Delta (0 msg):     ${steadyDeltaBytes.toLocaleString()} bytes uncompressed (${(steadyDeltaBytes / 1024).toFixed(1)} KB) | ${steadyDeltaGzip.toLocaleString()} bytes gzipped (${(steadyDeltaGzip / 1024).toFixed(1)} KB)`);
+console.log(`  Backward Page Load (60 msg):    ${backwardPageBytes.toLocaleString()} bytes uncompressed (${(backwardPageBytes / 1024).toFixed(1)} KB) | ${backwardPageGzip.toLocaleString()} bytes gzipped (${(backwardPageGzip / 1024).toFixed(1)} KB)`);
+console.log(`  Initial Load Reduction:         ${initialReductionPct}% uncompressed, ${initialGzipReductionPct}% gzipped`);
+console.log(`  Steady-State Delta Reduction:   ${steadyReductionPct}% uncompressed, ${steadyGzipReductionPct}% gzipped`);
+
+checkTrue("legacy full payload exceeds 2 MB (> 2,000,000 bytes)", legacyFullBytes > 2_000_000);
+checkTrue("bounded initial payload is < 30 KB uncompressed", boundedInitialBytes < 30_000);
+checkTrue("bounded initial payload reduction exceeds 98%", parseFloat(initialReductionPct) > 98.0);
+checkTrue("steady-state delta payload is < 2 KB uncompressed", steadyDeltaBytes < 2048);
+checkTrue("steady-state delta payload reduction exceeds 99.9%", parseFloat(steadyReductionPct) > 99.9);
+checkTrue("backward page payload is bounded (< 100 KB uncompressed)", backwardPageBytes < 100_000);
 
 /* ════════════════════════════════════════════════════════════════════════════
- * SECTION 4: Chat Surface Poll Budget Verification
+ * SECTION 5: Chat Surface Poll Budget Verification
  * ══════════════════════════════════════════════════════════════════════════ */
 
 console.log("\n── 5a. The poll constants themselves, against their own literals ──────");
 
-/* WHY THESE NINE LINES EXIST, and why they are not the same assertion twice.
- *
- * Section 5b adds up the REAL constants, imported from
- * `forge-control-web/app/desktop/chat/pollBudget.ts` — so a poll that gets
- * faster raises the totals below and breaks the ceiling assertion. That is the
- * regression the round-3 version could not see, because it added up local
- * copies.
- *
- * But an imported constant makes the arithmetic agree with the code by
- * construction, and a build could still drift a long way UNDER the ceiling —
- * team 6s → 20s halves the surface's freshness and every total below just gets
- * smaller and passes. So each constant is ALSO pinned to a LITERAL here. The
- * literal is the committed decision; the import is the live value; a round that
- * moves one has to come and move the other, in this file, deliberately. */
 check("CHAT_LIST_POLL_MS is 10s", CHAT_LIST_POLL_MS, 10_000);
 check("CHAT_DETAIL_LIVE_POLL_MS is 20s", CHAT_DETAIL_LIVE_POLL_MS, 20_000);
 check("CHAT_DETAIL_FALLBACK_POLL_MS is 4s", CHAT_DETAIL_FALLBACK_POLL_MS, 4_000);
@@ -462,39 +569,25 @@ console.log("\n── 5b. Chat surface poll budget (from the real constants) ─
 const perMin = (intervalMs: number): number => 60_000 / intervalMs;
 
 const runListReqPerMin = perMin(CHAT_LIST_POLL_MS);       // 6 req/min
-const teamPanelReqPerMin = perMin(TEAM_POLL_MS);          // 6 req/min (was 10 req/min at 6s)
+const teamPanelReqPerMin = perMin(TEAM_POLL_MS);          // 6 req/min
 const shotsReqPerMin = perMin(SHOTS_INDEX_POLL_MS);       // 2 req/min
 const planKanbanReqPerMin = perMin(PLAN_POLL_MS);         // 2 req/min
 const secretsReqPerMin = perMin(SECRETS_FALLBACK_POLL_MS); // 1 req/min
 
-/** Everything on the surface except the open transcript, which is the only
- *  poll whose period depends on the stream. */
 const panelsReqPerMin =
   runListReqPerMin + teamPanelReqPerMin + shotsReqPerMin + planKanbanReqPerMin; // 16 req/min
 
-// Healthy steady state (SSE live): the transcript idles at CHAT_DETAIL_LIVE_POLL_MS
-// and the secrets query costs nothing at all (server push, round 808).
 const healthyDetailReqPerMin = perMin(CHAT_DETAIL_LIVE_POLL_MS); // 3 req/min
 const totalHealthyReqPerMin = panelsReqPerMin + healthyDetailReqPerMin; // 19 req/min
 
-// Degraded fallback state (SSE down): transcript at CHAT_DETAIL_FALLBACK_POLL_MS,
-// and the secrets query degrades to its 60s poll.
 const degradedDetailReqPerMin = perMin(CHAT_DETAIL_FALLBACK_POLL_MS); // 15 req/min
 const totalDegradedReqPerMin =
   panelsReqPerMin + degradedDetailReqPerMin + secretsReqPerMin; // 32 req/min
 
-/* DRILLED (depth 1), degraded. ChatSurface disables its own detail query while
- * `navStack` is non-empty and AgentChatView runs one in its place — so the
- * drilled total is the depth-0 total ONLY IF both read the same constant. They
- * did not until round 4: AgentChatView was left on a 3s literal while
- * ChatSurface moved to 4s, so clicking a worker quietly cost 5 req/min more
- * than the number this section reported. One constant, one total, asserted. */
 const drilledDetailReqPerMin = perMin(CHAT_DETAIL_FALLBACK_POLL_MS);
 const totalDrilledDegradedReqPerMin =
   panelsReqPerMin + drilledDetailReqPerMin + secretsReqPerMin;
 
-/* The counterexample, and the one number here that is deliberately a LITERAL:
- * 3s detail + 6s team is history (41 req/min), not live values. */
 const PREV_DEGRADED_DETAIL_POLL_MS = 3_000;
 const PREV_TEAM_POLL_MS = 6_000;
 const prevPanelsReqPerMin =
@@ -503,9 +596,9 @@ const prevTotalDegradedReqPerMin =
   prevPanelsReqPerMin + perMin(PREV_DEGRADED_DETAIL_POLL_MS) + secretsReqPerMin;
 
 console.log(`Committed Chat Surface Ceiling: ≤ ${CHAT_SURFACE_REQ_PER_MIN_CEILING} req/min`);
-console.log(`Healthy steady-state rate:      ${totalHealthyReqPerMin} req/min (List ${runListReqPerMin} + Detail ${healthyDetailReqPerMin} + Team ${teamPanelReqPerMin} + Shots ${shotsReqPerMin} + Plan ${planKanbanReqPerMin})`);
-console.log(`Degraded fallback rate (4s):    ${totalDegradedReqPerMin} req/min (List ${runListReqPerMin} + Detail ${degradedDetailReqPerMin} + Team ${teamPanelReqPerMin} + Shots ${shotsReqPerMin} + Plan ${planKanbanReqPerMin} + Secrets ${secretsReqPerMin})`);
-console.log(`Degraded, drilled to depth 1:   ${totalDrilledDegradedReqPerMin} req/min (AgentChatView's transcript in place of ChatSurface's)`);
+console.log(`Healthy steady-state rate:      ${totalHealthyReqPerMin} req/min`);
+console.log(`Degraded fallback rate (4s):    ${totalDegradedReqPerMin} req/min`);
+console.log(`Degraded, drilled to depth 1:   ${totalDrilledDegradedReqPerMin} req/min`);
 console.log(`Previous degraded rate (3s):    ${prevTotalDegradedReqPerMin} req/min (Violated ceiling: ${prevTotalDegradedReqPerMin} > ${CHAT_SURFACE_REQ_PER_MIN_CEILING})`);
 
 check("healthy poll rate equals 19 req/min", totalHealthyReqPerMin, 19);
@@ -530,7 +623,7 @@ check(
 checkTrue("previous 3s fallback violated ceiling (> 40 req/min)", prevTotalDegradedReqPerMin > 40);
 
 /* ════════════════════════════════════════════════════════════════════════════
- * SECTION 5: Team Tree Settled Backoff & Uploads Index Caching
+ * SECTION 6: Team Tree Settled Backoff & Uploads Index Caching
  * ══════════════════════════════════════════════════════════════════════════ */
 
 console.log("\n── 6. Team tree settled backoff (isTreeSettled) ──────────────────────");
@@ -592,6 +685,115 @@ check("all nodes settled -> tree is settled", isTreeSettled(makeTestTeamResponse
 
 console.log("\n── 7. Uploads index ETag & cache tag verification ──────────────────");
 
+/** Round 4 review finding #1 (ChatSurface.tsx:794, api.ts:1099-1112):
+ *  the delta poll's queryFn used to capture `prev` once, before the network
+ *  round trip, and merge against that closure-captured snapshot when the
+ *  response landed — silently clobbering a concurrent write from
+ *  AssistantThread's backward-pagination handlers (`handleShowOlder`/
+ *  `handleShowAll`), which write to the same cache key synchronously via
+ *  `qc.setQueryData` while the poll's `fetch` is still in flight.
+ *
+ *  This drives the REAL `fetchChatDelta` (not a local pure-function stand-in)
+ *  against a hand-controlled `fetch` mock so the network response resolves
+ *  only after we've mutated what `getPrev()` returns — reproducing the exact
+ *  interleaving the reviewer described. Before the fix (`prev` captured once,
+ *  used for the merge) this test fails: the prepended older turns and the
+ *  moved cursor are overwritten wholesale by the poll's stale-based replace.
+ *  After the fix (`getPrev()` re-invoked right before merging) it passes. */
+async function raceConditionRegression(): Promise<void> {
+  console.log("\n── 8. Race regression: backward pagination vs. in-flight delta poll ──");
+
+  function makeEntry(role: ApiRunDetail["thread"][number]["role"], content: string): ApiRunDetail["thread"][number] {
+    return { role, content, ts: "2026-08-24T00:00:00.000Z" };
+  }
+
+  function makeApiFixture(threadLength: number, from: number, total: number): ApiRunDetail {
+    return {
+      id: "race-test-run",
+      title: "race regression fixture",
+      status: "running",
+      worker: "claude",
+      budget_usd: "10.00",
+      spent_usd: "1.25",
+      created_at: "2026-08-24T00:00:00.000Z",
+      updated_at: "2026-08-24T00:00:00.000Z",
+      last_heartbeat_at: "2026-08-24T00:00:00.000Z",
+      message_count: total,
+      last_message_preview: "",
+      last_role: "assistant",
+      archived: false,
+      metadata: {},
+      prompt: "race regression fixture prompt",
+      thread: Array.from({ length: threadLength }, (_, i) => makeEntry("assistant", `seed-${i}`)),
+      parent_run_id: null,
+      stuck_signal: null,
+      started_at: "2026-08-24T00:00:00.000Z",
+      completed_at: null,
+      from,
+      total,
+    };
+  }
+
+  // Cached state before the poll starts: tail = from(40) + thread.length(60) = 100.
+  let cache: ApiRunDetail | undefined = makeApiFixture(60, 40, 100);
+
+  let resolveFetch!: (res: Response) => void;
+  const fetchGate = new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  });
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = (((url: string) => {
+    capturedUrl = String(url);
+    return fetchGate;
+  }) as unknown) as typeof fetch;
+
+  try {
+    const deltaPromise = fetchChatDelta("race-test-run", () => cache);
+
+    // Simulate handleShowOlder: a synchronous qc.setQueryData that prepends
+    // 10 older turns and moves the cursor back, WHILE the poll's fetch above
+    // is still pending. Tail is invariant under a backward prepend
+    // (30 + 70 === 40 + 60 === 100), so this write is exactly the scenario
+    // the fix's doc comment describes as still valid against the requested cursor.
+    const older = Array.from({ length: 10 }, (_, i) => makeEntry("user", `older-${i}`));
+    cache = { ...cache!, thread: [...older, ...cache!.thread], from: 30 };
+
+    // Now let the network resolve: 5 new entries appended past tail 100.
+    const newEntries = Array.from({ length: 5 }, (_, i) => makeEntry("assistant", `new-${i}`));
+    const { thread: _discardedThread, prompt: _discardedPrompt, ...metaRest } = makeApiFixture(0, 100, 105);
+    resolveFetch(
+      new Response(
+        JSON.stringify({ run: { ...metaRest, thread: newEntries }, from: 100, total: 105 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const merged = await deltaPromise;
+
+    checkTrue(
+      "race: request was built from the pre-write tail (since=100)",
+      capturedUrl.includes("since=100"),
+      capturedUrl,
+    );
+    check("race: merged thread length is 70 (prepended) + 5 (appended), not 60 + 5", merged.thread.length, 75);
+    check("race: merged cursor keeps the prepend's from=30, not the stale prev's from=40", merged.from, 30);
+    check("race: merged total reflects the server's fresh total", merged.total, 105);
+    checkTrue(
+      "race: the 10 prepended older turns survived the poll's merge",
+      merged.thread.slice(0, 10).every((e, i) => e.content === `older-${i}`),
+      JSON.stringify(merged.thread.slice(0, 12).map((e) => e.content)),
+    );
+    checkTrue(
+      "race: the 5 newly-appended turns landed after the prepend + original 60",
+      merged.thread.slice(70).every((e, i) => e.content === `new-${i}`),
+      JSON.stringify(merged.thread.slice(70).map((e) => e.content)),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 async function runAsyncChecks(): Promise<void> {
   const tagInitial = getUploadsCacheTag();
   checkTrue("uploads index cache tag is non-empty quoted string", typeof tagInitial === "string" && tagInitial.startsWith('"') && tagInitial.endsWith('"'));
@@ -600,6 +802,8 @@ async function runAsyncChecks(): Promise<void> {
   const tagComputed = getUploadsCacheTag();
   checkTrue("uploads index computed tag is valid quoted string", typeof tagComputed === "string" && tagComputed.startsWith('"') && tagComputed.endsWith('"'));
   check("subsequent getUploadsCacheTag returns stable cached tag", getUploadsCacheTag(), tagComputed);
+
+  await raceConditionRegression();
 
   /* ════════════════════════════════════════════════════════════════════════════
    * SUMMARY

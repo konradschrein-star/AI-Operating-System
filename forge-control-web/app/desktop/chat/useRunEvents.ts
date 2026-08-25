@@ -108,17 +108,29 @@ export function useRunEvents(runId: string | null, enabled: boolean): {
       if (!meta || typeof from !== "number" || !Array.isArray(entries)) return;
       const key = ["chat", "run", meta.id];
       const prev = qc.getQueryData<RunDetail>(key);
-      if (!prev || from > prev.thread.length) {
+      const tail = (prev?.from ?? 0) + (prev?.thread?.length ?? 0);
+      if (!prev || from > tail || from < (prev.from ?? 0)) {
         // Nothing to splice onto, or a hole between what we hold and what
         // the server is sending. Only a full snapshot can fix this.
         resync(meta.id);
         return;
       }
+      const localFrom = from - (prev.from ?? 0);
       const thread =
-        entries.length === 0 && from === prev.thread.length
+        entries.length === 0 && from === tail
           ? prev.thread // status/updated_at-only frame — keep array identity
-          : [...prev.thread.slice(0, from), ...entries];
-      qc.setQueryData<RunDetail>(key, { ...meta, thread });
+          : [...prev.thread.slice(0, localFrom), ...entries];
+      const total = Math.max(
+        prev.total ?? tail,
+        (prev.from ?? 0) + thread.length,
+      );
+      qc.setQueryData<RunDetail>(key, {
+        ...prev,
+        ...meta,
+        thread,
+        from: prev.from ?? 0,
+        total,
+      });
       noteStatus(meta.status);
     });
 

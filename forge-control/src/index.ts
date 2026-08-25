@@ -47,17 +47,44 @@ import map from "./routes/map.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
 import { startVaultSyncTick } from "./lib/vault-sync-tick.ts";
+import { startCalendarSyncTick } from "./lib/calendar-sync-tick.ts";
+import { startGlucoseTick } from "./lib/glucose-tick.ts";
 import { startUsageSamplerTick } from "./lib/usage-sampler.ts";
 import mentor from "./routes/mentor.ts";
 import runControl from "./routes/run-control.ts";
 
 const app = new Hono();
 
+/* THE TAKEOVER TICKET IS A BEARER CREDENTIAL IN A URL PATH — never log it.
+ *
+ * nginx already sets `access_log off` on /api/browser-takeover/ws/ for exactly
+ * this reason, and browser-takeover.ts logs run/profile/port/jti/outcome and
+ * never the ticket itself. This middleware was the third door, and it was open.
+ *
+ * A real noVNC connection is an UPGRADE, and upgrades are served by the
+ * http.Server 'upgrade' listener, which never reaches Hono middleware — so this
+ * only fires when something fetches the URL as ordinary HTTP: a link preview, a
+ * crawler, an address-bar paste, a probe. Found 2026-08-25 by the deploy task,
+ * which had written one of its own live tickets here:
+ *
+ *   GET /api/browser-takeover/ws/eyJ2IjoxLCJyaWQiOiI2NDI1M2NjNGEzMjIi… 404
+ *
+ * Full payload and signature, on disk, in a log that rotates and is retained.
+ * A non-upgrade GET does NOT burn the jti, so a ticket logged this way stays
+ * LIVE for the remainder of its TTL rather than being spent.
+ */
+const REDACTED_PATH_PREFIXES = ["/api/browser-takeover/ws/"];
+
+function safeLogPath(path: string): string {
+  const prefix = REDACTED_PATH_PREFIXES.find((p) => path.startsWith(p));
+  return prefix ? `${prefix}<redacted>` : path;
+}
+
 app.use("*", async (c, next) => {
   const t0 = Date.now();
   await next();
   console.log(
-    `[${new Date().toISOString()}] ${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - t0}ms`,
+    `[${new Date().toISOString()}] ${c.req.method} ${safeLogPath(c.req.path)} ${c.res.status} ${Date.now() - t0}ms`,
   );
 });
 
@@ -237,12 +264,19 @@ app.route("/api/runs", runControl);
 const port = Number(process.env.PORT ?? 7700);
 const server = serve({ fetch: app.fetch, port, hostname: "127.0.0.1" });
 
-// Manual browser takeover (round 4/5): @hono/node-server's serve() never
-// registers a Node 'upgrade' listener, so a noVNC WebSocket handshake to
-// /api/uploads/(browser/:profile|:id)/vnc/* would otherwise be silently
-// destroyed by Node's default upgrade handling. handleBrowserTakeoverUpgrade
-// applies the same profile/port security checks as the HTTP proxy and, once
-// they pass, raw-pipes the socket to the loopback websockify instance.
+// Manual browser takeover: @hono/node-server's serve() never registers a Node
+// 'upgrade' listener, so a noVNC WebSocket handshake would otherwise be
+// silently destroyed by Node's default upgrade handling.
+//
+// THE ONLY UPGRADE ROUTE IS /api/browser-takeover/ws/<ticket>. The
+// /api/uploads/(browser/:profile|:id)/vnc/* arms this comment used to name
+// were deleted in c5ea5d0, precisely because they took a bare run id — and
+// nginx hands this process that path WITHOUT NextAuth in front of it, so a
+// bare id would have been an unauthenticated route onto a logged-in browser.
+// handleBrowserTakeoverUpgrade verifies the signed ticket (profile, port and
+// expiry all come out of the signature, never off the URL), re-checks the
+// 6900-6959 port allowlist, and only then raw-pipes the socket to the loopback
+// websockify instance. Everything else gets destroyed by the `!handled` arm.
 server.on("upgrade", (req, socket, head) => {
   handleBrowserTakeoverUpgrade(req, socket, head)
     .then((handled) => {
@@ -267,6 +301,8 @@ startTelegramBridge();
 // Keeps hcp.knowledge_note in sync with the real on-disk Obsidian vault —
 // km-indexer.js only ever wrote embeddings, never the note registry.
 startVaultSyncTick();
+startCalendarSyncTick();
+startGlucoseTick();
 
 // 2026-08-02: Claude account health probing. Cheap tier (credential file +
 // last confirmed run) every 10 minutes. This is the half of the account system

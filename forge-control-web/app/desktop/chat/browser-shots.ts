@@ -469,3 +469,55 @@ export function takeoverTicketUrl(dirId: string): string | null {
   return `${PROXY_ROOT}/uploads/${dirId}/vnc/ticket`;
 }
 
+/** What `GET /api/uploads/:id/vnc/ticket` answers with on success. */
+export interface TakeoverTicketBody {
+  ticket: string;
+  expires_at: string;
+  novnc_port: number;
+  profile: string;
+}
+
+/**
+ * Mint a takeover ticket for a run. THE ONLY WAY to a working `vncProxyUrl` —
+ * that function returns null without one, by design.
+ *
+ * This lives here rather than in a component because there are two callers that
+ * must behave identically: the /takeover/<runId> landing page a phone
+ * notification opens, and the in-chat "Take Control" affordances in
+ * BrowserStreamViewer. Round-4 review, finding 4: the in-chat path called
+ * `vncProxyUrl(dirId)` with no ticket, so every in-chat button rendered the
+ * error branch while the landing page worked — one code path had the mint and
+ * the other never grew one. One mint, one place.
+ *
+ * Throws with the reason on every failure. A takeover that cannot start is
+ * something Konrad has to be told about in words; there is no useful degraded
+ * mode between "live browser" and "nothing".
+ */
+export async function mintTakeoverTicket(dirId: string): Promise<TakeoverTicketBody> {
+  const mintUrl = takeoverTicketUrl(dirId);
+  if (!mintUrl) {
+    throw new Error(`"${dirId}" is not a valid run id (expected 12 lowercase hex characters)`);
+  }
+  let res: Response;
+  try {
+    res = await fetch(mintUrl, { headers: { accept: "application/json" }, cache: "no-store" });
+  } catch (err) {
+    throw new Error(`Could not reach forge-control to mint a ticket: ${(err as Error).message}`);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) detail = body.error;
+    } catch {
+      // Response body wasn't JSON — fall back to the status line already captured.
+    }
+    throw new Error(`${res.status} ${detail}`);
+  }
+  const body = (await res.json()) as Partial<TakeoverTicketBody>;
+  if (typeof body.ticket !== "string" || typeof body.profile !== "string") {
+    throw new Error("Ticket mint endpoint returned an unexpected response shape");
+  }
+  return body as TakeoverTicketBody;
+}
+

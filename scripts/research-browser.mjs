@@ -310,6 +310,22 @@ export const uploadsUrl = (runId, name) => `/api/uploads/${runId}/${name}`;
 export const browserStatePath = (runId) => join(UPLOADS_ROOT, runId, 'browser_state.json');
 
 /**
+ * The PER-PROFILE marker, keyed by run AND profile:
+ * `<uploads>/<runId>/browser-state/<profile>.json`. Read first by
+ * resolveProfileForRun (browser-takeover.ts, route 2).
+ *
+ * `browser_state.json` above is ONE FILE PER RUN, so a run that hits login walls
+ * on two profiles keeps only the second — and the first becomes unreachable while
+ * the second is handed to anything asking "which browser is this run holding?".
+ * Round-4 review, finding 3. A run may legitimately drive several profiles; a
+ * marker per profile makes that additive, and `checked_at` decides which is
+ * current instead of arrival order. The name inside the file must match the
+ * filename or forge-control discards it.
+ */
+export const profileMarkerPath = (runId, profile) =>
+  join(UPLOADS_ROOT, runId, 'browser-state', `${profile}.json`);
+
+/**
  * --run-id, else FORGE_RUN_ID, else the sentinel. Returns the source too, so the JSON says
  * where the id came from instead of leaving a caller to guess why it changed.
  */
@@ -1498,17 +1514,29 @@ async function dismissReminders(ids) {
  */
 export function writeBrowserStateMarker({ runId, profile, service, novncPort }) {
   if (runId === ADHOC_RUN_ID) return { written: false, reason: 'adhoc run id, no run to mark' };
-  const path = browserStatePath(runId);
-  ensureDir(dirname(path), 0o755); // forge-control must be able to read it
-  writeJsonAtomic(path, {
+  const body = {
     profile,
     service,
     needs_login: true,
     is_live: true,
     novnc_port: novncPort,
     checked_at: new Date().toISOString(),
-  });
-  return { written: true, path };
+  };
+
+  // The per-profile marker is the one forge-control reads FIRST, so it is written
+  // first: if the process dies between the two writes, the survivor is the file
+  // that cannot be clobbered by another profile in the same run.
+  const perProfile = profileMarkerPath(runId, profile);
+  ensureDir(dirname(perProfile), 0o755); // forge-control must be able to read it
+  writeJsonAtomic(perProfile, body);
+
+  // Legacy single-file marker, still written: forge-control falls back to it
+  // (route 3) and it is what every run recorded before 2026-08-25.
+  const path = browserStatePath(runId);
+  ensureDir(dirname(path), 0o755);
+  writeJsonAtomic(path, body);
+
+  return { written: true, path, profile_marker_path: perProfile };
 }
 
 /**

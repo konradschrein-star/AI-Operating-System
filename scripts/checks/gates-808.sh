@@ -230,6 +230,22 @@ gate_sh "check-deep-link.ts — cross-surface navigation actually navigates" \
 gate_sh "verify-notification-gap-pins.mjs — fenced quotes + prose pins" \
   "node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs | tail -2"
 
+# ── aios-browser-takeover-live round 5 ─────────────────────────────────────
+# This gate guards the ONE route in the repo that answers without a NextAuth
+# session: nginx proxies /api/browser-takeover/ws/ straight past the Next
+# process to forge-control, because a Route Handler cannot host a WebSocket.
+# The thing on the far end is a Chrome holding Konrad's logged-in sessions.
+#
+# It is here because of round-4 review finding 1. The script existed, had 106
+# assertions, and was RUN BY NOTHING: gates-808.sh never invoked it and
+# check-instrument-typecheck.sh only COMPILES scripts/checks/*.ts. A log-
+# redaction fix landed on main, tripped the script's own allowlist, and sat RED
+# at main until a reviewer happened to run it by hand. A guard no gate executes
+# is a guard that goes stale unobserved — so it is executed here, every round.
+gate_sh "check-browser-takeover-ticket.ts — the unauthenticated-by-design socket" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-browser-takeover-ticket.ts | tail -3"
+
 # Needs a Postgres SERVER. It creates its own scratch database and issues no
 # statement against the one named in DATABASE_URL — but with no DSN at all there
 # is nothing to connect to, so it is SKIPPED rather than reported as passing.
@@ -305,6 +321,19 @@ gate_sh "reproduce-cleanliness — re-running a protocol leaves the tree untouch
    after=\$(git status --porcelain | md5sum); \
    echo \"before: \$before\"; echo \"after:  \$after\"; \
    [ \"\$before\" = \"\$after\" ] && { echo 'PASS — tree untouched'; exit 0; } || { echo 'FAIL — tree changed'; exit 1; }"
+
+# Needs a THROWAWAY Postgres (never content_forge — the harness itself refuses
+# to run against a URL naming it). Same posture as check-usage-fold.ts above:
+# SKIPPED, loudly, rather than reported as passing, when no such database has
+# been provisioned. docs/plan/evidence/stuck-trapdoor-proof.md names the one
+# this project provisioned and left in place.
+if [ -n "${DRYRUN_DATABASE_URL:-}" ]; then
+  gate_sh "stuck-trapdoor-dryrun.mts — watchdog flip/hold + COMPLETABLE_STATUS_SQL reclaim, against a real Postgres" \
+    "cd forge-control && ./node_modules/.bin/tsx ../docs/plan/evidence/stuck-trapdoor-dryrun.mts | tail -25"
+else
+  skip "stuck-trapdoor-dryrun.mts — watchdog flip/hold + COMPLETABLE_STATUS_SQL reclaim" \
+    "DRYRUN_DATABASE_URL is unset; this gate needs a THROWAWAY Postgres database (never content_forge) — see docs/plan/evidence/stuck-trapdoor-proof.md"
+fi
 
 echo
 echo "================================================================================"

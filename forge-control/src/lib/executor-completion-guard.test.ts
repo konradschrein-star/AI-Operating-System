@@ -31,6 +31,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { completionTransition } from "./run-control-rules.ts";
+// Imported, not retyped: the precondition asserted below is the SAME string the
+// executor interpolates into its SQL.
+import { COMPLETABLE_STATUS_SQL } from "./run-liveness.ts";
 
 function readSource(rel: string): string {
   return readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -93,23 +96,83 @@ describe("completeRun — the guard", () => {
     assert.match(RAW, /applied: boolean;\s*\n\s*requeued: boolean;/);
   });
 
-  test("the guarded UPDATE carries AND status = 'running'", () => {
-    assert.match(COMPLETE_RUN, /AND status = 'running'/);
-    // ...and only when asked for: the guard is a conditional fragment, so the
-    // legacy caller's SQL is byte-identical to what it was before this change.
-    assert.match(COMPLETE_RUN, /opts\.guardRunning \?[\s\S]{0,80}AND status = 'running'/);
+  test("the guarded UPDATE carries the ONE shared completion precondition", () => {
+    // 2026-08-25: the guard did not weaken, it MOVED. It used to be the literal
+    // `AND status = 'running'`; it is now a single exported constant that
+    // executor.ts and the dry-run harness both read, so the SQL that decides
+    // whether $83.01-worth of finished turns land cannot drift between them.
+    assert.match(
+      EXEC,
+      /import \{[\s\S]{0,200}?COMPLETABLE_STATUS_SQL[\s\S]{0,200}?\} from "\.\/lib\/run-liveness\.ts";/,
+    );
+    assert.match(COMPLETE_RUN, /AND \$\{COMPLETABLE_STATUS_SQL\}/);
+    // ...and only when asked for: the guard is still a conditional fragment, so
+    // the legacy pool caller's statement stays unguarded exactly as 07 §6 says.
+    assert.match(
+      COMPLETE_RUN,
+      /opts\.guardRunning \? `\\n {11}AND \$\{COMPLETABLE_STATUS_SQL\}` : ""/,
+    );
   });
 
-  test("the guarded UPDATE returns the handshake flag", () => {
-    assert.match(COMPLETE_RUN, /RETURNING status, metadata->>'pending_input' AS pending_input/);
+  test("the precondition still refuses every operator status", () => {
+    // C13 unchanged: paused/cancelled/failed/completed win the race with a
+    // clean exit. `stuck` is admitted ONLY with the watchdog's own guess
+    // signal; `stuck_signal='timeout'` is a real decision and still wins.
+    // Imported, never retyped — a widening edit fails here.
+    assert.equal(COMPLETABLE_STATUS_SQL.includes("status = 'running'"), true);
+    assert.equal(
+      COMPLETABLE_STATUS_SQL.includes(
+        "status = 'stuck' AND stuck_signal = 'heartbeat_stale'",
+      ),
+      true,
+    );
+    for (const forbidden of ["cancelled", "paused", "timeout", "completed"]) {
+      assert.equal(
+        COMPLETABLE_STATUS_SQL.includes(forbidden),
+        false,
+        `COMPLETABLE_STATUS_SQL must not admit '${forbidden}'`,
+      );
+    }
   });
 
-  test("both branches (stuck and completed/failed) carry guard + returning", () => {
+  test("the guarded UPDATE returns the PRE-IMAGE status and the handshake flag", () => {
+    // rowCount 1 no longer means "the row WAS running": two prior statuses now
+    // satisfy the guard. FOR UPDATE takes the row lock before the UPDATE
+    // re-reads it, so the reported pre-image is the one that actually matched.
+    assert.match(
+      COMPLETE_RUN,
+      /FROM \(SELECT status AS prev FROM runs WHERE id = \$1 FOR UPDATE\) old/,
+    );
+    assert.match(COMPLETE_RUN, /RETURNING old\.prev, metadata->>'pending_input' AS pending_input/);
+  });
+
+  test("a pre-image outside the precondition THROWS rather than being guessed", () => {
+    // The old code hard-coded rowStatus: "running" with the comment "the guard
+    // proved it". That comment became false the moment the guard admitted a
+    // second status, and silently mis-reporting the pre-image is precisely the
+    // class of bug this change closes — so it is an explicit error path.
+    assert.match(COMPLETE_RUN, /if \(prev !== "running" && prev !== "stuck"\) \{/);
+    assert.match(COMPLETE_RUN, /COMPLETABLE_STATUS_SQL and completeRun have drifted/);
+    assert.doesNotMatch(COMPLETE_RUN, /rowStatus: "running",/);
+  });
+
+  test("a reclaimed watchdog flip is logged at warn level, never silently", () => {
+    // Silent recovery is how the trapdoor survived a month: the discard logged
+    // and nothing else did.
+    assert.match(COMPLETE_RUN, /const reclaimedFlip = prev === "stuck";/);
+    assert.match(COMPLETE_RUN, /console\.warn\(\s*\n?\s*`\[executor\] run \$\{id\}: RECLAIMED a watchdog flip/);
+    assert.match(COMPLETE_RUN, /rowStatus: reclaimedFlip \? "running" : prev,/);
+  });
+
+  test("both branches (stuck and completed/failed) carry pre-image + guard + returning", () => {
     // Two SQL statements, one guard: 07 §6 gives stuck/failed the same guard
     // for symmetry — a terminated run must not be flipped to `stuck` by a
     // timeout that was already moot.
-    const guarded = COMPLETE_RUN.match(/WHERE id = \$1\$\{guard\}\$\{returning\}/g) ?? [];
+    const guarded =
+      COMPLETE_RUN.match(/WHERE \$\{idPredicate\}\$\{guard\}\$\{returning\}/g) ?? [];
     assert.equal(guarded.length, 2, "both completion statements must be guardable");
+    const preImaged = COMPLETE_RUN.match(/last_heartbeat_at = now\(\)\$\{preImage\}/g) ?? [];
+    assert.equal(preImaged.length, 2, "both completion statements must report the pre-image");
   });
 
   test("rowCount 0 writes nothing else and reports applied:false", () => {

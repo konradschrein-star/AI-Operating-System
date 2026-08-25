@@ -265,7 +265,77 @@ export interface ResolveBrowserStateOptions {
 }
 
 /**
+ * Directory of PER-PROFILE run→profile markers, relative to the run's upload dir:
+ * `<uploadDir>/<runId>/browser-state/<profile>.json`. Written by
+ * scripts/research-browser.mjs alongside the legacy single-file
+ * `browser_state.json`.
+ *
+ * Round-4 review, finding 3: `browser_state.json` is one file per RUN, so a run
+ * that drives two profiles keeps only the last writer's — and whichever profile
+ * lost the race is unreachable while the winner is silently handed out to
+ * anything asking about the run. Keying the marker by run AND profile means a
+ * second takeover adds a file instead of erasing one, and `checked_at` (not
+ * arrival order) decides which one is current.
+ */
+export const PROFILE_MARKER_DIR = "browser-state";
+
+/**
+ * Newest per-profile marker under `<uploadDir>/<runId>/browser-state/`, or null.
+ *
+ * A marker only counts when the FILENAME and the `profile` field inside agree.
+ * The filename is the key; a file whose body claims a different profile is a
+ * marker somebody built by hand or a partial write, and the one thing this
+ * function must never do is hand back a profile the run did not actually drive
+ * — the answer becomes the profile a ticket is signed for, and that ticket opens
+ * a socket onto a real logged-in Chrome.
+ */
+export async function readNewestProfileMarker(
+  runId: string,
+  uploadDir: string,
+): Promise<{ profile: string; checkedAt: number } | null> {
+  const dir = path.join(uploadDir, runId, PROFILE_MARKER_DIR);
+  const entries = await fs.readdir(dir).catch(() => [] as string[]);
+  let best: { profile: string; checkedAt: number } | null = null;
+  for (const name of entries.slice().sort()) {
+    if (!name.endsWith(".json")) continue;
+    const profile = name.slice(0, -".json".length);
+    if (!PROFILE_RE.test(profile)) continue;
+    const marker = await readJsonFile<Partial<BrowserState>>(path.join(dir, name));
+    if (!marker) continue;
+    if (marker.profile !== profile) continue; // filename ↔ body must agree
+    // No checked_at, or one that does not parse, sorts oldest rather than
+    // throwing the marker away: the file's existence is still evidence, it just
+    // loses every tiebreak to a marker that carries a real clock.
+    const parsed = marker.checked_at ? Date.parse(marker.checked_at) : Number.NaN;
+    const checkedAt = Number.isFinite(parsed) ? parsed : 0;
+    // Strictly-greater keeps the sorted-name order as the tiebreak, so equal
+    // timestamps resolve the same way on every call.
+    if (!best || checkedAt > best.checkedAt) best = { profile, checkedAt };
+  }
+  return best;
+}
+
+/**
  * Scan directory or profile state to find the associated profile name for a run.
+ *
+ * ORDER IS A SECURITY PROPERTY, not a preference. The answer is what
+ * `GET /:id/vnc/ticket` signs a takeover ticket for, and that ticket is the only
+ * credential on a WebSocket that bypasses NextAuth. So the routes run
+ * most-authoritative first:
+ *
+ *   1. runId IS a profile name with live state — the caller named it outright.
+ *   2. Per-profile marker  `browser-state/<profile>.json` — written deliberately
+ *      by the driver at the moment it hit the login wall, newest wins.
+ *   3. Legacy marker       `browser_state.json` (.profile, then .service).
+ *   4. `auth.json` .service — also written by the driver.
+ *   5. LAST RESORT: guessing from a screenshot's FILENAME.
+ *
+ * Route 5 used to run second (round-4 review, finding 3): one file called
+ * `<ts>-perplexity-open.png` in a run's uploads dir outranked that run's own
+ * marker, so `resolveProfileForRun("2ce31fa484df")` answered `perplexity` while
+ * the marker said `os-ui` — i.e. a ticket for the wrong browser. Screenshot
+ * names are a naming convention, and the uploads tree is writable by anything
+ * that can drop a file in it; a marker is a statement. Guess last.
  */
 export async function resolveProfileForRun(
   runId: string,
@@ -280,9 +350,30 @@ export async function resolveProfileForRun(
     if (st?.isDirectory()) return runId;
   }
 
-  // 2. Look inside upload directory for screenshots with service labels (e.g. 20260805T101530Z-perplexity-login-wall.png)
+  // 2. The per-profile marker the driver writes — keyed by run AND profile.
+  const marker = await readNewestProfileMarker(runId, uploadDir);
+  if (marker) return marker.profile;
+
+  // 3. The legacy single-file marker, still written for backwards compatibility.
+  const localState = await readJsonFile<Partial<BrowserState>>(path.join(uploadDir, runId, "browser_state.json"));
+  if (localState?.profile && PROFILE_RE.test(localState.profile)) {
+    return localState.profile;
+  }
+  if (localState?.service && PROFILE_RE.test(localState.service)) {
+    return localState.service;
+  }
+
+  // 4. auth.json, the other file the driver writes into the run's upload dir.
+  const localAuth = await readJsonFile<ProfileAuth>(path.join(uploadDir, runId, "auth.json"));
+  if (localAuth?.service && PROFILE_RE.test(localAuth.service)) {
+    return localAuth.service;
+  }
+
+  // 5. LAST RESORT — infer from a screenshot's name
+  //    (e.g. 20260805T101530Z-perplexity-login-wall.png). Only reached when the
+  //    run left no marker at all; still requires the profile to have live state.
   const dir = path.join(uploadDir, runId);
-  const entries = await fs.readdir(dir).catch(() => []);
+  const entries = await fs.readdir(dir).catch(() => [] as string[]);
   for (const name of entries) {
     const m = /^(\d{8}T\d{6}Z)-([a-z0-9-]+)\.[a-zA-Z0-9]+$/.exec(name);
     if (m) {
@@ -296,20 +387,6 @@ export async function resolveProfileForRun(
         }
       }
     }
-  }
-
-  // 3. Check local metadata or auth files inside upload directory
-  const localAuth = await readJsonFile<ProfileAuth>(path.join(uploadDir, runId, "auth.json"));
-  if (localAuth?.service && PROFILE_RE.test(localAuth.service)) {
-    return localAuth.service;
-  }
-
-  const localState = await readJsonFile<Partial<BrowserState>>(path.join(uploadDir, runId, "browser_state.json"));
-  if (localState?.profile && PROFILE_RE.test(localState.profile)) {
-    return localState.profile;
-  }
-  if (localState?.service && PROFILE_RE.test(localState.service)) {
-    return localState.service;
   }
 
   return null;
@@ -625,6 +702,16 @@ export interface TakeoverUpgradeMatch {
  * one and the other one" — an unauthenticated arm left alive is how a careless
  * nginx edit later becomes account takeover.
  */
+/**
+ * The public prefix nginx forwards here, exported so nothing else has to spell
+ * it out. `check-browser-takeover-ticket.ts` §6.1 allowlists the handful of
+ * files permitted to name this literal, on the principle that a new file naming
+ * it is a new public route until proven otherwise — and a test harness that
+ * needs to know where the socket goes should IMPORT the answer rather than earn
+ * an exemption for restating it. An exemption should buy something.
+ */
+export const TAKEOVER_UPGRADE_PREFIX = "/api/browser-takeover/ws/";
+
 const TICKET_UPGRADE_RE = /^\/api\/browser-takeover\/ws\/([^/]+)\/?$/;
 
 export function matchTakeoverUpgradePath(pathname: string): TakeoverUpgradeMatch | null {

@@ -48,6 +48,16 @@ import { projectTick } from "./lib/project-tick.ts";
 // The completion decision is NOT re-derived here: route and executor import the
 // same pure rule so the two can never drift (06 C5, 07 §5/§6).
 import { completionTransition } from "./lib/run-control-rules.ts";
+// Liveness is an INSTRUMENT, not a status. sessionProcessAlive() used to live
+// in this file; it moved so the watchdog, completeRun and the dry-run harness
+// share one /proc reader, one verdict and one SQL precondition (PLAN.md §2a).
+import {
+  COMPLETABLE_STATUS_SQL,
+  liveSessionIdsAmong,
+  readEngineCmdlines,
+  sessionProcessAlive,
+  watchdogVerdict,
+} from "./lib/run-liveness.ts";
 
 const { Pool } = pg;
 
@@ -482,39 +492,55 @@ async function completeRun(
   // thread — only flip status.
   //
   // guardRunning (07 §6, C13): the control-plane path carries its precondition
-  // into SQL. `AND status = 'running'` makes an operator's paused/cancelled
-  // win the race with a clean exit, and the RETURNING clause hands the
-  // handshake flag (07 §5) to completionTransition in the same round trip.
+  // into SQL, and that precondition is COMPLETABLE_STATUS_SQL — ONE definition
+  // in lib/run-liveness.ts, shared with the dry-run harness so the two cannot
+  // drift. It makes an operator's paused/cancelled/failed/completed win the
+  // race with a clean exit exactly as `AND status = 'running'` did, and it
+  // additionally lets a completion RECLAIM the watchdog's own flip:
+  // `stuck_signal = 'heartbeat_stale'` is written by exactly one code path (the
+  // watchdog) and is a GUESS about liveness, so a completion arriving from the
+  // turn that owns the run is proof the guess was wrong. `stuck_signal =
+  // 'timeout'` is a real decision with its own resume path and still wins.
+  //
+  // The `FROM (SELECT … FOR UPDATE)` self-join exists because rowCount alone no
+  // longer identifies the pre-image: two different prior statuses now satisfy
+  // the guard, and completionTransition + the reclaim warning both need to know
+  // WHICH. FOR UPDATE takes the row lock before the UPDATE re-reads it, so the
+  // pre-image reported is the one the UPDATE actually matched.
   const threadConcat = entry ? `thread = thread || $2::jsonb,` : "";
-  const guard = opts.guardRunning ? `\n           AND status = 'running'` : "";
+  const preImage = opts.guardRunning
+    ? `\n         FROM (SELECT status AS prev FROM runs WHERE id = $1 FOR UPDATE) old`
+    : "";
+  const idPredicate = opts.guardRunning ? "runs.id = $1" : "id = $1";
+  const guard = opts.guardRunning ? `\n           AND ${COMPLETABLE_STATUS_SQL}` : "";
   const returning = opts.guardRunning
-    ? `\n      RETURNING status, metadata->>'pending_input' AS pending_input`
+    ? `\n      RETURNING old.prev, metadata->>'pending_input' AS pending_input`
     : "";
   const params: unknown[] = entry ? [id, JSON.stringify([entry])] : [id];
   let res;
   if (status === "stuck") {
     params.push(status, stuckSignal);
-    res = await pool.query<{ status: string; pending_input: string | null }>(
+    res = await pool.query<{ prev: string; pending_input: string | null }>(
       `UPDATE runs
           SET ${threadConcat}
               status = $${params.length - 1},
               stuck_signal = $${params.length},
               updated_at = now(),
-              last_heartbeat_at = now()
-        WHERE id = $1${guard}${returning}`,
+              last_heartbeat_at = now()${preImage}
+        WHERE ${idPredicate}${guard}${returning}`,
       params,
     );
   } else {
     params.push(status);
-    res = await pool.query<{ status: string; pending_input: string | null }>(
+    res = await pool.query<{ prev: string; pending_input: string | null }>(
       `UPDATE runs
           SET ${threadConcat}
               status = $${params.length},
               stuck_signal = NULL,
               completed_at = now(),
               updated_at = now(),
-              last_heartbeat_at = now()
-        WHERE id = $1${guard}${returning}`,
+              last_heartbeat_at = now()${preImage}
+        WHERE ${idPredicate}${guard}${returning}`,
       params,
     );
   }
@@ -533,10 +559,37 @@ async function completeRun(
     return { applied: false, requeued: false };
   }
 
+  // rowCount 1 no longer means the row WAS 'running' — COMPLETABLE_STATUS_SQL
+  // admits exactly two pre-images, so read the one the UPDATE matched.
+  const prev = res.rows[0].prev;
+  if (prev !== "running" && prev !== "stuck") {
+    // Not defensive noise: this fires only if the precondition and this branch
+    // have drifted, and silently mis-reporting the pre-image to
+    // completionTransition is precisely the class of bug this task closes.
+    throw new Error(
+      `[executor] run ${id}: completion precondition matched but the pre-image ` +
+        `status was '${prev}' — COMPLETABLE_STATUS_SQL and completeRun have drifted`,
+    );
+  }
+  const reclaimedFlip = prev === "stuck";
+  if (reclaimedFlip) {
+    // NEVER silent. A month of this bug survived because the discard logged and
+    // the recovery would not have.
+    console.warn(
+      `[executor] run ${id}: RECLAIMED a watchdog flip — this turn owned the ` +
+        `run and finished, so stuck/heartbeat_stale was a wrong guess; ` +
+        `landing '${status}' instead of discarding the turn`,
+    );
+  }
   const decision = completionTransition({
     outcome: status,
-    // The guard proved it: rowCount 1 means the row WAS 'running'.
-    rowStatus: "running",
+    // completionTransition asks for the pre-image so an OPERATOR verb wins
+    // (C13). A reclaimed heartbeat_stale flip is not an operator verb — it is
+    // the watchdog's guess, disproven by this very write — so the row is
+    // presented as what it in fact was: running. Feeding 'stuck' through
+    // instead would strand the 07 §5 pending_input handshake on every
+    // reclaimed run and leave the message for pendingInputSweepTick to rescue.
+    rowStatus: reclaimedFlip ? "running" : prev,
     pendingInput: res.rows[0].pending_input === "true",
   });
   if (!(decision.status === "queued" && decision.clearPendingInput)) {
@@ -680,33 +733,6 @@ async function heartbeat(id: string): Promise<void> {
       [id],
     )
     .catch((e) => console.error("[executor heartbeat]", e.message));
-}
-
-/** Is a `claude` process already resuming this session? Reads /proc directly
- *  rather than shelling out to ps — no subprocess per check, and it can't be
- *  fooled by a pattern that accidentally matches our own command line (a
- *  `pkill -f "next build"` once killed the operator's own shell that way). */
-async function sessionProcessAlive(sessionId: string): Promise<boolean> {
-  const { readdir, readFile } = await import("node:fs/promises");
-  let pids: string[];
-  try {
-    pids = await readdir("/proc");
-  } catch {
-    return false; // not Linux / no procfs — fail open rather than block work
-  }
-  for (const pid of pids) {
-    if (!/^\d+$/.test(pid)) continue;
-    if (pid === String(process.pid)) continue;
-    let cmd: string;
-    try {
-      cmd = await readFile(`/proc/${pid}/cmdline`, "utf8");
-    } catch {
-      continue; // process exited between readdir and read — normal
-    }
-    // cmdline is NUL-separated; `--resume <id>` therefore appears as two args.
-    if (cmd.includes(sessionId) && cmd.includes("claude")) return true;
-  }
-  return false;
 }
 
 async function processRun(run: ClaimedRun): Promise<void> {
@@ -1406,23 +1432,106 @@ async function getConcurrencyLimit(): Promise<number> {
 }
 
 /* Flip 'running' rows that haven't heartbeat in HEARTBEAT_STUCK_THRESHOLD_MS
- * to 'stuck' so the manager loop / UI can surface them. Idempotent. */
-async function stuckWatchdogTick(): Promise<void> {
+ * to 'stuck' so the manager loop / UI can surface them. Idempotent.
+ *
+ * WHAT CHANGED AND WHY (2026-08-25). This used to be one blind UPDATE: stale
+ * heartbeat → 'stuck', no question asked about whether the process was alive.
+ * It is not. The executor is a single fork-mode process, so every heartbeat
+ * interval, this tick and projectTick() are timers on ONE event loop over ONE
+ * pg pool (max 5); when the loop stalls past the threshold the heartbeat and
+ * this tick come due together and race. The watchdog winning that coin flip
+ * cost ≥ $83.01 of finished work in one log window, because heartbeat() only
+ * writes `AND status = 'running'` and could never revive the row it flipped.
+ *
+ * So the flip now demands the ABSENCE of evidence of life rather than merely a
+ * stale timestamp: SELECT the candidates, take ONE /proc snapshot for the whole
+ * tick, and ask watchdogVerdict() per candidate. A dead run has neither an
+ * in-process owner nor a `claude` process carrying its session id, so it still
+ * flips — that negative case is the entire reason this watchdog exists, and it
+ * is re-proven every tick rather than granted a grace period.
+ *
+ * `ownedInProcess` is loop()'s `inFlight` map, passed in rather than hoisted to
+ * a module global so there stays exactly one ownership record. */
+async function stuckWatchdogTick(
+  ownedInProcess: (runId: string) => boolean,
+): Promise<void> {
   try {
-    const r = await pool.query<{ id: string }>(
+    const candidates = await pool.query<{
+      id: string;
+      session_id: string | null;
+      stale_ms: string;
+    }>(
+      `SELECT id::text,
+              metadata->>'cc_session_id' AS session_id,
+              EXTRACT(EPOCH FROM (now() - last_heartbeat_at)) * 1000 AS stale_ms
+         FROM runs
+        WHERE status = 'running'
+          AND last_heartbeat_at IS NOT NULL
+          AND last_heartbeat_at < now() - (interval '1 millisecond' * $1)`,
+      [HEARTBEAT_STUCK_THRESHOLD_MS],
+    );
+    if (candidates.rows.length === 0) return;
+
+    // ONE walk per tick, not one per candidate.
+    const liveSessionIds = liveSessionIdsAmong(
+      candidates.rows.map((row) => row.session_id),
+      await readEngineCmdlines(),
+    );
+
+    const doomed: string[] = [];
+    for (const row of candidates.rows) {
+      const owned = ownedInProcess(row.id);
+      const verdict = watchdogVerdict({
+        ownedInProcess: owned,
+        sessionId: row.session_id,
+        liveSessionIds,
+      });
+      if (verdict === "flip") {
+        doomed.push(row.id);
+        continue;
+      }
+      const instrument = owned
+        ? "an in-process turn owns it"
+        : `a live /proc session ${row.session_id}`;
+      console.warn(
+        `[watchdog] run ${row.id}: heartbeat ${Math.round(Number(row.stale_ms))}ms ` +
+          `stale (threshold ${HEARTBEAT_STUCK_THRESHOLD_MS}ms) but ${instrument} — ` +
+          `holding 'running' and refreshing the heartbeat`,
+      );
+      // Refresh so the next tick does not re-litigate the same candidate, and
+      // so a stall that is merely slow stops looking like death. Guarded on
+      // 'running' for the same reason every other write here is: an operator's
+      // pause/cancel landing while we walked /proc must not be overwritten.
+      await pool.query(
+        `UPDATE runs
+            SET last_heartbeat_at = now(), updated_at = now()
+          WHERE id = $1 AND status = 'running'`,
+        [row.id],
+      );
+    }
+    if (doomed.length === 0) return;
+
+    // The staleness predicate is REPEATED here on purpose: /proc was walked
+    // between the SELECT and this write, and a heartbeat that landed in that
+    // window must win. Without it this is a TOCTOU that flips a run which just
+    // proved itself alive.
+    const flipped = await pool.query<{ id: string }>(
       `UPDATE runs
           SET status = 'stuck',
               stuck_signal = COALESCE(stuck_signal, 'heartbeat_stale'),
               updated_at = now()
-        WHERE status = 'running'
+        WHERE id = ANY($2::uuid[])
+          AND status = 'running'
           AND last_heartbeat_at IS NOT NULL
           AND last_heartbeat_at < now() - (interval '1 millisecond' * $1)
         RETURNING id::text`,
-      [HEARTBEAT_STUCK_THRESHOLD_MS],
+      [HEARTBEAT_STUCK_THRESHOLD_MS, doomed],
     );
-    if (r.rowCount && r.rowCount > 0) {
+    if (flipped.rows.length > 0) {
       console.warn(
-        `[watchdog] flipped ${r.rowCount} stale 'running' run(s) to 'stuck' (heartbeat > ${HEARTBEAT_STUCK_THRESHOLD_MS}ms)`,
+        `[watchdog] flipped ${flipped.rows.length} stale 'running' run(s) to 'stuck' ` +
+          `(heartbeat > ${HEARTBEAT_STUCK_THRESHOLD_MS}ms, no live process): ` +
+          flipped.rows.map((row) => row.id).join(", "),
       );
     }
   } catch (e) {
@@ -1433,18 +1542,22 @@ async function stuckWatchdogTick(): Promise<void> {
   }
 }
 
-async function loop(): Promise<void> {
+/**
+ * @param inFlight Fire-and-forget map of in-flight processRun() calls, keyed by
+ * run id. We claim up to `limit` concurrently instead of awaiting each one
+ * before claiming the next — that's the whole change from v2.4's strictly
+ * serial loop. processRun() already never throws in normal operation (it
+ * catches internally and writes 'failed'/'stuck'); the .catch() here only
+ * guards against something escaping before that try block (e.g. memory
+ * prefetch). It is created by main() and handed to BOTH loops because it is
+ * also the watchdog's cheapest liveness instrument — a run this process is
+ * currently awaiting is alive by definition.
+ */
+async function loop(inFlight: Map<string, Promise<void>>): Promise<void> {
   console.log(
     `[executor] starting · pool=${POOL_URL} · keylen=${POOL_KEY.length}`,
   );
   let lastPauseLogAt = 0;
-  // Fire-and-forget map of in-flight processRun() calls, keyed by run id.
-  // We claim up to `limit` concurrently instead of awaiting each one before
-  // claiming the next — that's the whole change from v2.4's strictly serial
-  // loop. processRun() already never throws in normal operation (it catches
-  // internally and writes 'failed'/'stuck'); the .catch() here only guards
-  // against something escaping before that try block (e.g. memory prefetch).
-  const inFlight = new Map<string, Promise<void>>();
 
   while (running) {
     try {
@@ -1847,13 +1960,16 @@ async function pendingInputSweepTick(): Promise<void> {
   }
 }
 
-async function managerLoop(): Promise<void> {
+/** @param ownedInProcess reads loop()'s `inFlight` map — see stuckWatchdogTick. */
+async function managerLoop(
+  ownedInProcess: (runId: string) => boolean,
+): Promise<void> {
   console.log(`[manager] starting · hcp=${HCP_URL.replace(/:.+@/, ":***@")}`);
   // Stagger first tick to avoid hammering the DB at startup with the executor.
   await new Promise((r) => setTimeout(r, 4_000));
   while (running) {
     await managerTick();
-    await stuckWatchdogTick();
+    await stuckWatchdogTick(ownedInProcess);
     // Rescues messages stranded by a restart between E1 and E2 (07 §5). Beside
     // the stuck watchdog on purpose: both are cheap, idempotent UPDATEs that
     // repair rows no in-memory owner is left for.
@@ -1867,7 +1983,17 @@ async function managerLoop(): Promise<void> {
   await hcp.end().catch(() => {});
 }
 
-Promise.all([loop(), managerLoop()]).catch((e) => {
+async function main(): Promise<void> {
+  // The ONE ownership record, created here rather than as a module global so
+  // both loops demonstrably share the same Map and nothing else can reach it.
+  const inFlight = new Map<string, Promise<void>>();
+  await Promise.all([
+    loop(inFlight),
+    managerLoop((runId) => inFlight.has(runId)),
+  ]);
+}
+
+main().catch((e) => {
   console.error("[executor] fatal:", e);
   process.exit(1);
 });

@@ -24,6 +24,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import {
+  mintTakeoverTicket,
   resolveStreamMode,
   resolveStreamWarning,
   shotClock,
@@ -33,6 +34,7 @@ import {
   type BrowserShotRef,
   type BrowserStateSummary,
   type StreamMode,
+  type TakeoverTicketBody,
 } from "./browser-shots";
 import { SHOTS_FULLSCREEN_POLL_MS } from "./pollBudget";
 
@@ -146,6 +148,18 @@ export function StreamStyles() {
   );
 }
 
+/**
+ * The in-chat takeover ticket's lifecycle. `idle` is the whole point of the
+ * union: no ticket is minted until Konrad actually asks for manual control, so
+ * merely opening a fullscreen screenshot never touches the mint endpoint and
+ * never burns a jti.
+ */
+type TicketStatus =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; body: TakeoverTicketBody };
+
 export interface BrowserStreamViewerProps {
   shots: readonly ShotLike[];
   initialIndex?: number;
@@ -153,6 +167,12 @@ export interface BrowserStreamViewerProps {
   mode?: StreamMode;
   state?: BrowserStateSummary | null;
   isOpen?: boolean;
+  /**
+   * Which pane the modal opens on. The "Take Control" buttons in BrowserShots
+   * pass "manual" so one click lands in the live browser — the brief's goal
+   * sentence — instead of a still image plus a second click.
+   */
+  initialViewMode?: "screenshot" | "manual";
   onClose: () => void;
 }
 
@@ -163,12 +183,15 @@ export function BrowserStreamViewer({
   mode = "idle",
   state,
   isOpen = true,
+  initialViewMode = "screenshot",
   onClose,
 }: BrowserStreamViewerProps) {
   const [currentIndex, setCurrentIndex] = useState(
     Math.max(0, Math.min(initialIndex, Math.max(0, shots.length - 1))),
   );
-  const [viewMode, setViewMode] = useState<"screenshot" | "manual">("screenshot");
+  const [viewMode, setViewMode] = useState<"screenshot" | "manual">(initialViewMode);
+  const [ticket, setTicket] = useState<TicketStatus>({ kind: "idle" });
+  const [ticketAttempt, setTicketAttempt] = useState(0);
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
@@ -210,6 +233,34 @@ export function BrowserStreamViewer({
 
   const safeIndex = Math.max(0, Math.min(currentIndex, Math.max(0, liveShots.length - 1)));
   const currentShot = liveShots[safeIndex] ?? liveShots[0];
+
+  /**
+   * Mint a takeover ticket the moment manual mode is entered, and not before.
+   *
+   * A ticket is a 120s bearer credential for a socket that bypasses NextAuth, so
+   * it is minted per manual-mode entry rather than held: leaving manual mode
+   * drops it back to `idle`, and coming back mints a fresh one. `ticketAttempt`
+   * is what Retry bumps — the mint is a POST-shaped action wearing a GET, and it
+   * must re-run on demand even when nothing else changed.
+   */
+  useEffect(() => {
+    if (!isOpen || viewMode !== "manual") {
+      setTicket((prev) => (prev.kind === "idle" ? prev : { kind: "idle" }));
+      return;
+    }
+    let cancelled = false;
+    setTicket({ kind: "loading" });
+    mintTakeoverTicket(dirId)
+      .then((body) => {
+        if (!cancelled) setTicket({ kind: "ready", body });
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setTicket({ kind: "error", message: err.message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, viewMode, dirId, ticketAttempt]);
 
   // Focus trap and keyboard navigation
   useEffect(() => {
@@ -261,7 +312,9 @@ export function BrowserStreamViewer({
   if (!isOpen) return null;
 
   const currentSrc = currentShot ? shotSrc(currentShot.dirId, currentShot.name) : null;
-  const vncUrl = vncProxyUrl(dirId);
+  // Null until a ticket exists — vncProxyUrl is the security boundary and
+  // refuses to build a URL for a socket nothing would authenticate.
+  const vncUrl = ticket.kind === "ready" ? vncProxyUrl(dirId, ticket.body.ticket) : null;
 
   return (
     <div
@@ -523,10 +576,19 @@ export function BrowserStreamViewer({
               <span>
                 Manual Browser Takeover &middot; Authenticated Loopback Proxy (127.0.0.1)
               </span>
-              <span style={{ color: tokens.accent }}>Direct VNC Control Active</span>
+              <span style={{ color: tokens.accent }} data-takeover-ticket-state={ticket.kind}>
+                {ticket.kind === "ready"
+                  ? `${ticket.body.profile} · ticket expires ${new Date(
+                      ticket.body.expires_at,
+                    ).toLocaleTimeString()}`
+                  : ticket.kind === "loading"
+                    ? "minting ticket…"
+                    : "no ticket"}
+              </span>
             </div>
             {vncUrl ? (
               <iframe
+                key={ticket.kind === "ready" ? ticket.body.ticket : "no-ticket"}
                 src={vncUrl}
                 title="Live Browser Takeover"
                 style={{
@@ -540,16 +602,51 @@ export function BrowserStreamViewer({
             ) : (
               <div
                 className="mono"
+                data-takeover-fallback={ticket.kind}
                 style={{
                   flex: 1,
                   display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
                   alignItems: "center",
                   justifyContent: "center",
-                  color: tokens.bleed,
+                  color: ticket.kind === "loading" ? tokens.textMuted : tokens.bleed,
                   fontSize: 12,
+                  padding: 20,
+                  textAlign: "center",
                 }}
               >
-                Could not construct authenticated proxy URL for run {dirId}
+                {ticket.kind === "loading" ? (
+                  <span>minting takeover ticket for run {dirId}…</span>
+                ) : (
+                  <>
+                    {/* The reason, verbatim from the mint endpoint. A takeover
+                        that will not start is a thing Konrad has to read, not
+                        guess at from a blank canvas. */}
+                    <span style={{ maxWidth: 520, wordBreak: "break-word" }}>
+                      {ticket.kind === "error"
+                        ? `Could not start takeover for run ${dirId}: ${ticket.message}`
+                        : `No takeover ticket for run ${dirId} yet.`}
+                    </span>
+                    <button
+                      type="button"
+                      data-retry-takeover-ticket
+                      onClick={() => setTicketAttempt((n) => n + 1)}
+                      className="mono"
+                      style={{
+                        padding: "4px 12px",
+                        background: "transparent",
+                        color: tokens.textMuted,
+                        border: `1px solid ${tokens.borderDivider}`,
+                        borderRadius: 4,
+                        fontSize: 11,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>

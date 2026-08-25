@@ -23,6 +23,12 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 
+// The CONSUMER's idea of where the per-profile marker lives. Imported from
+// browser-takeover.ts on purpose: this file's job here is to pin a contract
+// between two modules that never import each other, and a restated literal
+// would agree with itself while the two sides drifted apart.
+import { PROFILE_MARKER_DIR } from "./browser-takeover.ts";
+
 const REPO_ROOT = new URL("../../../", import.meta.url).pathname;
 const SCRIPT = `${REPO_ROOT}scripts/research-browser.mjs`;
 const SCRIPT_URL = new URL("../../../scripts/research-browser.mjs", import.meta.url).href;
@@ -118,12 +124,13 @@ interface ResearchBrowser {
   OS_BASE_URL: string;
   takeoverUrl(runId: string, base?: string): string;
   browserStatePath(runId: string): string;
+  profileMarkerPath(runId: string, profile: string): string;
   writeBrowserStateMarker(input: {
     runId: string;
     profile: string;
     service: string;
     novncPort: number;
-  }): { written: boolean; reason?: string; path?: string };
+  }): { written: boolean; reason?: string; path?: string; profile_marker_path?: string };
   sanitiseLabel(label: unknown): string;
   sanitiseRunId(runId: unknown): string | null;
   isServableRunId(runId: string): boolean;
@@ -893,6 +900,31 @@ describe("buildLoginReminderText", () => {
 describe("browserStatePath / writeBrowserStateMarker", () => {
   test("the marker path is <UPLOADS_ROOT>/<runId>/browser_state.json", () => {
     assert.equal(rb.browserStatePath("0aa1fce7813c"), `${rb.UPLOADS_ROOT}/0aa1fce7813c/browser_state.json`);
+  });
+
+  /* Round-4 review, finding 3: browser_state.json is one file per RUN, so a run
+   * that drives two profiles keeps only the last writer's. The per-profile
+   * marker is keyed by run AND profile, and forge-control's
+   * resolveProfileForRun reads THIS directory first
+   * (browser-takeover.ts, PROFILE_MARKER_DIR). The two must agree on the layout
+   * or the marker is an orphan the viewer silently ignores. */
+  test("the per-profile marker is <UPLOADS_ROOT>/<runId>/browser-state/<profile>.json", () => {
+    assert.equal(
+      rb.profileMarkerPath("0aa1fce7813c", "os-ui"),
+      `${rb.UPLOADS_ROOT}/0aa1fce7813c/browser-state/os-ui.json`,
+    );
+    // Two profiles under ONE run get two files — that is the whole fix.
+    assert.notEqual(
+      rb.profileMarkerPath("0aa1fce7813c", "os-ui"),
+      rb.profileMarkerPath("0aa1fce7813c", "perplexity"),
+    );
+  });
+
+  test("the per-profile marker dir matches forge-control's PROFILE_MARKER_DIR", () => {
+    // Read from the consumer, not restated as a literal: a rename on either side
+    // must break this, which is the only reason the assertion is worth having.
+    const dir = rb.profileMarkerPath("0aa1fce7813c", "os-ui").split("/").at(-2);
+    assert.equal(dir, PROFILE_MARKER_DIR);
   });
 
   test("the ADHOC_RUN_ID sentinel is skipped — no run row will ever resolve it", () => {

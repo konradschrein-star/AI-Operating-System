@@ -50,12 +50,15 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AssistantRuntimeProvider,
   MessagePrimitive,
@@ -65,7 +68,8 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 import { tokens, dot } from "../../tokens";
-import type { RunDetail } from "../../api";
+import { fetchChatOlder, type RunDetail } from "../../api";
+import { toastError } from "../_ui/Toasts";
 import { MessageMarkdown, modifierLabel, openPathTarget } from "./MessageMarkdown";
 import { detectPath } from "./code-path-link";
 import { RichActionsProvider, RichMessage, type RichActions } from "./RichMessage";
@@ -1006,6 +1010,54 @@ const NO_PEERS: ReadonlyMap<string, PeerFacts> = new Map();
  *  engages where the freeze actually was. */
 const WINDOW_STEP = 60;
 
+/** Keeps the turns the reader was already looking at in view while older ones
+ *  are prepended above them.
+ *
+ * The viewport is a `flex: 1; overflow-y: auto` box, so its own border-box
+ * never resizes when content grows — only `scrollHeight` does — which rules
+ * out a ResizeObserver on the element itself. And a single React commit isn't
+ * a reliable place to read the final height either: prepending older turns
+ * touches two independent state owners (the React Query cache and this
+ * component's own windowSize) that land in separate commits, and even a
+ * freshly-mounted message can keep growing across a couple more paints as
+ * markdown and tool rows finish laying out. A short animation-frame poll
+ * sidesteps both problems — it reads whatever `scrollHeight` actually is on
+ * each frame, however many commits it took to get there, and stops once
+ * nothing has changed for `framesToWatch` (each observed growth compensates
+ * scrollTop by exactly that increment, so several late frames of growth
+ * accumulate correctly instead of double-counting).
+ *
+ * Bounded by quiet frames rather than a fixed count: "show older" (60 turns)
+ * settles in a couple of paints, but "show all" on a 1,800-turn backlog keeps
+ * laying out for longer, and a fixed budget short enough for the first case
+ * measurably undershot the second (79px of residual drift on an 85KB prepend,
+ * measured 2026-08-25). Stops after `quietFrames` in a row with no growth, or
+ * `maxFrames` regardless — the hard cap so a viewport that never stops
+ * resizing (a live stream tick landing mid-poll) can't pin this loop open. */
+function preserveScrollAnchor(
+  el: HTMLDivElement,
+  prevScrollHeight: number,
+  quietFrames = 6,
+  maxFrames = 90,
+): void {
+  let lastHeight = prevScrollHeight;
+  let framesSinceGrowth = 0;
+  let frame = 0;
+  const tick = () => {
+    const h = el.scrollHeight;
+    if (h !== lastHeight) {
+      el.scrollTop += h - lastHeight;
+      lastHeight = h;
+      framesSinceGrowth = 0;
+    } else {
+      framesSinceGrowth += 1;
+    }
+    frame += 1;
+    if (frame < maxFrames && framesSinceGrowth < quietFrames) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 export interface AssistantThreadProps {
   run: RunDetail;
   /** Defaults to `raw` — the manager chat and ProjectsSurface are unchanged. */
@@ -1065,18 +1117,106 @@ export function AssistantThread({
    * complete, so the ledger, the digest and every count still describe the
    * whole transcript. A window that also shrank the numbers would make the UI
    * lie about what it holds. */
+  const qc = useQueryClient();
   const [windowSize, setWindowSize] = useState(WINDOW_STEP);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const viewportRef = useRef<HTMLDivElement>(null);
+
   /* Reset on identity change: otherwise opening a short chat after a long one
    * keeps a grown window, and the reverse silently truncates. */
   useEffect(() => {
     setWindowSize(WINDOW_STEP);
+    setIsLoadingOlder(false);
   }, [run.id, scopeKind, scopeSubagentId]);
 
-  const hiddenCount = Math.max(0, messages.length - windowSize);
+  const from = run.from ?? 0;
+  const localHiddenCount = Math.max(0, messages.length - windowSize);
+  const totalHidden = from + localHiddenCount;
+  const hasOlder = totalHidden > 0;
+
   const windowed = useMemo(
-    () => (hiddenCount > 0 ? messages.slice(hiddenCount) : messages),
-    [messages, hiddenCount],
+    () => (localHiddenCount > 0 ? messages.slice(localHiddenCount) : messages),
+    [messages, localHiddenCount],
   );
+
+  const handleShowOlder = useCallback(async () => {
+    if (isLoadingOlder) return;
+    if (from > 0) {
+      setIsLoadingOlder(true);
+      try {
+        const older = await fetchChatOlder(run.id, from, WINDOW_STEP);
+        const el = viewportRef.current;
+        const prevScrollHeight = el?.scrollHeight;
+        qc.setQueryData<RunDetail>(["chat", "run", run.id], (prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            thread: [...older.run.thread, ...prev.thread],
+            from: older.from,
+            total: older.total,
+          };
+        });
+        setWindowSize((w) => w + older.run.thread.length);
+        if (el && prevScrollHeight !== undefined) preserveScrollAnchor(el, prevScrollHeight);
+      } catch (err) {
+        toastError("Failed to load older turns", err);
+      } finally {
+        setIsLoadingOlder(false);
+      }
+    } else if (localHiddenCount > 0) {
+      const el = viewportRef.current;
+      const prevScrollHeight = el?.scrollHeight;
+      setWindowSize((n) => n + WINDOW_STEP);
+      if (el && prevScrollHeight !== undefined) preserveScrollAnchor(el, prevScrollHeight);
+    }
+  }, [isLoadingOlder, from, run.id, localHiddenCount, qc]);
+
+  const handleShowAll = useCallback(async () => {
+    if (isLoadingOlder) return;
+    if (from > 0) {
+      setIsLoadingOlder(true);
+      try {
+        let currentFrom = from;
+        let allOlder: typeof run.thread = [];
+        let finalFrom = currentFrom;
+        let finalTotal = run.total;
+        while (currentFrom > 0) {
+          const older = await fetchChatOlder(run.id, currentFrom, 500);
+          allOlder = [...older.run.thread, ...allOlder];
+          finalFrom = older.from;
+          finalTotal = older.total;
+          if (older.from >= currentFrom || older.run.thread.length === 0) {
+            break;
+          }
+          currentFrom = older.from;
+        }
+        const el = viewportRef.current;
+        const prevScrollHeight = el?.scrollHeight;
+        qc.setQueryData<RunDetail>(["chat", "run", run.id], (prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            thread: [...allOlder, ...prev.thread],
+            from: finalFrom,
+            total: finalTotal,
+          };
+        });
+        setWindowSize((w) =>
+          Math.max(w + allOlder.length + localHiddenCount, messages.length + allOlder.length),
+        );
+        if (el && prevScrollHeight !== undefined) preserveScrollAnchor(el, prevScrollHeight);
+      } catch (err) {
+        toastError("Failed to load all older turns", err);
+      } finally {
+        setIsLoadingOlder(false);
+      }
+    } else if (localHiddenCount > 0) {
+      const el = viewportRef.current;
+      const prevScrollHeight = el?.scrollHeight;
+      setWindowSize((w) => w + localHiddenCount);
+      if (el && prevScrollHeight !== undefined) preserveScrollAnchor(el, prevScrollHeight);
+    }
+  }, [isLoadingOlder, from, run.id, run.total, localHiddenCount, messages.length, qc]);
 
   const isRunning = run.status === "running" || run.status === "queued";
 
@@ -1099,6 +1239,7 @@ export function AssistantThread({
             >
               <CommsLedger thread={run.thread} />
               <ThreadPrimitive.Viewport
+                ref={viewportRef}
                 className="scroll-tinted"
                 style={{
                   flex: 1,
@@ -1122,7 +1263,7 @@ export function AssistantThread({
                     empty thread
                   </div>
                 )}
-                {hiddenCount > 0 && (
+                {hasOlder && (
                   <div
                     style={{
                       display: "flex",
@@ -1135,36 +1276,44 @@ export function AssistantThread({
                     <button
                       type="button"
                       className="mono"
-                      onClick={() => setWindowSize((n) => n + WINDOW_STEP)}
+                      onClick={handleShowOlder}
+                      disabled={isLoadingOlder}
                       style={{
                         fontSize: 10.5,
                         letterSpacing: "0.04em",
                         padding: "6px 14px",
                         borderRadius: 6,
-                        cursor: "pointer",
+                        cursor: isLoadingOlder ? "not-allowed" : "pointer",
                         color: tokens.textMuted,
                         background: tokens.bgCard,
                         border: `1px solid ${tokens.borderDivider}`,
+                        opacity: isLoadingOlder ? 0.7 : 1,
                       }}
                     >
-                      show {Math.min(WINDOW_STEP, hiddenCount)} older
+                      {isLoadingOlder
+                        ? "loading older…"
+                        : `show ${Math.min(WINDOW_STEP, totalHidden)} older`}
                     </button>
                     <button
                       type="button"
                       className="mono"
-                      onClick={() => setWindowSize(messages.length)}
+                      onClick={handleShowAll}
+                      disabled={isLoadingOlder}
                       style={{
                         fontSize: 9.5,
                         letterSpacing: "0.04em",
                         padding: 0,
                         border: "none",
                         background: "none",
-                        cursor: "pointer",
+                        cursor: isLoadingOlder ? "not-allowed" : "pointer",
                         color: tokens.textFaint,
+                        opacity: isLoadingOlder ? 0.7 : 1,
                       }}
                       title="Mounts every remaining message at once. On a very long transcript this is the slow path — it is what the window exists to avoid."
                     >
-                      {hiddenCount} older hidden · show all
+                      {isLoadingOlder
+                        ? "loading all…"
+                        : `${totalHidden} older hidden · show all`}
                     </button>
                   </div>
                 )}
