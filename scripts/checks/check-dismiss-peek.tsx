@@ -262,8 +262,26 @@ for (const state of ["normal", "peeked-restorable", "peeked-with-parent"] as Sta
  *  not end the slice early. Throws rather than returning a short slice — a
  *  silently truncated element would make every assertion below vacuous. */
 function element(source: string, attrName: string): string {
-  const at = source.indexOf(attrName);
-  if (at < 0) throw new Error(`${attrName} is not in the source at all`);
+  /* THE ATTRIBUTE, not the first MENTION of its name (round 1875).
+   *
+   * `data-team-restore-all` occurs earlier in the panel inside a selector
+   * string — `t.closest("[data-team-restore-all]")` in the disarm effect — and
+   * `indexOf` found that one. The `lastIndexOf("<")` before it then landed
+   * inside a TypeScript generic (`useRef<{ … } | null>`), so the forward scan
+   * started nowhere in particular and ended wherever the braces first balanced
+   * at a `/>`. It happened to run past the footer button, so the assertions
+   * below passed — by luck, not by construction.
+   *
+   * Round 1875 added ONE self-closing JSX tag above the footer, the scan
+   * stopped 5.3 kB short of the button, and two assertions went red with
+   * nothing wrong in the code they measure. An attribute is preceded by
+   * whitespace and followed by `=`, whitespace or `>`; a selector string is
+   * neither, so anchoring on that shape starts the slice at the real tag. */
+  const m = new RegExp(`\\s${attrName}(?=[=\\s>])`).exec(source);
+  if (m === null) {
+    throw new Error(`${attrName} is not used as a JSX attribute in the source`);
+  }
+  const at = m.index + 1;
   const open = source.lastIndexOf("<", at);
   if (open < 0) throw new Error(`no opening tag before ${attrName}`);
   const tagName = /^<\s*([A-Za-z][\w.]*)/.exec(source.slice(open))?.[1];

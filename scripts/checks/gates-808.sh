@@ -217,6 +217,13 @@ gate_sh "check-frontmatter.ts — a note's YAML block is a meta strip, and the b
 gate_sh "check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)" \
   "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-confirm.ts | tail -2"
 
+# ── aios-sidebar-live-sessions round 2 ─────────────────────────────────────
+# The LIVE SESSIONS block's three pure modules. Registered here rather than left
+# to be run by hand for the reason the fleet has written down twice: a check
+# nobody executes proves that it compiles and nothing else.
+gate_sh "check-live-sessions.ts — live predicate, engine badge map, activity/elapsed degrade rules" \
+  "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-live-sessions.ts | tail -2"
+
 # ── aios-autonomy-automation round 5 ───────────────────────────────────────
 # Five "View Run in Chat" / "Settings → Connections" affordances shipped as
 # `<a>` elements pointing at a query string this one-route console has never

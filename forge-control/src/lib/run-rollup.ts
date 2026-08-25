@@ -85,6 +85,17 @@ interface RunRollup {
    *  during a turn. */
   usageLast: CcTokenUsage;
   currentActivity: CurrentActivityRollup | null;
+  /** `tool_use_id` → tool name, for PARENT tool calls still awaiting their
+   *  result. Exists so a `tool_result` can name the tool it answers — see
+   *  the header on the tool_result branch of `ingestEvent`.
+   *
+   *  Self-bounding: an entry is deleted the moment its result arrives, so the
+   *  map holds only the calls actually in flight (one, or a handful when the
+   *  model batches parallel calls). `PENDING_TOOL_CAP` is the backstop for
+   *  the case where a result never arrives at all — a killed run, or a Task
+   *  spawn whose parent exits first — since those entries would otherwise
+   *  live until `finalizeRollup`. */
+  pendingTools: Map<string, string>;
   subagents: Map<string, SubagentRollup>;
   /** Model reported on the most recent parent assistant message. */
   lastModel: string | null;
@@ -100,6 +111,21 @@ const state = new Map<string, RunRollup>();
 
 const FLUSH_INTERVAL_MS = 2_000;
 
+/** Hard ceiling on `pendingTools`. Only reached when tool results stop
+ *  arriving, so the oldest un-answered call is the right one to forget. */
+const PENDING_TOOL_CAP = 64;
+
+/** Remember which tool a parent `tool_use_id` belongs to, oldest evicted
+ *  first (a `Map` iterates in insertion order). */
+function rememberPendingTool(s: RunRollup, toolUseId: string, tool: string): void {
+  s.pendingTools.set(toolUseId, tool);
+  while (s.pendingTools.size > PENDING_TOOL_CAP) {
+    const oldest = s.pendingTools.keys().next();
+    if (oldest.done) break;
+    s.pendingTools.delete(oldest.value);
+  }
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -112,6 +138,7 @@ function ensure(runId: string): RunRollup {
       usageTotal: { ...EMPTY_USAGE },
       usageLast: { ...EMPTY_USAGE },
       currentActivity: null,
+      pendingTools: new Map(),
       subagents: new Map(),
       lastModel: null,
       dirty: false,
@@ -198,9 +225,13 @@ export function ingestEvent(runId: string, e: CcEvent): void {
       }
       if (!parent) {
         // Parent-run tool call — becomes the "current activity" label.
+        const toolName = typeof e.toolName === "string" ? e.toolName : null;
+        if (typeof e.toolUseId === "string" && e.toolUseId !== "" && toolName) {
+          rememberPendingTool(s, e.toolUseId, toolName);
+        }
         s.currentActivity = {
           kind: "tool_call",
-          tool: typeof e.toolName === "string" ? e.toolName : null,
+          tool: toolName,
           text: null,
           ts,
         };
@@ -228,9 +259,33 @@ export function ingestEvent(runId: string, e: CcEvent): void {
           sub.ended_at = ts;
           sub.updated_at = ts;
         }
+        /* ── The tool_result hole ────────────────────────────────────────────
+         *
+         * This used to write `tool: null`, and every reader of it renders a
+         * blank: `activityLabel` (live/AgentActivity.tsx) returns "" for a
+         * tool_result outright. Replaying this state machine over 338 runs of
+         * `runs.thread` shows the parent sits in `tool_result` for 58.8-75.3%
+         * of live wall-clock — a tool returns in milliseconds and the model
+         * then thinks for seconds — so the "what is it doing right now" column
+         * would be empty most of the time it is looked at.
+         *
+         * The range is the measurement's honest width: the share depends on
+         * the idle-gap cap that defines "live", 68.3% at a 120 s cap. Method,
+         * raw counts and the re-runnable instrument are in
+         * `evidence/aios-sidebar-live-sessions/activity-truth.md` §2-§4; it is
+         * NOT the bare "60.8%" round 0 published against no artefact.
+         *
+         * The answering tool's name is the honest label for that state: the
+         * agent is digesting what `Bash` just returned. It costs one map
+         * lookup and no new event, and it makes the cell correct even while
+         * the flush throttle below is still serving the preceding tool_call —
+         * both states now render the same tool name.
+         */
+        const answering = s.pendingTools.get(e.toolUseId) ?? null;
+        s.pendingTools.delete(e.toolUseId);
         s.currentActivity = {
           kind: "tool_result",
-          tool: null,
+          tool: answering,
           text: null,
           ts,
         };
@@ -359,4 +414,27 @@ export async function finalizeRollup(runId: string): Promise<void> {
 /** Test-only reset. */
 export function _resetForTests(): void {
   state.clear();
+}
+
+/** Test-only read of the in-memory rollup for one run.
+ *
+ *  Exists because `pendingTools` is otherwise observable only through a
+ *  `flush()` to Postgres, which would make the unit suite need a database —
+ *  see the header of `run-rollup.test.ts`. Returns a shallow copy so a test
+ *  cannot mutate executor state through it, and `null` when the run has no
+ *  rollup (never seen, or already finalized). */
+export function _snapshotForTests(runId: string): {
+  currentActivity: CurrentActivityRollup | null;
+  pendingTools: [string, string][];
+  subagents: SubagentRollup[];
+  lastModel: string | null;
+} | null {
+  const s = state.get(runId);
+  if (!s) return null;
+  return {
+    currentActivity: s.currentActivity === null ? null : { ...s.currentActivity },
+    pendingTools: Array.from(s.pendingTools.entries()),
+    subagents: Array.from(s.subagents.values()),
+    lastModel: s.lastModel,
+  };
 }

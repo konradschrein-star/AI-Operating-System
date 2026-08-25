@@ -51,6 +51,27 @@ export interface TeamTask {
   status: string;
 }
 
+/** What a live node is doing right now. Mirrors `LiveActivity` in
+ *  forge-control/src/lib/team-live.ts (the shape `projectActivity` puts on the
+ *  wire), renamed to this file's `Team*` convention.
+ *
+ *  `kind` is the only load-bearing field and is never empty: the server drops
+ *  the whole object rather than shipping one with nothing to render. The other
+ *  three are independently nullable — a `tool_result` that answers no known
+ *  tool carries `tool: null`, and an activity stamped by a writer with no
+ *  clock carries `ts: null`, which is what makes "how old is this value"
+ *  answerable-or-not rather than silently zero. */
+export interface TeamActivity {
+  /** `"tool_call"` | `"tool_result"` | `"assistant_text"` today. Typed as a
+   *  string because the rollup owns this vocabulary and may extend it; the
+   *  client renders an unseen kind as itself (./liveSessions `activityText`). */
+  kind: string;
+  tool: string | null;
+  /** Already clipped server-side to `ACTIVITY_TEXT_CAP`. */
+  text: string | null;
+  ts: string | null;
+}
+
 /** U4's token block. `total` is the sum of the other four — the server does
  *  that math, the client never re-derives it. No cost, no dollars (U11). */
 export interface TeamTokens {
@@ -106,6 +127,29 @@ export interface TeamNode {
   /** Present on run nodes; always empty on sub-agents (they do not nest). */
   subagents: TeamNode[];
   task: TeamTask | null;
+  /** WHICH ENGINE is running this node, derived by the server FROM THE MODEL
+   *  (`badgeEngineForModel`, forge-control/src/lib/team-live.ts) — never from
+   *  `metadata.engine`, which records the dispatch branch and pairs
+   *  `claude-code` with a Gemini model on 46 measured rows.
+   *
+   *  `null` means the model was never recorded, and the server refuses to
+   *  default it: `engineForModel(null)` is `"claude-code"`, which is correct
+   *  for routing and a lie on a badge. Optional on the type — and `undefined`
+   *  is a THIRD state, not a synonym for null: it means this console is newer
+   *  than the API answering it. Both print "—"; they differ in what the
+   *  tooltip tells you to go and fix (./liveSessions `FieldGap`). */
+  engine?: string | null;
+  /** What this node is doing right now — the rollup's `current_activity` for a
+   *  run, `latest_activity` for a sub-agent.
+   *
+   *  Shipped ONLY on non-settled nodes, so the response grows with the number
+   *  of LIVE sessions (typically under ten) and not with the tree (measured at
+   *  165 rows). `undefined` vs `null` carries the same absent-vs-measured
+   *  distinction as `engine` above, and for the same reason: a newer client
+   *  must not start claiming ignorance about every row of an older API — the
+   *  precedent is `tokens_measured`, whose `undefined` reads as the old
+   *  behaviour rather than as "unmeasured". */
+  activity?: TeamActivity | null;
 }
 
 /** One project that claims this chat. Mirrors `ChatProjectCandidate` in

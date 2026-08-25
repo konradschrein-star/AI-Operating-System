@@ -1,142 +1,205 @@
-# Plan: aios-chat-reference-navigation
+# aios-sidebar-live-sessions — plan
 
-Architect round 0, 2026-08-25. Every claim below was read from the code or observed
-in a real browser (screenshots under `/opt/ai-os/uploads/051c7e2a92b5/`).
+**Goal (Konrad's words):** the chat right-hand panel must answer, at a glance,
+WHO is working, ON WHICH ENGINE, ON WHAT, and FOR HOW LONG.
 
-## Recommendation, in one paragraph
+**Shape:** one row per live session — engine badge · model · task title · what
+it is doing right now · elapsed.
 
-Port the uncommitted live-checkout work onto this branch first (it is the sole copy),
-then extend it along five disjoint file clusters in parallel workstreams: **detect**
-(`code-path-link.ts`: `path:line`, folders, wikilink parsing, false-positive fixes,
-memory root), **preview** (`FilePreview.tsx`: frontmatter strip, line-numbered code
-viewer with a highlighted line, real previews per format), **panel**
-(`FileExplorerPanel`/`VaultFileList`/bus: reveal + flash the opened entry, open folders,
-carry the line), **markdown** (`MessageMarkdown.tsx` + a tiny remark wikilink plugin,
-resolution order, pending state, no-listener fallback, restrained discoverability),
-and **test** (a committed Playwright regression test that clicks a pill from the Team
-tab). Server work is one small task in `main` (a read-only `memory` root). One reviewer
-joins everything; one deploy/verify task ends it with live screenshots.
+---
 
-## What I found (facts, not the brief's claims)
+## Recommendation
 
-1. **The "already done" work is the SOLE COPY.** `code-path-link.ts`, `open-file-bus.ts`
-   and the hunks in `MessageMarkdown.tsx`, `FileExplorerPanel.tsx`, `ChatSurface.tsx`,
-   `routes/files.ts` exist only as uncommitted edits in `/opt/forge-ai-os`
-   (`git log --all -S consumePendingOpenFile` → nothing). Preserved:
-   `/opt/ai-os/uploads/051c7e2a92b5/live-chat-ref-nav-tracked.patch` (4 tracked files,
-   re-snapshotted after the manager's `readOnly` edit) plus `live-code-path-link.ts`,
-   `live-open-file-bus.ts`, `live-detect-test.mts`. Round 1 ports them. The live
-   checkout is NOT to be edited or reverted by anyone in this project — deploy handles it
-   with Konrad's explicit OK (protocol: `live-checkout-dirty-protocol`).
-2. **`routes/files.ts` was never read-only.** `PUT /files/write` has been on main since
-   `ad35016` (the LIBRARY editor). The manager has since added `readOnly: true` on
-   `aios`/`forge-src` in the live file and `/write` answers 403 (verified live). That
-   edit is inside the preserved patch and ships with the port.
-3. **R1 is satisfied at the API level**: after the 02:5x restart `/api/files/roots`
-   lists `aios` and `forge-src`; `/read?root=forge-src&path=docs/plan/03-quality.md` →
-   200, 28 KB. In the browser the pills render with `data-openable-path` on the live
-   build (BUILD_ID 02:50 contains the attribute). A click on an absolute `forge-src`
-   pill could not be photographed: the thread is windowed ("show 60 older"), so older
-   pills are not in the DOM, and worker reports render in the collapsed AGENT COMMS
-   strip. The deploy/verify task proves it with a seeded message.
-4. **A clicked `.ts/.tsx/.py` file cannot render.** `FilePreview` (used by BOTH the Files
-   panel and `/document`) knows only `.md .txt .json .csv` + media; everything else is
-   "no inline preview — download". The line-numbered viewer exists only in
-   `MediaDocumentViewer` (Library surface). This is what Konrad's "still don't open up
-   in a proper way" and his later "proper inline previews for the different file formats"
-   are about. D1 is impossible without fixing this.
-5. **Bare names resolve slowly and to the wrong tree.** `SEARCH_ROOTS` walks `workspace`
-   before `forge-src`; `MessageMarkdown.tsx` has 46 copies under `workspace/projects/*`
-   and 1 under `forge-src`. Live click on `ChatSurface.tsx`: 4 s later nothing visible,
-   panel still on Team, no toast (shot `20260825T010724Z-r1-bare-chatsurface-after.png`).
-   There is no pending state while the searches run.
-6. **False affordances exist today**: `.txt`, `.md .txt .json .csv`,
-   `.ts .tsx .js .py .sh .sql` are marked openable on the live page (dead clicks).
-7. **D6**: `resolveInRoot`'s dot-segment guard inspects only the root-RELATIVE path
-   (`files.ts:76`), so a root whose own directory contains `.claude` is fine. Decision:
-   add a dedicated read-only root `memory` → `/root/.claude/projects/-opt-forge-ai-os/memory`.
-8. **D8**: `MobileApp.tsx` renders no chat at all (control tabs only). Nothing to make
-   work. The markdown task adds a fallback: if no Files panel is listening, a click
-   navigates to `/document` in the same tab — so any surface without a panel still opens
-   the file instead of doing nothing.
-9. `metadata.tier_pin = flagship` on this project overrides every per-task tier. Reported
-   to the manager chat with a choice block; tiers below are set honestly anyway.
-10. `aios-sidebar-live-sessions` has not touched `ChatSurface.tsx` yet (its toggle task is
-    round 3, pending). Our only change to that file is the 16-line subscribe effect at
-    ~line 711 — far from the right-panel block. Keep it that way.
+**Widen the response the panel already polls; add one block above the tree that
+already exists. No new endpoint, no new poll, no new stored state.**
 
-## Design decisions (owner of state / dispatch / failure / visibility)
+1. **Server** — `GET /api/chat/:id/team` (`forge-control/src/routes/chat.ts:629`,
+   node shaper `teamNodeFromRun` at `:511`) gains two fields per `TeamNode`:
+   - `engine: string | null` — derived from the **model**, server-side, by
+     importing `engineForModel` from `forge-control/src/lib/engine-session.ts`.
+     Never `metadata.engine`.
+   - `activity: { kind, tool, text, ts } | null` — for a run node from
+     `run.current_activity` (already on the `AgentRun` that
+     `teamNodeFromRun` receives — `agents-shared.ts:684` populates it via
+     `pickCurrentActivity`); for a sub-agent from `sub.latest_activity`.
+     **Shipped only on non-settled nodes**, and `text` truncated server-side,
+     so the payload grows with the number of LIVE sessions (typically < 10),
+     not with the size of the tree (measured trees reach 165 rows).
 
-- **State**: the Files panel owns navigation + selection (unchanged). The bus carries one
-  request `{root, path, line?, isDir?}` with the latch (unchanged, load-bearing).
-  `requestOpenFile` returns the listener count so a caller can tell "nobody heard".
-- **Dispatch**: `MessageMarkdown` resolves → `requestOpenFile`. Resolution moves into
-  `resolve-path.ts` (shared with `/document`). Order: vault → forge-src → aios →
-  uploads → memory → workspace, and inside workspace non-`projects/` paths rank first.
-- **Failure**: every miss toasts (kept); resolution longer than ~1 s shows a pending
-  state; zero listeners → `window.location.assign(/document…)`. No silent branch anywhere.
-- **Visibility**: the regression test asserts tab flip + zero new tabs + rendered content.
-- **Wikilinks (D2)**: a 40-line remark plugin (no dependency) turns `[[Note]]`,
-  `[[Note|Alias]]`, `[[Note\|Alias]]` (table escape), `[[Note#Heading]]`,
-  `[[Dir/Note]]` into a `link` node with `href=/document?wikilink=<name>`. That href
-  passes `safeHref` (same-origin relative) and the allowlist keeps `href` on `a`; the
-  `a` component override — our code, not markup — intercepts `/document?…` hrefs on
-  plain click. NO rehype-raw. Both gates stay.
-- **Frontmatter (D3)**: `splitFrontmatter()` pure helper; rendered as a compact
-  mono meta strip above the body, never as prose.
-- **Discoverability (D7), default pending Konrad**: openable pills take the link colour
-  (`var(--v2-accent)`) with the existing dotted underline; other pills unchanged. Nothing
-  else. Escalated with alternatives.
-- **Attach (D9)**: no new pill affordance. After D4 the clicked file is selected and
-  revealed, so the panel's existing "attach" button is one click away.
-- Rejected: server-side `/files/resolve` (cleaner, but a new API shape while the client
-  resolver already works); adopting `MediaDocumentViewer` in the panel (900 lines with an
-  edit mode — the chat must not grow an editor); rehype wikilink plugin (would run inside
-  the sanitised tree; remark is earlier and simpler); a badge on every pill (D7).
+   Zero new SQL: both values are already selected and already parsed.
+   `TEAM_RUN_COLUMNS` pulls `metadata`; nothing new is read, stored or written.
 
-## Task graph (ids appended below after seeding)
+2. **Client** — a `LIVE SESSIONS` block pinned above the existing team tree
+   inside `ChatTeamPanel`, rendering one row per non-settled node out of the
+   **same `TeamResponse` already in the react-query cache**. Columns in
+   Konrad's order: engine badge, model, task title, current activity, elapsed.
+   The tree below it is unchanged; the PLAN split (`PLAN_FRACTION_KEY`) and its
+   drag handle are untouched.
 
-Workstreams: main, detect, preview, panel, markdown, test (6 = the cap).
+3. **The badge is data-driven, and ships two engines.** A `Record<string,
+   BadgeStyle>` keyed by engine string, with an explicit fallback that renders
+   an unknown engine's **raw string** in a neutral token. Adding a third engine
+   later is one map entry. **There is no codex badge** — see Findings.
 
-- R0 `main` **port** — apply the preserved patch, port the 18 detect cases into
-  `scripts/checks/check-code-path-link.ts`, wire the gate. Everything depends on it.
-- R1 parallel: `detect` (A), `preview` (B), `panel` (C), `main` server `memory` root (D),
-  `test` Playwright regression (E).
-- R2: integrations of detect / preview / panel back into `project/ecacba29`.
-- R3: `markdown` (F) — depends on the detect + panel integrations (it consumes both).
-- R4: `/document` page (G, markdown workstream). R5: markdown integration.
-- R6: extend the regression test with D1–D6 cases (H, test workstream) after all
-  integrations. R7: test integration. R8: ONE reviewer. R9: deploy + verify on live.
+4. **`engine: null` when the model is unknown.** `engineForModel(null)` returns
+   `"claude-code"` and is right to: for *dispatch*, an unknown model must never
+   silently become Gemini. For a *badge* that same default asserts a fact
+   nobody measured. So the server calls it only for a non-empty model and ships
+   `null` otherwise; the row prints `—`.
 
-## Constraints every builder inherits
+## Why
 
-- Work only in this project's worktrees. Never edit `/opt/forge-ai-os`. Never restart
-  forge-executor. forge-control restarts only via the deploy task's safe-restart.
-- `pnpm install --frozen-lockfile --prod=false` before any gate; typecheck takes ~150 s —
-  raise the Bash timeout.
-- `MessageMarkdown.tsx`: memo on `source` alone; no rehype-raw; allowlist + urlTransform.
-- `routes/files.ts`: no new write verb; every new root is `readOnly: true`.
-- No new poll. `fetchFileRoots` stays a cached module promise.
-- Read `/root/.claude/projects/-opt-forge-ai-os/memory/MEMORY.md` first; the browser
-  harness notes there (`playwright-driver-two-launch-traps`,
-  `nextauth-salt-must-equal-cookie-name`, `stale-session-cookie-fakes-a-perfect-score`,
-  `real-client-network-capture-recipe`, `chat-renders-shots-two-shapes`) cost hours each.
+- **The model is the only trustworthy engine key.** Over the last 7 days, 46
+  rows carry `engine = claude-code` and a Gemini model — residue of the
+  engine-key collision fixed 2026-08-25. A badge reading `metadata.engine`
+  lies on those rows. `engineForModel` defers to `isGeminiModel`, the same
+  predicate the real dispatcher uses, so the badge cannot drift from routing.
+- **The data is already on the wire, one poll away.** `/chat/:id/team` polls at
+  `TEAM_POLL_MS = 10_000` and *stops entirely* once `isTreeSettled` is true
+  (`ChatTeamPanel.tsx:395`). It already carries `model`, `status`, `tokens`,
+  `working_ms`, `started_at`, `description` and the joined `task {round, role,
+  title, status}`. Only the engine and the activity are missing. The chat
+  surface has a committed **40 req/min ceiling** (`pollBudget.ts`); this design
+  spends zero additional requests.
+- **The panel is not rebuilt, it is extended.** Dismissals, the ✕ cascade
+  guard, stop/terminate, the peek group and the `memo` identity work that
+  round 1302 measured all live in the tree. A live block *above* it adds the
+  intel Konrad is missing without reopening any of that.
 
-## Seeded task ids (2026-08-25)
+## Rejected alternatives
 
-- 0c92ecdf-7dba-4ced-af77-5d0006b21b21 builder r0 [main] Port the live chat-reference-navigation patch onto the branch + detect unit check
-- 07002755-264f-4ec0-8f66-68e7649f6ad2 builder r1 [detect] detectPath: line refs, folders, wikilink parsing, memory root, no false affordances
-- 8c875963-ef2f-4306-b694-8539811cc57e builder r1 [preview] FilePreview: frontmatter strip, line-numbered code viewer with highlighted line, real previews per format
-- e462d94a-d6bc-484b-ad20-93e4c6c23b7b builder r1 [panel] Files panel: reveal + flash the opened entry, open folders, carry the line, bus listener count
-- 7f57052a-1c5c-407d-816e-3dc4b5cbc6c2 builder r1 [main] files.ts: read-only memory root for the fleet knowledge base + node:test for readOnly and roots
-- 155bcf50-e3b5-4579-90fe-dd4e5dcccee8 builder r1 [test] Playwright regression: click a path pill from the Team tab, assert tab flip, no new tab, content rendered
-- ff136563-a4eb-43d8-a435-4cfc9a768a64 builder r2 [main] Integrate workstream detect into project/ecacba29
-- 3c047062-3f60-4303-8956-f9e27a7daea8 builder r2 [main] Integrate workstream preview into project/ecacba29
-- 8f48e1c4-de49-498e-8953-556269d3a63a builder r2 [main] Integrate workstream panel into project/ecacba29
-- e99810f4-285a-45f4-9e44-6878bda3583c builder r3 [markdown] MessageMarkdown: wikilinks, line refs, resolution order, pending state, no-listener fallback, discoverability
-- f687d7f7-f1c6-46fc-a6cb-a966b50f71aa builder r4 [markdown] /document: accept ?line= and ?wikilink= via the shared resolver
-- 796e0c33-377e-4a29-bfe7-f56ae61b3b62 builder r5 [main] Integrate workstream markdown into project/ecacba29
-- 27ed1984-3a1c-4dce-a852-cc7f77bc40e1 builder r6 [test] Extend the regression test: line highlight, wikilink, folder, frontmatter strip, memory root, dead-pill guard
-- d6fa60e3-2ea7-40b6-9685-b9fbfdcc91a4 builder r7 [main] Integrate workstream test into project/ecacba29
-- 3d7b732c-8910-4ab3-81fe-f8619ccd0431 reviewer r8 [main] Review chat reference navigation: the whole diff of project/ecacba29 against main
-- f7232d26-b44f-486c-a3ff-084ddda3a99b builder r9 [main] Deploy chat reference navigation to live and verify by clicking, with screenshots
+- **New `/api/live-sessions` poll** — buys nothing the widened response does not
+  already carry, and every new poll on this surface must be paid for by slowing
+  an existing one.
+- **Render `metadata.engine`** — wrong on 46 measured rows; that is the trap.
+- **Derive the engine client-side from the model string** — a second copy of
+  `isGeminiModel` that will drift from the dispatcher within one model release.
+- **Fleet-wide via `/api/agents` from the chat panel** — that endpoint carries a
+  24h window including completed runs; a new poll plus a payload regression on
+  the surface that was just cut from 2.5 MB to 1.7 KB.
+- **Replace the tree with the live list** — throws away dismissals, the stop
+  verbs, sub-agent lineage and the peek, all of which took several rounds.
+
+## What owns what
+
+| Question | Answer |
+|---|---|
+| What owns state | `runs.metadata` — `current_activity`, `model_resolved`, `subagents_v2[].latest_activity`, written by the executor rollup (`lib/run-rollup.ts`). This plan stores nothing new. |
+| What dispatches work | Nothing. This is a read path only. |
+| What happens on failure | `fetchChatTeam` throws on non-2xx and the panel renders `team unavailable — <server's own message>`; a partial enrichment already renders `partial data — <scope> failed`. New fields absent (older API) → `undefined` → the cell prints `—` / `n/a`, never `0` and never a guessed badge. |
+| How Konrad sees it broke | Same two notes, plus: an unknown engine prints its raw string rather than a plausible badge, and every activity cell carries **its own age** so a frozen value can never read as fresh. |
+
+**No silent fallbacks.** Three places are explicitly *not* allowed to swallow:
+the engine badge (unknown → raw string, never "claude"), the activity cell
+(unnamed → the kind plus its age, never blank-as-idle), and the elapsed cell
+(`null` → `—`, never `0s`).
+
+## The one measured hazard: the activity column can be blank
+
+The sampled live run's `current_activity` was
+`{kind: "tool_result", tool: null, text: null}`, and the /live surface's
+`activityLabel` (`AgentActivity.tsx:165`) returns **`""`** for exactly that
+shape. A "what is it doing right now" column that is empty half the time does
+not answer Konrad's question. Round 1 measures the blank rate over real live
+runs before anyone writes the cell; if it is high, the fix is to carry the
+answering tool's name through `lib/run-rollup.ts` — **not** `executor.ts`.
+
+## Also fixed
+
+- `no project linked to this chat` renders **twice** — `ChatTeamPanel.tsx:1060`
+  and `PlanKanban.tsx:693`. The panel-level note stays; the plan zone's goes.
+- The PROJECT-picker overlap Konrad screenshotted is **unconfirmed**. Round 1
+  reproduces the exact state (project-linked chat + picker expanded) and either
+  fixes it or says plainly that it does not reproduce.
+
+## Task graph
+
+One workstream (`main`), one worktree, serialized — the tasks are small and the
+file sets are disjoint; a second workstream would buy an integration task and a
+merge risk for no wall-clock worth having.
+
+```
+T1 researcher  activity truth (blank-rate)        depends []
+T2 researcher  before-evidence + overlap repro    depends []
+T3 builder     server: engine + activity          depends [T1]
+T4 builder     client: live strip + badge + notes depends [T2, T3]
+T5 builder     after-evidence + bytes/min         depends [T4]
+T6 reviewer    whole diff                         depends [T3, T4, T5]
+```
+
+## Definition of done
+
+1. A screenshot of the real console showing one row per live session with all
+   five facts, read back with the Read tool — **before merging**.
+2. A Gemini-model row badged `agy` and a Claude row badged `claude-code`, in
+   one shot, with the engine derived from the model.
+3. `/chat/:id/team` bytes/min measured **in a real browser** before and after,
+   with the after within a stated, argued margin.
+4. The PLAN drag split still works, and the duplicate note is gone.
+5. The PROJECT-picker overlap either fixed with evidence, or reported absent.
+
+---
+
+# Addendum — Konrad's scope toggle (his decision, 2026-08-25)
+
+**The open question in this plan is already answered, and not by me.** The vault
+spec `AI OS/Spec - Manager Chat UI v3.md` was edited today with an addendum
+recording Konrad's own words:
+
+> "Add a toggle at the top of the right sidebar: 'this chat' vs 'everything
+> running', defaulting to this chat."
+
+It further states that implementation "is folded into the in-flight project
+`aios-sidebar-live-sessions`" — this one. So it is in scope, and the escalation
+above is withdrawn: the scoped default I chose is right, and it gains an opt-in
+switch.
+
+**The v3 rejection still governs the default.** A chat opens scoped to itself,
+selection still lives on the left, and the right side still gets no independent
+selector for *which chat* it shows. What is permitted is one scope switch.
+
+## How it is built
+
+**Mount the component that already exists.** `LiveSurface.tsx:727` mounts
+`<AgentActivity />` with no `projectId`, and `GET /api/agents` unfiltered
+returns every run and sub-agent on the box. The addendum is explicit that the
+"everything running" branch must mount *that same component* rather than grow a
+second implementation of it. The toggle therefore lives in `ChatSurface.tsx`
+(which mounts `<ChatTeamPanel>` at `:362`) and swaps between the two — not
+inside `ChatTeamPanel`, which keeps its file owner unchanged.
+
+## The constraint this creates, measured
+
+`AgentActivity` polls `/api/agents` at a **hardcoded `refetchInterval: 4_000`**
+(`AgentActivity.tsx:806`) — **15 req/min**. The chat surface has a committed
+ceiling of **40 req/min** (`CHAT_SURFACE_REQ_PER_MIN_CEILING`) and
+`scripts/checks/check-chat-delta.ts:449-465` asserts every interval against a
+literal and sums them.
+
+In "everything running" the team panel is unmounted, so its 6 req/min and
+PlanKanban's 2 req/min stop: **net +7 req/min**. Against a documented worst case
+of ~36, that lands at ~43 — **over the ceiling**. This must be resolved openly,
+not discovered by the check going red:
+
+- that `4_000` is a literal inside a component, so the budget's own instrument
+  cannot see it. It moves into `pollBudget.ts` as a named constant, which is
+  what that file exists for;
+- and the sidebar mount takes a slower interval than the Live surface's, or the
+  ceiling is re-argued in the open. Silently exceeding it is not an option.
+
+Cost when the toggle is off — the default, and where Konrad will spend nearly
+all his time — is **zero**.
+
+## Added tasks
+
+```
+T7 builder   scope toggle + its own screenshot   depends [T4]
+T8 reviewer  the toggle increment                depends [T7]
+```
+
+**Why a second reviewer rather than widening the first.** `POST
+/projects/:id/tasks/:taskId/cancel` writes `status = 'cancelled'`, which
+`project_tasks_status_check` does not permit — the endpoint cannot succeed on
+this box, so the seeded graph is append-only and T6's dependency set is frozen.
+Two reviewers over *disjoint* builder sets, each a genuine join of its own
+increment, is the available shape; it is not two reviewers over one diff.
