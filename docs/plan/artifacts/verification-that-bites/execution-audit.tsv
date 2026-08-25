@@ -1,0 +1,245 @@
+path	bucket	invoked_by	compiled_by	justification
+scripts/checks/gates-808.sh	LIVE-WIRED	package.json:guard:full -> guard.sh -> gates-808.sh --strict	N/A	the universal 24-gate suite; entry point is package.json
+scripts/checks/guard.sh	LIVE-WIRED	package.json:guard,guard:full	N/A	pre-merge aggregator; delegates phases 3-4 to check-instrument-typecheck.sh and gates-808.sh
+scripts/checks/test-guard-discrimination.sh	LIVE-WIRED	package.json:guard:test	N/A	mutation-tests 3 of guard.sh's own checks
+scripts/checks/check-instrument-typecheck.sh	LIVE-WIRED	guard.sh:196-197 (under --full)	N/A	compiles (does not execute) every scripts/checks/**/*.ts(x)
+scripts/checks/check-migration-numbers.ts	LIVE-WIRED	gates-808.sh:174	check-instrument-typecheck.sh (glob)	gate 8 of 24
+scripts/checks/dollar-sweep.sh	LIVE-WIRED	gates-808.sh:175; guard.sh:152	N/A	gate 9 of 24, also guard.sh phase 1
+scripts/checks/check-composer-v3.ts	LIVE-WIRED	gates-808.sh:176	check-instrument-typecheck.sh (glob)	gate 10 of 24
+scripts/checks/check-secret-requests.ts	LIVE-WIRED	gates-808.sh:177	check-instrument-typecheck.sh (glob)	gate 11 of 24; the name-twin that hides check-secret-scan.ts's gap
+scripts/checks/contrast-canvas-banners.cjs	LIVE-WIRED	gates-808.sh:178	N/A	gate 12 of 24 (brief's 'gate 6' label is stale)
+scripts/checks/check-working-sql-agreement.ts	LIVE-WIRED	gates-808.sh:180-183	check-instrument-typecheck.sh (glob)	gate 13 of 24, standalone typecheck
+scripts/checks/check-stop-affordance.tsx	LIVE-WIRED	gates-808.sh:190-192	check-instrument-typecheck.sh (glob)	gate 14 of 24
+scripts/checks/check-dismiss-peek.tsx	LIVE-WIRED	gates-808.sh:199-201	check-instrument-typecheck.sh (glob)	gate 15 of 24
+scripts/checks/check-team-rows.ts	LIVE-WIRED	gates-808.sh:203-204	check-instrument-typecheck.sh (glob)	gate 16 of 24
+scripts/checks/check-team-confirm.ts	LIVE-WIRED	gates-808.sh:206-207	check-instrument-typecheck.sh (glob)	gate 17 of 24
+scripts/checks/check-deep-link.ts	LIVE-WIRED	gates-808.sh:215-217	check-instrument-typecheck.sh (glob)	gate 18 of 24
+scripts/checks/check-usage-fold.ts	LIVE-WIRED	gates-808.sh:243-244,250-253	check-instrument-typecheck.sh (glob)	gates 19-20 of 24; call site exists even when DATABASE_URL unset (then SKIPPED, not absent)
+scripts/checks/no-raw-colours.cjs	LIVE-WIRED	gates-808.sh:133; guard.sh:148	N/A	gate 5 of 24, also guard.sh phase 1
+scripts/checks/verify-control-plane.sh	PROCEDURE-INVOKED	docs/tools/run-control.md:756-761	N/A	current tool doc §11 'How to verify' names it verbatim as the one command
+scripts/checks/check-r1871-chat.ts	SPENT	NOTHING	check-instrument-typecheck.sh (glob)	round-numbered one-shot verification of round 1870's findings, settled
+scripts/checks/check-r1873-fixes.ts	SPENT	NOTHING	check-instrument-typecheck.sh (glob)	round-numbered one-shot verification of round 1872's six findings (brief's own example)
+scripts/checks/check-r1875-fixes.ts	SPENT	NOTHING	check-instrument-typecheck.sh (glob)	same contract as check-r1873-fixes.ts one round later, per its own text
+scripts/checks/check-r20-census.py	SPENT	NOTHING	N/A	round-numbered one-shot census, reviewer gate already discharged (brief's own example)
+scripts/checks/check-r69-straddle.sh	SPENT	NOTHING	N/A	self-declared 'REOPENED AND CLOSED IN ROUND 242'; decision R71 already shipped
+scripts/checks/serve-agents-7798.ts	NOT-A-CHECK	NOTHING	check-instrument-typecheck.sh (glob)	HTTP harness server other checks/browsers point at; no pass/fail verdict of its own
+scripts/checks/serve-quota-7799.ts	NOT-A-CHECK	NOTHING	check-instrument-typecheck.sh (glob)	HTTP harness server other checks/browsers point at; no pass/fail verdict of its own
+scripts/checks/serve-sse-808.ts	NOT-A-CHECK	NOTHING	check-instrument-typecheck.sh (glob)	HTTP harness server other checks/browsers point at; no pass/fail verdict of its own
+scripts/checks/serve-v3-7798.ts	NOT-A-CHECK	NOTHING	check-instrument-typecheck.sh (glob)	HTTP harness server other checks/browsers point at; no pass/fail verdict of its own
+scripts/checks/preflight-deploy.sh	LIVE-ORPHAN	NOTHING	N/A	C2/C5 general+live (subjects proven present); C1/C3/C4 hardcoded to settled project 7851068b; no current doc invokes it (docs/tools/deploy-playbook.md is silent)
+scripts/checks/check-browser-shots.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for forge-control-web/app/desktop/chat/browser-shots.ts, still mounted
+scripts/checks/check-browser-stream-viewer.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	asserts BrowserStreamViewer.tsx + poll budget, component still ships
+scripts/checks/check-browser-takeover-ticket.ts	PROCEDURE-INVOKED	docs/plan/aios-browser-takeover-live/deploy.md:41 (invocation), :51 (secret-scan cross-ref) -- a deploy runbook, NOT YET EXECUTED ('Nothing in this project has been installed', deploy.md:4)	check-instrument-typecheck.sh (glob)	gates the ONE route in the repo bypassing NextAuth; fires only if a human follows the runbook by hand -- weaker than a wired gate, stronger than nothing. Highest-consequence reclassification in this audit (manager correction, verified).
+scripts/checks/check-chat-delta.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	delta-pagination contract check for the live chat route
+scripts/checks/check-chat-pagination-browser.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	real-Chrome measurement of the same still-shipping pagination path
+scripts/checks/check-chat-rail-payload.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	payload-pruning contract for trimRailMetadata on the live chat rail
+scripts/checks/check-chat-rich.tsx	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	XSS/injection battery for the still-live rich chat renderer
+scripts/checks/check-classify.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live server-side agent-kind classifier
+scripts/checks/check-close-gate.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	DB behavioural proof of closeFinishedProjects(), live scheduler code
+scripts/checks/check-connection-states.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	header: 'THE TEST THAT DECIDES PHASE 4', over the live Connections panel
+scripts/checks/check-duration.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for live Live-panel duration helpers
+scripts/checks/check-fix-chain-graph.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	DB behavioural proof of createFixChain(), live scheduling code
+scripts/checks/check-gemini-tally.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	proof /api/usage/quota's Gemini tally never lies; route still live
+scripts/checks/check-integrations.tsx	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	proves the Google/Gemini API key never leaks into a response body
+scripts/checks/check-nav-stack.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the chat surface's live nav-stack reducer
+scripts/checks/check-orientation.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live U22 OrientationStrip derivation
+scripts/checks/check-phase3-placeholders.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	asserts nav 'not built yet' markers stay in sync with NAV.unbuilt
+scripts/checks/check-plan-api.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	DB behavioural proof of groupPlanPhases (live /plan read path)
+scripts/checks/check-plan-store.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live U27 plan store used by the Kanban view
+scripts/checks/check-project-metadata.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for buildProjectMetadata, live POST /api/projects helper
+scripts/checks/check-quota-row.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	enforces 'only one module names the quota endpoint', a live anti-duplication rule
+scripts/checks/check-run-control-client.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	wire-shape proof for postRunStop/postRunTerminate; argues its own continued value
+scripts/checks/check-screenshot-render-shapes.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	cross-package proof live agent prompt's screenshot promise matches the renderer
+scripts/checks/check-secret-events.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live credential-request SSE parser
+scripts/checks/check-secret-scan.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	repo-wide committed-secret scanner; known critical finding, DO NOT wire in this round
+scripts/checks/check-settings-surface.tsx	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live settings-in-shell surface (Connections/Usage, token purity)
+scripts/checks/check-story-digest.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live U24 story-so-far derivation
+scripts/checks/check-subagent-slice.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live sub-agent thread slicer (count-conservation invariant)
+scripts/checks/check-task-api.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	behavioural DB proof of POST /api/projects/:id/tasks's 15 refusal families
+scripts/checks/check-thread-mapping.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live scoped thread mapper (count conservation)
+scripts/checks/check-tool-summary.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live U23 tool-call formatter table
+scripts/checks/check-typing-memo.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	source-text proof ManagerThread stays memo()'d; 'undo in four keystrokes' per its own header
+scripts/checks/check-ui-prompt.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	proves live agent prompts agree field-for-field with the live forge:ui validator
+scripts/checks/check-uploads-payload.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	payload-pruning/ETag proof for the live uploads index + Next proxy route
+scripts/checks/check-working-time.ts	LIVE-ORPHAN	NOTHING	check-instrument-typecheck.sh (glob)	unit check for the live working-time module (U5)
+scripts/checks/api-diff.sh	LIVE-ORPHAN	NOTHING	N/A	phase-300 API shape/value regression gate; baseline still on disk, diff never re-run
+scripts/checks/check-await-seed.sh	LIVE-ORPHAN	NOTHING	N/A	behavioural proof of the generic detached deploy watcher scripts/deploy/await-and-seed.sh, still reusable
+scripts/checks/check-migration-0040.sh	LIVE-ORPHAN	NOTHING	N/A	idempotency/backfill proof for db/migrations/0040_task_graph.sql, still applied set
+scripts/checks/check-ops-scripts.sh	LIVE-ORPHAN	NOTHING	N/A	verifies scripts/ops/ integrity incl. safe-restart.sh; referenced only in README prose, nothing executes it
+scripts/checks/check-scheduler-sql.sh	LIVE-ORPHAN	NOTHING	N/A	behavioural DB proof live scheduling SQL in db/projects.ts obeys R11-R14/R69
+scripts/checks/check-workstream-e2e.sh	LIVE-ORPHAN	NOTHING	N/A	integration proof for provisionWorkstream/removeWorkspace, live worktree machinery
+scripts/checks/contrast-nav-rail.cjs	LIVE-ORPHAN	NOTHING	N/A	name-twin of LIVE-WIRED contrast-canvas-banners.cjs; protects DesktopApp.tsx LeftRail contrast, both themes
+scripts/checks/contrast-role-tints.cjs	LIVE-ORPHAN	NOTHING	N/A	name-twin of LIVE-WIRED contrast-canvas-banners.cjs; protects 9 chat-role tint colours, both themes
+scripts/checks/frozen-dom.cjs	LIVE-ORPHAN	NOTHING	N/A	real-browser e2e proof settled duration cells in AgentActivity.tsx do not tick
+docs/plan/artifacts/phase800/psql-argv-leak.cjs	LIVE-WIRED	gates-808.sh:258,271-277	N/A	always-run gate + re-run inside reproduce-cleanliness
+docs/plan/artifacts/phase800/nav-walk-sampling.cjs	LIVE-WIRED	gates-808.sh:260,271-277	N/A	always-run gate + re-run inside reproduce-cleanliness
+docs/plan/artifacts/phase700/network-700.cjs	LIVE-WIRED	gates-808.sh:264	N/A	call site exists, runs only under --browser
+docs/plan/artifacts/phase600/nav-walk.cjs	LIVE-WIRED	gates-808.sh:265	N/A	call site exists, runs only under --browser
+docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs	LIVE-WIRED	gates-808.sh:219-220	N/A	always runs
+docs/plan/artifacts/os-usable-for-work/phase3/verify-phase3.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/os-usable-for-work/phase5/restarts-null-shot.mjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/os-usable-for-work/phase6/measure-projects-lag.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/os-usable-for-work/phase7/goals-proof-r13.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1290/hover/hover-1291.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1290/invalidation/pseudo-invalidation.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1300/baseline/dom-census.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1300/fix-1305/geometry-1305.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1300/fix-1305/probe-1305.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1300/r15/r15-clickthrough.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1300/redteam/dom-1305.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1350/dismissal-ui/capture-1350.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1355/capture-1355.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1355/theme-contrast-1355.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1871/typing-1871.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1871/verify-1871.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase1873/verify-1873.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase2/kind-dom.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase400/hover-cost.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase400/linkage-scope.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase400/network-watch.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase400/rail-zero-fixture.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase500/control-inert.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase500/dismiss-persist.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase500/fixes-506.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase500/team-frozen.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase500/team-hover.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase500/team-network.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase600/digest-honesty.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase600/nav-stack-e2e.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase600/orientation-live.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase600/transcript-expand.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase700/count-agreement.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase700/hover-700.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase700/kanban-702.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase700/nav-walk-700.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/canvas-font-storm.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/canvas-layout-probe.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/canvas-open.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/canvas-theme.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/chat-injection-808.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/composer-autogrow.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/desktop-load.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/note-injection.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/secret-budget-808.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/secret-push-808.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/secret-sentinel.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase800/throttled-tradeoff.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase900/features2-904.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase900/features3-904.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase900/features4-904.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase900/features-904.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/phase900/hover-904.cjs	SPENT	NOTHING	N/A	round/phase-numbered one-shot verification, subject round settled
+docs/plan/artifacts/os-usable-for-work/phase1/browser-harness.mjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/os-usable-for-work/phase3/shots-phase3.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/os-usable-for-work/phase4/browser-harness-phase4.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/os-usable-for-work/phase5/harness.mjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/os-usable-for-work/phase5/stub-pipeline.mjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase1871/themes-1871.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase400/capture.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase400/rail-shot.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase500/capture-team.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase600/capture-600.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase600/capture-nav.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase600/lib-604.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase700/capture-700.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase700/lib-703.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase800/capture-800.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase800/fixture-api-808.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase800/lib-804.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase900/capture-904.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+docs/plan/artifacts/phase900/recon-904.cjs	NOT-A-CHECK	NOTHING	N/A	harness/fixture/screenshot-only capture script, no pass/fail verdict of its own
+scripts/ops/check-corpus-backup.sh	LIVE-WIRED	/etc/cron.d/corpus-backup-check:5 (50 5,11,17,23 * * *)	N/A	verification: watches VPS2 6-hourly JSON corpus backup
+scripts/ops/check-vps2-backup.sh	LIVE-WIRED	/etc/cron.d/vps2-backup-check:5 (40 5 * * *)	N/A	verification: watches VPS2 nightly backup
+scripts/ops/prune-corpus-offbox.sh	LIVE-WIRED	/etc/cron.d/corpus-backup-prune:5 (25 4 * * *)	N/A	action: prunes off-box corpus mirror
+scripts/ops/pg-backup.sh	LIVE-WIRED	crontab -l (20 3 * * *)	N/A	action: nightly logical DB backup
+scripts/ops/reap-orphan-agents.sh	LIVE-WIRED	crontab -l (*/5 * * * *)	N/A	action: reaps orphaned claude engine processes
+scripts/ops/claude-code-autoupdate.sh	LIVE-WIRED	crontab -l (17 4 * * *)	N/A	action: pulls latest Claude Code install
+scripts/ops/fleet-watchdog.sh	LIVE-WIRED	crontab -l (*/10 * * * *)	N/A	verification+repair: unwedges stalled projects; RESTORED to cron 2026-08-25 after 6 silent days
+scripts/ops/fleet-pulse.sh	LIVE-WIRED	crontab -l (*/30 * * * *)	N/A	verification: runs stalled-projects.sh and escalates on finding-set change; RESTORED 2026-08-25
+scripts/ops/stalled-projects.sh	LIVE-WIRED	fleet-pulse.sh:81 (itself cron-wired)	N/A	detector; per crontab's own 2026-08-25 comment, 'had never been scheduled at all' before today
+scripts/ops/safe-restart.sh	NOT-A-CHECK	PROCEDURE-INVOKED: docs/tools/deploy-playbook.md; docs/plan/00-vision.md:28,39; docs/plan/01-requirements.md:89,222	N/A	action script for restarting pm2 services without killing a live turn
+scripts/ops/rebuild-web.sh	NOT-A-CHECK	PROCEDURE-INVOKED: docs/spec-daily-goals.md:317	N/A	action: detached forge-control-web rebuild+redeploy
+scripts/ops/install-symlinks.sh	NOT-A-CHECK	NOTHING	N/A	setup action; not itself scheduled; cross-checked only by orphaned check-ops-scripts.sh
+scripts/ops/agy-dropout-stopgap.sh	NOT-A-CHECK	NOTHING	N/A	temporary remediation; symlinked but absent from crontab/cron.d; header says delete once R870 confirmed live (unconfirmed by this audit)
+scripts/ops/deploy-goal-mode.sh	SPENT	NOTHING	N/A	one-shot 2026-08-05, header: 'safe to delete after the night'
+scripts/ops/deploy-retier.sh	SPENT	NOTHING	N/A	one-shot 2026-08-05, same disposability note
+scripts/deploy/await-and-seed.sh	NOT-A-CHECK	docs/plan/engine-task-graph/03-quality.md:429 (historical phase 8D mechanism)	N/A	action: seeds a task after a condition it cannot itself be a pending row for; reusable, not scheduled
+scripts/deploy/payload-report.json	NOT-A-CHECK	NOTHING	N/A	fixture data consumed by await-and-seed.sh
+scripts/deploy/payload-review.json	NOT-A-CHECK	NOTHING	N/A	fixture data consumed by await-and-seed.sh
+scripts/deploy/payload-verify.json	NOT-A-CHECK	NOTHING	N/A	fixture data consumed by await-and-seed.sh
+forge-control/src/lib/account-health.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/api-overload.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/autonomy-gemini-cap.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/browser-takeover.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/calendar.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/cc-runner.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/chat-delta.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/chat-popover-hover.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/chat-scope-and-delete.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/cli-runner.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/connection-status.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/cp2-reconciler-interaction.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/cp3-linkage.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/day-score.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/dismissals.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/divider-contrast.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/divider-visibility.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/engine-dropout-policy.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/engine-fallback.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/engine-session.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/excalidraw-build.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/excalidraw-extract.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/excalidraw-graph.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/excalidraw-plan.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/executor-completion-guard.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/gemini-argv-limit.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/gemini-qa-cli.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/layout-splits.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/memory-graph.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/memory-index-health.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/memory-prefetch.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/memory-ranking.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/memory-search.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/migration-numbers.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/migrations.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/nginx-parser.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/perplexity-cli.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/pipeline-health.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/pipeline-transitions.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/plan-corpus.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/project-reconcile.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/project-status-reconcile.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/project-tick.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/projects-board-limit.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/proxy-route.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/r1871-subagent-recovery.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/r20-smoke-arming.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/redis-probe.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/reminder-dedup.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/reminder-retention.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/reminder-text.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/research-browser-cli.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/run-control-rules.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/run-control-surface.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/schedule-metrics.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/schedule-source.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/secret-store.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/skills-protected.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/source-hygiene.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/spend-filters.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/takeover-ticket.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/task-graph-replay.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/task-graph.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/team-plan-splitter.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/tier-inherit.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/uploads-index.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/uploads-serving.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/usage-sampler.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/usage-wall.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/vault-routes.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/vault.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control/src/lib/verify-control-plane-script.test.ts	LIVE-WIRED	gates-808.sh:255 (pnpm test -> tsx --test src/lib/*.test.ts)	N/A	captured by forge-control's non-recursive test glob
+forge-control-web/app/desktop/goals/quick-add.test.ts	LIVE-ORPHAN	NOTHING	N/A	forge-control-web/package.json has no test script at all; not matched by forge-control's src/lib/*.test.ts glob
+forge-control-web/app/desktop/map/mapTree.test.ts	LIVE-ORPHAN	NOTHING	N/A	forge-control-web/package.json has no test script at all; not matched by forge-control's src/lib/*.test.ts glob
+forge-control-web/app/desktop/spend-skew.test.ts	LIVE-ORPHAN	NOTHING	N/A	forge-control-web/package.json has no test script at all; not matched by forge-control's src/lib/*.test.ts glob
+scripts/ops/canvas	NOT-A-CHECK	NOTHING	N/A	CLI utility (draws on Excalidraw surface); no extension, missed by this audit's own initial ls *.{ts,tsx,sh,cjs,py,mjs} filter -- found only by a second pass over the raw directory listing
