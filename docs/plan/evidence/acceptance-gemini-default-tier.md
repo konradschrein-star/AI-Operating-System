@@ -36,13 +36,16 @@ $ curl -i -X PUT http://127.0.0.1:27700/api/fleet/default-tier \
 **HTTP Response:**
 ```http
 HTTP/1.1 200 OK
+access-control-allow-headers: content-type
+access-control-allow-methods: GET,POST,PUT,DELETE,OPTIONS
+access-control-allow-origin: *
 content-type: application/json
-Content-Length: 89
-Date: Tue, 25 Aug 2026 17:44:01 GMT
+content-length: 89
+Date: Tue, 25 Aug 2026 17:49:04 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
-{"default_tier":"gemini","source":"app_settings","updated_at":"2026-08-25T17:44:01.913Z"}
+{"default_tier":"gemini","source":"app_settings","updated_at":"2026-08-25T17:49:04.214Z"}
 ```
 
 Verification via `GET /api/fleet/default-tier`:
@@ -52,12 +55,12 @@ $ curl -i http://127.0.0.1:27700/api/fleet/default-tier
 ```http
 HTTP/1.1 200 OK
 content-type: application/json
-Content-Length: 89
-Date: Tue, 25 Aug 2026 17:44:06 GMT
+content-length: 89
+Date: Tue, 25 Aug 2026 17:49:05 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
-{"default_tier":"gemini","source":"app_settings","updated_at":"2026-08-25T17:44:01.913Z"}
+{"default_tier":"gemini","source":"app_settings","updated_at":"2026-08-25T17:49:04.214Z"}
 ```
 
 ---
@@ -71,9 +74,9 @@ $ docker exec content-forge-postgres psql -U postgres -d content_forge -c \
 
 **Database Output:**
 ```sql
-        key         |  value   |          updated_at           
---------------------+----------+-------------------------------
- fleet.default_tier | "gemini" | 2026-08-25 17:44:01.913932+00
+        key         |  value   |          updated_at          
+--------------------+----------+------------------------------
+ fleet.default_tier | "gemini" | 2026-08-25 17:49:04.21493+00
 (1 row)
 ```
 
@@ -85,31 +88,34 @@ $ docker exec content-forge-postgres psql -U postgres -d content_forge -c \
 ```bash
 $ curl -i -X POST http://127.0.0.1:27700/api/projects/860c948e-eab4-4ad4-98ed-644250def72c/tasks \
     -H 'content-type: application/json' \
-    -d '{"title":"live acceptance probe - gemini default","brief":"Verify omitted tier defaults to gemini","role":"builder"}'
+    -d '{"title":"acceptance-probe-gemini-default","brief":"Verify omitted tier defaults to gemini","role":"builder"}'
 ```
 
 **HTTP Response:**
 ```http
 HTTP/1.1 201 Created
+access-control-allow-headers: content-type
+access-control-allow-methods: GET,POST,PUT,DELETE,OPTIONS
+access-control-allow-origin: *
 content-type: application/json
-Content-Length: 487
-Date: Tue, 25 Aug 2026 17:44:11 GMT
+content-length: 480
+Date: Tue, 25 Aug 2026 17:49:16 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
-{"task":{"id":"7c2284b2-7b03-44b9-a922-7b6f8af30028","project_id":"860c948e-eab4-4ad4-98ed-644250def72c","round":0,"role":"builder","title":"live acceptance probe - gemini default","brief":"Verify omitted tier defaults to gemini","status":"pending","run_id":null,"fix_cycle":0,"tier":"gemini","attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"graph_frozen":false,"created_at":"2026-08-25 17:44:11.496204+00","updated_at":"2026-08-25 17:44:11.496204+00"}}
+{"task":{"id":"2c6a0a6c-04e1-4db3-acc1-707eaad3ca2f","project_id":"860c948e-eab4-4ad4-98ed-644250def72c","round":0,"role":"builder","title":"acceptance-probe-gemini-default","brief":"Verify omitted tier defaults to gemini","status":"pending","run_id":null,"fix_cycle":0,"tier":"gemini","attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"graph_frozen":false,"created_at":"2026-08-25 17:49:16.152263+00","updated_at":"2026-08-25 17:49:16.152263+00"}}
 ```
 
 **Database Measurement (`project_tasks`):**
 ```bash
 $ docker exec content-forge-postgres psql -U postgres -d content_forge -c \
-    "SELECT id, project_id, title, role, tier, status, created_at FROM project_tasks WHERE id = '7c2284b2-7b03-44b9-a922-7b6f8af30028';"
+    "SELECT id, project_id, title, role, tier, status, created_at FROM project_tasks WHERE id = '2c6a0a6c-04e1-4db3-acc1-707eaad3ca2f';"
 ```
 
 ```sql
-                  id                  |              project_id              |                 title                  |  role   |  tier  | status  |          created_at           
---------------------------------------+--------------------------------------+----------------------------------------+---------+--------+---------+-------------------------------
- 7c2284b2-7b03-44b9-a922-7b6f8af30028 | 860c948e-eab4-4ad4-98ed-644250def72c | live acceptance probe - gemini default | builder | gemini | pending | 2026-08-25 17:44:11.496204+00
+                  id                  |              project_id              |              title              |  role   |  tier  | status  |          created_at           
+--------------------------------------+--------------------------------------+---------------------------------+---------+--------+---------+-------------------------------
+ 2c6a0a6c-04e1-4db3-acc1-707eaad3ca2f | 860c948e-eab4-4ad4-98ed-644250def72c | acceptance-probe-gemini-default | builder | gemini | pending | 2026-08-25 17:49:16.152263+00
 (1 row)
 ```
 
@@ -128,13 +134,16 @@ $ curl -i -X PUT http://127.0.0.1:27700/api/fleet/default-tier \
 **HTTP Response:**
 ```http
 HTTP/1.1 200 OK
+access-control-allow-headers: content-type
+access-control-allow-methods: GET,POST,PUT,DELETE,OPTIONS
+access-control-allow-origin: *
 content-type: application/json
-Content-Length: 89
-Date: Tue, 25 Aug 2026 17:44:15 GMT
+content-length: 89
+Date: Tue, 25 Aug 2026 17:49:19 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
-{"default_tier":"junior","source":"app_settings","updated_at":"2026-08-25T17:44:15.348Z"}
+{"default_tier":"junior","source":"app_settings","updated_at":"2026-08-25T17:49:19.950Z"}
 ```
 
 **Database Verification (`app_settings`):**
@@ -146,7 +155,7 @@ $ docker exec content-forge-postgres psql -U postgres -d content_forge -c \
 ```sql
         key         |  value   |          updated_at           
 --------------------+----------+-------------------------------
- fleet.default_tier | "junior" | 2026-08-25 17:44:15.348484+00
+ fleet.default_tier | "junior" | 2026-08-25 17:49:19.950411+00
 (1 row)
 ```
 
@@ -158,31 +167,34 @@ $ docker exec content-forge-postgres psql -U postgres -d content_forge -c \
 ```bash
 $ curl -i -X POST http://127.0.0.1:27700/api/projects/860c948e-eab4-4ad4-98ed-644250def72c/tasks \
     -H 'content-type: application/json' \
-    -d '{"title":"live acceptance probe - junior switch","brief":"Verify omitted tier defaults to junior after runtime switch","role":"builder"}'
+    -d '{"title":"acceptance-probe-junior-switch","brief":"Verify omitted tier defaults to junior after runtime switch","role":"builder"}'
 ```
 
 **HTTP Response:**
 ```http
 HTTP/1.1 201 Created
+access-control-allow-headers: content-type
+access-control-allow-methods: GET,POST,PUT,DELETE,OPTIONS
+access-control-allow-origin: *
 content-type: application/json
-Content-Length: 507
-Date: Tue, 25 Aug 2026 17:44:20 GMT
+content-length: 500
+Date: Tue, 25 Aug 2026 17:49:30 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
-{"task":{"id":"d0c1be5b-591d-4c1f-9044-006479c1e3b6","project_id":"860c948e-eab4-4ad4-98ed-644250def72c","round":0,"role":"builder","title":"live acceptance probe - junior switch","brief":"Verify omitted tier defaults to junior after runtime switch","status":"pending","run_id":null,"fix_cycle":0,"tier":"junior","attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"graph_frozen":false,"created_at":"2026-08-25 17:44:20.586448+00","updated_at":"2026-08-25 17:44:20.586448+00"}}
+{"task":{"id":"5d0788f8-5a79-4119-b3f6-2dbc9dedbbc1","project_id":"860c948e-eab4-4ad4-98ed-644250def72c","round":0,"role":"builder","title":"acceptance-probe-junior-switch","brief":"Verify omitted tier defaults to junior after runtime switch","status":"pending","run_id":null,"fix_cycle":0,"tier":"junior","attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"graph_frozen":false,"created_at":"2026-08-25 17:49:30.421449+00","updated_at":"2026-08-25 17:49:30.421449+00"}}
 ```
 
 **Database Measurement (`project_tasks`):**
 ```bash
 $ docker exec content-forge-postgres psql -U postgres -d content_forge -c \
-    "SELECT id, project_id, title, role, tier, status, created_at FROM project_tasks WHERE id = 'd0c1be5b-591d-4c1f-9044-006479c1e3b6';"
+    "SELECT id, project_id, title, role, tier, status, created_at FROM project_tasks WHERE id = '5d0788f8-5a79-4119-b3f6-2dbc9dedbbc1';"
 ```
 
 ```sql
-                  id                  |              project_id              |                 title                 |  role   |  tier  | status  |          created_at           
---------------------------------------+--------------------------------------+---------------------------------------+---------+--------+---------+-------------------------------
- d0c1be5b-591d-4c1f-9044-006479c1e3b6 | 860c948e-eab4-4ad4-98ed-644250def72c | live acceptance probe - junior switch | builder | junior | pending | 2026-08-25 17:44:20.586448+00
+                  id                  |              project_id              |             title              |  role   |  tier  | status  |          created_at           
+--------------------------------------+--------------------------------------+--------------------------------+---------+--------+---------+-------------------------------
+ 5d0788f8-5a79-4119-b3f6-2dbc9dedbbc1 | 860c948e-eab4-4ad4-98ed-644250def72c | acceptance-probe-junior-switch | builder | junior | pending | 2026-08-25 17:49:30.421449+00
 (1 row)
 ```
 
@@ -202,13 +214,16 @@ $ curl -i -X PUT http://127.0.0.1:27700/api/fleet/default-tier \
 **HTTP Response:**
 ```http
 HTTP/1.1 200 OK
+access-control-allow-headers: content-type
+access-control-allow-methods: GET,POST,PUT,DELETE,OPTIONS
+access-control-allow-origin: *
 content-type: application/json
-Content-Length: 89
-Date: Tue, 25 Aug 2026 17:44:25 GMT
+content-length: 89
+Date: Tue, 25 Aug 2026 17:49:34 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
-{"default_tier":"gemini","source":"app_settings","updated_at":"2026-08-25T17:44:25.485Z"}
+{"default_tier":"gemini","source":"app_settings","updated_at":"2026-08-25T17:49:34.634Z"}
 ```
 
 **Database Verification (`app_settings`):**
@@ -220,11 +235,11 @@ $ docker exec content-forge-postgres psql -U postgres -d content_forge -c \
 ```sql
         key         |  value   |          updated_at           
 --------------------+----------+-------------------------------
- fleet.default_tier | "gemini" | 2026-08-25 17:44:25.485234+00
+ fleet.default_tier | "gemini" | 2026-08-25 17:49:34.634259+00
 (1 row)
 ```
 
-**Probe Task Cleanup:** The test tasks (`7c2284b2-7b03-44b9-a922-7b6f8af30028` and `d0c1be5b-591d-4c1f-9044-006479c1e3b6`) were cancelled cleanly via `POST /api/projects/:id/tasks/:taskId/cancel` with audit reason `"live acceptance test probe completed"`.
+**Probe Task Cleanup:** The test probe tasks (`2c6a0a6c-04e1-4db3-acc1-707eaad3ca2f` and `5d0788f8-5a79-4119-b3f6-2dbc9dedbbc1`) were cancelled cleanly via `POST /api/projects/:id/tasks/:taskId/cancel` with audit reason `"acceptance probe completed"`.
 
 ---
 
@@ -243,7 +258,7 @@ $ pnpm test
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 14300.178317
+ℹ duration_ms 21678.566403
 ```
 All 2365 tests passed across 465 test suites.
 
@@ -251,7 +266,7 @@ All 2365 tests passed across 465 test suites.
 Ran `bash scripts/checks/guard.sh --fast`:
 ```
 ================================================================================
- GUARD — mode=fast strict=off   2026-08-25T19:43:09+02:00
+ GUARD — mode=fast strict=off   2026-08-25T19:48:48+02:00
 ================================================================================
 
 PH CHECK                    STATUS   TIME   DETAIL
@@ -260,10 +275,10 @@ PH CHECK                    STATUS   TIME   DETAIL
 0  devdeps-forge-control    PASS       0s   
 0  devdeps-forge-control-web PASS       0s   
 1  no-raw-colours           FAIL       0s   forge-control-web/app/desktop/goals/WeekGrid.tsx:48
-1  dollar-sweep             PASS       0s   
+1  dollar-sweep             PASS       1s   
 1  forbidden-file-diff      PASS       0s   
-2  tsc-forge-control        PASS      16s   
-2  tsc-forge-control-web    PASS       4s   
+2  tsc-forge-control        PASS      17s   
+2  tsc-forge-control-web    PASS       6s   
 2  instrument-typecheck     SKIP       0s   deferred to --full
 3  web-build                SKIP       0s   deferred to --full
 4  gates-808-suite          SKIP       0s   deferred to --full
