@@ -161,7 +161,30 @@ const PILLS = {
   relVault: "Mentor/Profile/Operating Manual.md",
   /** (e) openable-looking, resolvable by nothing — must toast, not go quiet. */
   relMissing: "definitely-not-a-real-note-xyz.md",
+  /** (f) D1 — `path:line`. Relative, so it resolves by search like (d); the
+   *  line comes off BEFORE the extension test in detectPath, and back on
+   *  after resolution, all the way to a highlighted row in FilePreview. */
+  lineRef: "forge-control-web/app/desktop/chat/MessageMarkdown.tsx:160",
+  /** (g) D5 — a trailing-slash directory reference. Real dir, checked to
+   *  exist at fixture-authoring time (README §"first results" appendix). */
+  folder: "/opt/ai-os/scripts/",
+  /** (h) D6 — the fleet memory root. Absolute, matches the client's static
+   *  prefix table regardless of whether the server has restarted into a
+   *  router that actually serves it — that gap is the whole point of the
+   *  case (see §11 below, which asks /api/files/roots which branch applies). */
+  memoryFile: "/root/.claude/projects/-opt-forge-ai-os/memory/MEMORY.md",
+  /** (i)/(j) — PLAN.md finding 6, false affordances a bare extension or an
+   *  extension LIST must never become. `detectPath` rejects any token
+   *  starting with "." before it ever reaches the extension test. */
+  extDot: ".txt",
+  extList: ".md .txt .json .csv",
 };
+
+/** D2 — a wikilink is prose, not a code pill, so it lives in the message body
+ *  rather than in PILLS/backticks. The vault note is the SAME file as (b)/(d)
+ *  above: one target, three ways an agent might reference it. */
+const WIKILINK_NAME = "Operating Manual";
+const WIKILINK_TEXT = `[[${WIKILINK_NAME}]]`;
 
 /** Text that exists in the target files and NOWHERE in the chat itself, so
  *  "is it on screen" is a discriminating question. Asserted absent before the
@@ -184,6 +207,12 @@ const MISS_TIMEOUT_MS = Number(process.env.MISS_TIMEOUT_MS ?? 240000);
 const CONTENT_MARKERS = {
   absForgeSrc: "Quality: test strategy and QA gates",
   absVault: "How to Work With Konrad",
+  /** D1 fixture. A stable top-of-file import, chosen deliberately instead of
+   *  anything near line 160 itself: the exact text at that line in the LIVE
+   *  checkout drifts with every round that edits the file, but the import
+   *  line does not, and the assertion only needs to know the right FILE
+   *  rendered — the highlighted-row assertion is what proves the right LINE. */
+  lineRef: "ReactMarkdown",
 };
 
 const SEED_MESSAGE = [
@@ -194,8 +223,13 @@ const SEED_MESSAGE = [
   `- outside every root: \`${PILLS.absOutside}\``,
   `- relative, resolved by search: \`${PILLS.relVault}\``,
   `- resolvable by nothing: \`${PILLS.relMissing}\``,
+  `- line reference (D1): \`${PILLS.lineRef}\``,
+  `- folder (D5): \`${PILLS.folder}\``,
+  `- fleet memory (D6): \`${PILLS.memoryFile}\``,
+  `- wikilink (D2), the same note as above: ${WIKILINK_TEXT}`,
   "",
-  "Not a path, must stay a plain pill: `pnpm install`, `spend.per_run_cap`.",
+  "Not a path, must stay a plain pill: `pnpm install`, `spend.per_run_cap`, " +
+    `\`${PILLS.extDot}\`, \`${PILLS.extList}\`.`,
 ].join("\n");
 
 /* ── Assertion ledger ───────────────────────────────────────────────────── */
@@ -369,6 +403,64 @@ async function waitFor(page, fn, { timeoutMs = 12000, stepMs = 250 } = {}) {
   }
 }
 
+/**
+ * D1's evidence: does the code viewer have a row for `data-line`, does it
+ * carry the highlight class, and — the part a DOM query alone would miss —
+ * is that row's rectangle actually inside the `.fp-code-scroll` box it
+ * scrolls in. Same "in the DOM is not on screen" caveat `panelState`'s
+ * `revealedRows` exists for, applied to `CodeViewer` instead of `VaultFileList`.
+ */
+async function codeViewerHitState(page, line) {
+  return page.evaluate((n) => {
+    const row = document.querySelector(`.fp-code-row[data-line="${n}"]`);
+    if (!row) return { present: false, hit: false, inViewport: false, rowCount: 0 };
+    const box = row.closest(".fp-code-scroll");
+    let inViewport = true;
+    if (box) {
+      const r = row.getBoundingClientRect();
+      const b = box.getBoundingClientRect();
+      inViewport = r.top >= b.top - 1 && r.bottom <= b.bottom + 1;
+    }
+    return {
+      present: true,
+      hit: row.classList.contains("fp-code-row-hit"),
+      inViewport,
+      rowCount: document.querySelectorAll(".fp-code-row").length,
+    };
+  }, line);
+}
+
+/** D3's evidence: the meta strip's key/value pairs, and the body text with
+ *  the strip's own text excluded — so "does the body start with the raw
+ *  frontmatter" is a question about `.fp-scroll` alone, not about a screen
+ *  that also happens to contain the word "type" in the meta strip above it. */
+async function metaStripState(page) {
+  return page.evaluate(() => {
+    const meta = document.querySelector(".fp-meta");
+    const keys = meta
+      ? Array.from(meta.querySelectorAll(".fp-meta-key")).map((k) => (k.textContent ?? "").trim())
+      : [];
+    const bodyText = (document.querySelector(".fp-scroll")?.textContent ?? "").trim();
+    return { present: meta !== null, keys, bodyStart: bodyText.slice(0, 40) };
+  });
+}
+
+/** D6's dynamic branch. The client's static prefix table (`code-path-link.ts`)
+ *  offers the `memory` root regardless of server state — that is deliberate,
+ *  see `resolve-path.ts`'s `resolveRootPath` — so the ONLY way to know which
+ *  half of the case applies is to ask the same endpoint the app itself asks. */
+async function fetchLiveRootKeys(apiUrl) {
+  const res = await fetch(`${apiUrl}/api/files/roots`);
+  if (!res.ok) {
+    throw new HarnessError(`${apiUrl}/api/files/roots → HTTP ${res.status}`);
+  }
+  const body = await res.json();
+  if (!Array.isArray(body?.roots)) {
+    throw new HarnessError(`${apiUrl}/api/files/roots returned no "roots" array`);
+  }
+  return new Set(body.roots.map((r) => r.key));
+}
+
 /* ── Main ───────────────────────────────────────────────────────────────── */
 
 async function main() {
@@ -511,6 +603,16 @@ async function main() {
       "1d-command-pill-is-not-openable",
       byText("pnpm install")?.openable === false,
       "`pnpm install` must stay a plain pill",
+    );
+    check(
+      "1e-bare-extension-pill-is-not-openable",
+      byText(PILLS.extDot) !== undefined && byText(PILLS.extDot).openable === false,
+      `\`${PILLS.extDot}\` — a token starting with "." is an extension, not a name`,
+    );
+    check(
+      "1f-extension-list-pill-is-not-openable",
+      byText(PILLS.extList) !== undefined && byText(PILLS.extList).openable === false,
+      `\`${PILLS.extList}\` — PLAN.md finding 6's exact false positive`,
     );
 
     /* ── 2. Plain click on (a) from the Team tab ─────────────────────────── */
@@ -706,6 +808,217 @@ async function main() {
           "five roots are searched serially with no pending state, so the click looks dead " +
           "meanwhile (PLAN: 'resolution longer than ~1 s shows a pending state')",
       );
+    }
+
+    /* ── 7. D1 — `path:line` resolves, scrolls, and highlights ───────────── */
+
+    {
+      await openOnTeamTab("f1");
+      await shot("f2-before-click-line-ref");
+      const idx = await pillIndex(page, PILLS.lineRef);
+      check(
+        "7a-line-ref-pill-is-openable",
+        (await pills(page))[idx]?.openable === true,
+        PILLS.lineRef,
+      );
+      await page.locator("code").nth(idx).click();
+      await waitFor(page, async () =>
+        (await panelState(page)).bodyText.includes(CONTENT_MARKERS.lineRef),
+      );
+      const after = await panelState(page);
+      const hit = await waitFor(
+        page,
+        async () => (await codeViewerHitState(page, 160)).hit,
+        { timeoutMs: 10000 },
+      ).then(() => codeViewerHitState(page, 160));
+      await shot("f3-after-click-line-ref");
+      check(
+        "7b-line-ref-file-content-rendered",
+        after.bodyText.includes(CONTENT_MARKERS.lineRef),
+        `looked for ${JSON.stringify(CONTENT_MARKERS.lineRef)} — proves the FILE, not the line`,
+      );
+      check(
+        "7c-line-160-row-is-highlighted",
+        hit.present && hit.hit,
+        `data-line="160" present=${hit.present} hit=${hit.hit} of ${hit.rowCount} rows rendered`,
+      );
+      check(
+        "7d-highlighted-row-is-in-the-code-viewport",
+        hit.inViewport,
+        "CodeViewer's own scrollIntoView({block:'center'}) must have run — a row that is " +
+          "highlighted but never scrolled to is D4's failure mode, one component over",
+      );
+      check(
+        "7e-line-ref-row-is-revealed-in-the-file-list",
+        after.revealedRows.some((r) => r.includes("MessageMarkdown.tsx")),
+        `${revealDetail(after)} — same D4 reveal requirement as 2h/3c, exercised on a ` +
+          "different (large) directory",
+      );
+    }
+
+    /* ── 8. D2 — a wikilink opens the same note by prose syntax ──────────── */
+
+    {
+      await openOnTeamTab("g1");
+      const before = await panelState(page);
+      check(
+        "8a-vault-marker-absent-before-wikilink-click",
+        !before.bodyText.includes(CONTENT_MARKERS.absVault),
+        "negative control",
+      );
+      const link = page.locator('a[data-openable-kind="wikilink"]');
+      const href = await link.getAttribute("href");
+      check(
+        "8b-wikilink-renders-as-an-anchor-into-document",
+        typeof href === "string" && href.startsWith("/document?wikilink="),
+        `href = ${JSON.stringify(href)}`,
+      );
+      await shot("g2-before-click-wikilink");
+      await link.click();
+      await waitFor(page, async () =>
+        (await panelState(page)).bodyText.includes(CONTENT_MARKERS.absVault),
+      );
+      const after = await panelState(page);
+      await shot("g3-after-click-wikilink");
+      check(
+        "8c-wikilink-opens-the-note-in-the-panel",
+        after.bodyText.includes(CONTENT_MARKERS.absVault),
+        `breadcrumbs = ${JSON.stringify(after.breadcrumbs)}`,
+      );
+      check(
+        "8d-wikilink-row-is-revealed-in-the-list",
+        after.revealedRows.some((r) => r.includes("Operating Manual.md")),
+        revealDetail(after),
+      );
+
+      /* D3, on the same note: the meta strip vs. the raw frontmatter it must
+       * never leak into the rendered body. */
+      const meta = await metaStripState(page);
+      check(
+        "8e-frontmatter-renders-as-a-meta-strip",
+        meta.present && meta.keys.includes("type"),
+        `strip present=${meta.present}, keys=${JSON.stringify(meta.keys)}`,
+      );
+      check(
+        "8f-body-does-not-start-with-raw-frontmatter",
+        !/^type:/i.test(meta.bodyStart),
+        `.fp-scroll starts with ${JSON.stringify(meta.bodyStart)}`,
+      );
+    }
+
+    /* ── 9. D2, Ctrl-click — the wikilink keeps the universal "new tab" ───── */
+
+    {
+      await openOnTeamTab("h1");
+      await shot("h2-before-ctrl-click-wikilink");
+      const pagesBefore = ctx.pages().length;
+      const link = page.locator('a[data-openable-kind="wikilink"]');
+      const popupPromise = ctx.waitForEvent("page", { timeout: 15000 }).catch(() => null);
+      await link.click({ modifiers: ["Control"] });
+      const popup = await popupPromise;
+      await page.waitForTimeout(2000);
+      const opened = ctx.pages().length - pagesBefore;
+      // A brand-new tab's url() is "" until it commits — wait for it before
+      // reading it, or the assertion measures the popup's blank starting page.
+      if (popup) await popup.waitForLoadState("domcontentloaded").catch(() => {});
+      const url = popup ? popup.url() : "(no new page)";
+      check("9a-ctrl-click-wikilink-opens-exactly-one-new-tab", opened === 1, `opened ${opened}, url ${url}`);
+      check(
+        "9b-new-tab-is-the-document-viewer-with-the-wikilink-param",
+        popup !== null && new URL(url).pathname === "/document" &&
+          new URL(url).searchParams.get("wikilink") === WIKILINK_NAME,
+        url,
+      );
+      if (popup) {
+        await popup.waitForTimeout(3000);
+        const f = path.join(OUT_DIR, `${stamp()}-h3-ctrl-click-wikilink-tab.png`);
+        await popup.screenshot({ path: f });
+        console.log(`    shot ${f}`);
+        await popup.close();
+      }
+    }
+
+    /* ── 10. D5 — a folder reference navigates, and previews nothing ─────── */
+
+    {
+      await openOnTeamTab("i1");
+      await shot("i2-before-click-folder");
+      const idx = await pillIndex(page, PILLS.folder);
+      check(
+        "10a-folder-pill-is-openable-as-a-directory",
+        (await pills(page))[idx]?.openable === true,
+        PILLS.folder,
+      );
+      const kindAttr = await page.locator("code").nth(idx).getAttribute("data-openable-kind");
+      check("10b-folder-pill-carries-the-dir-kind", kindAttr === "dir", `data-openable-kind = ${kindAttr}`);
+      await page.locator("code").nth(idx).click();
+      const navigated = await waitFor(page, async () => {
+        const bc = await page.evaluate(
+          () => document.querySelector(".vfl-breadcrumbs")?.textContent?.trim() ?? null,
+        );
+        return Boolean(bc && /scripts$/.test(bc));
+      });
+      const after = await panelState(page);
+      await shot("i3-after-click-folder");
+      check(
+        "10c-folder-navigates-and-breadcrumb-ends-with-the-folder-name",
+        navigated,
+        `breadcrumbs = ${JSON.stringify(after.breadcrumbs)}`,
+      );
+      check(
+        "10d-folder-open-selects-and-previews-nothing",
+        after.selectedCount === null || after.selectedCount === 0,
+        `panel header says ${JSON.stringify(after.selectedCount)} selected — a directory ` +
+          "reference has nothing to preview, the breadcrumb IS the answer (D5)",
+      );
+    }
+
+    /* ── 11. D6 — the fleet memory root, whichever way it cuts today ─────── */
+
+    {
+      await openOnTeamTab("j1");
+      const liveRoots = await fetchLiveRootKeys(FORGE_API_URL);
+      const memoryIsLive = liveRoots.has("memory");
+      console.log(
+        `    /api/files/roots reports ${liveRoots.size} live roots ` +
+          `(memory ${memoryIsLive ? "IS" : "is NOT"} among them)`,
+      );
+      await shot("j2-before-click-memory");
+      const idx = await pillIndex(page, PILLS.memoryFile);
+      check(
+        "11a-memory-pill-is-openable-regardless-of-server-state",
+        (await pills(page))[idx]?.openable === true,
+        `the client's static prefix table offers this pill whether or not ${FORGE_API_URL} has restarted`,
+      );
+      await page.locator("code").nth(idx).click();
+      if (memoryIsLive) {
+        const opened = await waitFor(page, async () => {
+          const st = await panelState(page);
+          return Boolean(st.breadcrumbs && /memory/i.test(st.breadcrumbs));
+        }, { timeoutMs: 30000 });
+        const after = await panelState(page);
+        await shot("j3-after-click-memory-live");
+        check(
+          "11b-memory-root-is-live-so-the-file-opens",
+          opened && after.bodyText.length > 200,
+          `/api/files/roots advertises "memory" — breadcrumbs = ${JSON.stringify(after.breadcrumbs)}, ` +
+            `${after.bodyText.length} chars of body text`,
+        );
+      } else {
+        const toasted = await waitFor(
+          page,
+          async () => (await page.evaluate(() => document.body.innerText)).includes("Can't open"),
+          { timeoutMs: 15000, stepMs: 200 },
+        );
+        await shot("j3-after-click-memory-not-live");
+        check(
+          "11b-memory-root-is-not-live-so-it-toasts-instead-of-a-broken-viewer",
+          toasted,
+          '/api/files/roots does not advertise "memory" yet — expect the ' +
+            '"Can\'t open … yet" toast (resolveRootPath\'s root-not-live branch), ' +
+            "never a viewer rendering a 404",
+        );
+      }
     }
 
     await browser.close();

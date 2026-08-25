@@ -178,7 +178,8 @@ SKIPPED (loudly, never silently omitted) without it.
 
 ## 5. The fixture and the assertions
 
-One assistant message, five pills, one per branch of `detectPath` and the resolver:
+One assistant message, now fourteen references, one per branch of `detectPath`
+and the resolver (round 6 added the last seven rows):
 
 | pill | branch | expected |
 | --- | --- | --- |
@@ -187,7 +188,50 @@ One assistant message, five pills, one per branch of `detectPath` and the resolv
 | `/opt/nowhere/missing-file.md` | absolute, outside every root | **plain pill, not openable** |
 | `Mentor/Profile/Operating Manual.md` | relative | openable, placed by `/files/search` — bug 2's exact shape |
 | `definitely-not-a-real-note-xyz.md` | relative, resolvable by nothing | openable, and the miss must **toast** — bug 3 |
+| `forge-control-web/app/desktop/chat/MessageMarkdown.tsx:160` | relative, D1 `path:line` | openable, resolves via search, opens with line 160 highlighted and scrolled to |
+| `/opt/ai-os/scripts/` | absolute, D5 folder (trailing slash) | openable as a **directory** — panel navigates, previews nothing |
+| `/root/.claude/projects/-opt-forge-ai-os/memory/MEMORY.md` | absolute, D6 fleet-memory root | openable on the client always; server behaviour depends on whether `/api/files/roots` advertises `memory` |
+| `[[Operating Manual]]` | D2 wikilink, prose, not a code pill | renders as an `<a href="/document?wikilink=…">`; resolves into the **vault only**, same note as row 2 |
+| `.txt` | bare extension (PLAN finding 6) | **plain pill, not openable** |
+| `.md .txt .json .csv` | extension list (PLAN finding 6) | **plain pill, not openable** |
 | `pnpm install`, `spend.per_run_cap` | not paths | plain pills; no false affordances |
+
+Assertions **7a–7e**, **8a–8f**, **9a–9b**, **10a–10d**, **11a–11b** and **1e/1f**
+are the round-6 additions:
+
+- `7a`–`7e` (D1, `path:line`): the pill is openable, the FILE renders (marker
+  `ReactMarkdown`, a stable top-of-file import — the exact text at line 160
+  itself drifts with every round that edits the live file, so the marker
+  proves the right file opened and the highlight assertion proves the right
+  *line*), `[data-line="160"]` carries `fp-code-row-hit`, that row's rectangle
+  is inside `.fp-code-scroll`'s (not merely in the DOM — same "revealed ≠
+  present" distinction as `2h`/`3c`, one component over), and the row is also
+  revealed in the *file list* (the D4 assertion, exercised on a large,
+  virtualised directory this time instead of a two-file one).
+- `8a`–`8f` (D2, wikilink + D3, frontmatter on the same note): the `<a>` has
+  `data-openable-kind="wikilink"` and an `href` starting `/document?wikilink=`;
+  a plain click opens the same vault note `2`/`4` already prove render
+  correctly; its row-reveal is asserted the same way as `3c`; the frontmatter
+  block renders as `.fp-meta` with a `type` key, and `.fp-scroll` (the
+  rendered body, meta stripped out) does **not** start with `type:` — the
+  exact wall-of-prose Konrad complained about.
+- `9a`–`9b`: Ctrl-click on the *same* wikilink opens exactly one new tab at
+  `/document?wikilink=Operating%20Manual` — the universal "open elsewhere"
+  meaning survives being written as `[[…]]` instead of a path.
+- `10a`–`10d` (D5, folder): the pill carries `data-openable-kind="dir"`; a
+  click navigates the panel (breadcrumb ends `…/scripts`) and leaves nothing
+  selected — a directory has no file to preview, the breadcrumb is the whole
+  answer.
+- `11a`–`11b` (D6, memory root): the pill is openable **unconditionally** —
+  `code-path-link.ts`'s prefix table doesn't know or care whether the server
+  has restarted, by design (see `resolve-path.ts`'s `resolveRootPath` header
+  comment). The check therefore asks the SAME question the app itself asks —
+  `GET /api/files/roots` on `FORGE_API_URL` — and asserts whichever branch
+  that implies: the file opens (breadcrumbs mention "memory", real body text)
+  if the key is present, or a `"Can't open … yet"` toast if it is absent.
+  Never a silent skip either way.
+- `1e`/`1f`: `.txt` and `.md .txt .json .csv` — PLAN.md finding 6's exact dead
+  clicks — must never carry `data-openable-path`.
 
 Every assertion prints a named `PASS`/`FAIL` line:
 
@@ -287,6 +331,34 @@ with the R0 port commit `27ab8d5`; nothing in this task's write-set touches
 **So the gate is RED at this branch point, deliberately.** It sits behind `--browser`, so
 the default `gates-808.sh` run is unaffected and stays green; it is skipped there, loudly
 and by name. A browser gate that passed today would only mean it was not looking.
+
+## 7. Round 6 results (2026-08-25, `project/ecacba29-test` after merging `project/ecacba29`)
+
+Merging `project/ecacba29` (the integrated detect/preview/panel/markdown
+workstreams) into this branch was **clean — no conflicts**. That brought in
+line refs, folders, wikilinks, the memory root, the frontmatter strip and the
+line-numbered code viewer, none of which existed in this test's write-set
+before. Rebuilt the production console (`next build`) against the same
+probe/scratch-DB stack §§1–3 describe, ran the extended check **twice in a
+row**: **37/42, identical verdicts.** Not flaky — the same five named FAILs
+both times.
+
+All 21 assertions from rounds 1–5 that passed still pass. Of the 21 new ones
+this round added, **20 pass** — every one of D1 (line refs, including the
+scroll-and-highlight), D2 (wikilinks, both click and Ctrl-click), D3
+(frontmatter on the wikilink-opened note), D5 (folders) and D6 (the memory
+root's dynamic branch, currently "not live" — confirmed live via
+`/api/files/roots` reporting 6 keys, `memory` absent) is holding.
+
+**One new FAIL, and it is the same defect as an existing one, not a new
+discovery:**
+
+| assertion | measured | defect |
+| --- | --- | --- |
+| `8d-wikilink-row-is-revealed-in-the-list` | `0 rows rendered` (not "below the fold" — the list region renders **no rows at all** once the wikilink's note is previewed) | Same root cause as the inherited `3c-vault-row-is-revealed-in-the-list` FAIL — both open a file in `Mentor/Profile`, and the screenshot (`…T144714Z-g3-after-click-wikilink.png`) shows the breadcrumb, the "1 selected" count and the preview all correct, with the file-list region above the preview showing zero rows. `2h` and `7e`, which open files in *larger* directories (`docs/plan`, `app/desktop/chat`), reveal correctly — 13 rows rendered, the row visibly among them. This isn't new: it is PLAN D4 half two reproducing through a second affordance (wikilink, not just an absolute path pill), still owned by the **panel** workstream (`FileExplorerPanel.tsx`/`VaultFileList.tsx`), and it is now proven to be a property of the *directory* (or of "list + preview open at once" generally) and not of how the open was triggered. |
+
+`2d`, `3c`, `4b` and `6b` are unchanged from round 5 (see §6 above) — still
+inherited, still not this task's write-set.
 
 ### Dev-mode footnote
 
