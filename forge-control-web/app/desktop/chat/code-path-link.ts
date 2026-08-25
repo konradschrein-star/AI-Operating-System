@@ -10,7 +10,7 @@
  * Ctrl/Cmd-click opens the /document viewer.
  *
  * DESIGN RULE — NO FALSE AFFORDANCES. Inline code is used for far more than
- * paths: rule ids (`spend.per_run_cap`), commands (`pnpm install`), env vars,
+ * paths: rule ids (`git.force_push`), commands (`pnpm install`), env vars,
  * numbers, and bare extension lists (`.md .txt .json .csv`, seen live and
  * marked openable by the first version of this file — six dead clicks in one
  * paragraph). If this says "openable" for those, every one is a dead click,
