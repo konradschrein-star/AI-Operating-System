@@ -899,6 +899,21 @@ export function ChatTeamPanel({
                   flexWrap: "wrap",
                   alignItems: "center",
                   gap: 4,
+                  /* BOUNDED, because `flexWrap` has no ceiling of its own.
+                     The comment above describes the two-project case this was
+                     built for. Konrad's manager chat has seeded TWENTY-NINE
+                     projects, so the switcher wrapped to twenty-odd rows and
+                     swallowed the panel — the PLAN rows and the file list
+                     rendered straight through it. That is the "sidebar looks
+                     like shit" screenshot, 2026-08-25.
+
+                     62px is about two rows: enough to see the current project
+                     and its neighbours, with the rest a scroll away. Identical
+                     to the fix on project/fb3b5fb2 so the two do not conflict —
+                     this is that change, brought forward because the lane still
+                     has two reviewers to clear and the panel is unusable now. */
+                  maxHeight: 62,
+                  overflowY: "auto",
                 }}
               >
                 <span
