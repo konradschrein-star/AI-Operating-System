@@ -137,3 +137,69 @@ T6 reviewer    whole diff                         depends [T3, T4, T5]
    with the after within a stated, argued margin.
 4. The PLAN drag split still works, and the duplicate note is gone.
 5. The PROJECT-picker overlap either fixed with evidence, or reported absent.
+
+---
+
+# Addendum — Konrad's scope toggle (his decision, 2026-08-25)
+
+**The open question in this plan is already answered, and not by me.** The vault
+spec `AI OS/Spec - Manager Chat UI v3.md` was edited today with an addendum
+recording Konrad's own words:
+
+> "Add a toggle at the top of the right sidebar: 'this chat' vs 'everything
+> running', defaulting to this chat."
+
+It further states that implementation "is folded into the in-flight project
+`aios-sidebar-live-sessions`" — this one. So it is in scope, and the escalation
+above is withdrawn: the scoped default I chose is right, and it gains an opt-in
+switch.
+
+**The v3 rejection still governs the default.** A chat opens scoped to itself,
+selection still lives on the left, and the right side still gets no independent
+selector for *which chat* it shows. What is permitted is one scope switch.
+
+## How it is built
+
+**Mount the component that already exists.** `LiveSurface.tsx:727` mounts
+`<AgentActivity />` with no `projectId`, and `GET /api/agents` unfiltered
+returns every run and sub-agent on the box. The addendum is explicit that the
+"everything running" branch must mount *that same component* rather than grow a
+second implementation of it. The toggle therefore lives in `ChatSurface.tsx`
+(which mounts `<ChatTeamPanel>` at `:362`) and swaps between the two — not
+inside `ChatTeamPanel`, which keeps its file owner unchanged.
+
+## The constraint this creates, measured
+
+`AgentActivity` polls `/api/agents` at a **hardcoded `refetchInterval: 4_000`**
+(`AgentActivity.tsx:806`) — **15 req/min**. The chat surface has a committed
+ceiling of **40 req/min** (`CHAT_SURFACE_REQ_PER_MIN_CEILING`) and
+`scripts/checks/check-chat-delta.ts:449-465` asserts every interval against a
+literal and sums them.
+
+In "everything running" the team panel is unmounted, so its 6 req/min and
+PlanKanban's 2 req/min stop: **net +7 req/min**. Against a documented worst case
+of ~36, that lands at ~43 — **over the ceiling**. This must be resolved openly,
+not discovered by the check going red:
+
+- that `4_000` is a literal inside a component, so the budget's own instrument
+  cannot see it. It moves into `pollBudget.ts` as a named constant, which is
+  what that file exists for;
+- and the sidebar mount takes a slower interval than the Live surface's, or the
+  ceiling is re-argued in the open. Silently exceeding it is not an option.
+
+Cost when the toggle is off — the default, and where Konrad will spend nearly
+all his time — is **zero**.
+
+## Added tasks
+
+```
+T7 builder   scope toggle + its own screenshot   depends [T4]
+T8 reviewer  the toggle increment                depends [T7]
+```
+
+**Why a second reviewer rather than widening the first.** `POST
+/projects/:id/tasks/:taskId/cancel` writes `status = 'cancelled'`, which
+`project_tasks_status_check` does not permit — the endpoint cannot succeed on
+this box, so the seeded graph is append-only and T6's dependency set is frozen.
+Two reviewers over *disjoint* builder sets, each a genuine join of its own
+increment, is the available shape; it is not two reviewers over one diff.
