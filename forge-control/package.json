@@ -12,7 +12,7 @@
     "start": "tsx src/index.ts",
     "executor": "tsx src/executor.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/*.test.ts"
+    "test": "tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",

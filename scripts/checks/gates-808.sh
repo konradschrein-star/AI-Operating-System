@@ -255,6 +255,9 @@ gate_sh "check-usage-fold.ts — standalone typecheck (outside forge-control's t
 gate_sh "pnpm test — forge-control unit suite" \
   "cd forge-control && pnpm test 2>&1 | grep -E '^# (tests|pass|fail)'"
 
+gate_sh "pnpm test — forge-control-web unit suite" \
+  "cd forge-control-web && pnpm test 2>&1 | grep -E '^# (tests|pass|fail)'"
+
 gate_sh "psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard" \
   "node docs/plan/artifacts/phase800/psql-argv-leak.cjs | tail -4"
 gate_sh "nav-walk-sampling.cjs — round 807 finding 4, the arithmetic" \
