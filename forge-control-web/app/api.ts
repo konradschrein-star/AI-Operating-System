@@ -2178,6 +2178,13 @@ export interface DayTask {
    *  date-precision and silently discards the time of day. */
   gtask_id?: string | null;
   gtask_updated?: string | null;
+  /** The life goal this task serves, if any — lets the week board answer
+   *  "did this week move anything that matters." Set by Konrad or accepted
+   *  from `suggested_goal_id`; never auto-linked silently (PLAN.md §3.3). */
+  goal_id?: string | null;
+  /** Server-suggested link (matched by area), offered as a chip — never
+   *  written until Konrad accepts it. */
+  suggested_goal_id?: string | null;
 }
 
 export interface CalendarEvent {
@@ -2221,6 +2228,11 @@ export interface LifeGoal {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  /** Derived, server-computed (PLAN.md §4.2) — never written by the client. */
+  tasks_open: number;
+  tasks_done_30d: number;
+  minutes_30d: number;
+  last_moved_at: string | null;
 }
 
 export interface LifeGoalInput {
@@ -2297,6 +2309,60 @@ export interface DayStatsHabit {
   best: number;
   /** The days inside that 30-day window that were ticked — the sparkline. */
   ticks30: string[];
+  /** Ticked days across the FULL requested window (`days=N`), not capped to
+   *  30 — the habit heatmap needs the whole span; `ticks30` stays for the
+   *  existing sparkline. */
+  ticks: string[];
+}
+
+/**
+ * Habit ↔ felt-rating correlation (PLAN.md §4 "the interesting one").
+ * `subjective` is 1..10 (widened 2026-08-25) — the one signal the day score
+ * cannot derive, so this is the only place that can ever answer "which of
+ * these habits actually matter." `sufficient` gates each row independently:
+ * a habit ticked on 3 rated days is not evidence, and the surface must say so
+ * rather than plot noise as a trend.
+ */
+export interface DayHabitFeltRow {
+  habit_id: string;
+  key: string;
+  label: string;
+  icon: string;
+  n_with: number;
+  n_without: number;
+  mean_with: number | null;
+  mean_without: number | null;
+  delta: number | null;
+  sufficient: boolean;
+}
+
+export interface DayHabitFelt {
+  /** Days in the window with a non-null `subjective` rating. */
+  rated_days: number;
+  /** Minimum `rated_days` before any row is trusted — currently 20. */
+  needed: number;
+  /** `rated_days >= needed`, window-wide — the UI's "not enough data yet" gate. */
+  sufficient: boolean;
+  rows: DayHabitFeltRow[];
+}
+
+export interface DayGoalsWeekMoved {
+  goal_id: string;
+  title: string;
+  horizon: LifeGoalHorizon;
+  tasks_done: number;
+  minutes: number;
+}
+
+/** "Did this week move anything that matters" — tasks closed against a life
+ *  goal, this calendar week. */
+export interface DayGoalsWeek {
+  week_start: string;
+  week_end: string;
+  total_done: number;
+  /** Tasks completed this week with no `goal_id` — the honesty counter. */
+  unlinked_done: number;
+  moved: DayGoalsWeekMoved[];
 }
 
 export interface DayStats {
@@ -2318,6 +2384,36 @@ export interface DayStats {
     stale: number;
   };
   streak: { current: number; best: number };
+  habit_felt: DayHabitFelt;
+  goals_week: DayGoalsWeek;
+}
+
+export interface DayCalendarStatsByArea {
+  area: string;
+  booked_min: number;
+  worked_min: number;
+}
+
+/**
+ * One calendar week's booked-vs-worked minutes. Its own endpoint, deliberately
+ * separate from `/daily/stats` (PLAN.md §5 rejected alternatives) — a 502 from
+ * Google must not blank every other stats tile.
+ */
+export interface DayCalendarStatsWeek {
+  week_start: string;
+  week_end: string;
+  booked_min: number;
+  worked_min: number;
+  events: number;
+  tasks_done: number;
+  by_area: DayCalendarStatsByArea[];
+  /** Set, with the other fields zeroed, when that week's Google call failed —
+   *  render the error, never a silent 0. */
+  error: string | null;
+}
+
+export interface DayCalendarStatsResponse {
+  weeks: DayCalendarStatsWeek[];
 }
 
 /**
@@ -2412,6 +2508,7 @@ export interface DayTaskInput {
   start_time?: string | null;
   duration_min?: number | null;
   gcal_event_id?: string | null;
+  goal_id?: string | null;
 }
 
 export const createDayTask = (input: DayTaskInput): Promise<DayWriteResult> =>
@@ -2434,6 +2531,9 @@ export const rolloverDayTasks = (to?: string): Promise<DayWriteResult> =>
 
 export const fetchDayStats = (days = 90): Promise<DayStats> =>
   getJson<DayStats>(`/daily/stats?days=${days}`);
+
+export const fetchCalendarStats = (weeks = 2): Promise<DayCalendarStatsResponse> =>
+  getJson<DayCalendarStatsResponse>(`/daily/stats/calendar?weeks=${weeks}`);
 
 /* ----------------------------------------------------------------------------
  * LIBRARY — the run-artefact store and the file write path.
@@ -2715,7 +2815,14 @@ export const fetchMapTopology = (
   );
 
 /* ----------------------------------------------------------------------------
- * Journal surface (paper-first capture, day retrospective & decisions)
+ * Journal surface (mentor read + auto-assembled evidence, paper capture &
+ * decisions). Contract: PLAN.md §4.1 (aios-journal-thoughts-stats).
+ *
+ * The page opens on `mentor` + `evidence` — what the day actually did,
+ * server-derived — and `reply` is Konrad's response to that, never a blank
+ * page. Every `evidence.*` bucket is independently nullable: one failed
+ * source (a dead calendar call, a missing repo) must not blank the rest, so
+ * `errors` carries the per-source failure instead of the envelope 500ing.
  * -------------------------------------------------------------------------- */
 export type JournalEntryType = "paper_photo" | string;
 export type OcrStatus = "unavailable" | "pending" | "done" | "failed" | string;
@@ -2737,10 +2844,129 @@ export interface JournalEntry {
   updated_at: string;
 }
 
+export interface JournalMentorMetrics {
+  committed: number;
+  completed: number;
+  notes: number;
+}
+
+export interface JournalMentor {
+  verdict: string | null;
+  log_day: string | null;
+  stale_days: number | null;
+  metrics: JournalMentorMetrics | null;
+  streak: number;
+  last_cron_fired_at: string | null;
+}
+
+export interface JournalEvidenceTaskDone {
+  id: string;
+  title: string;
+  area: string | null;
+  done_at: string;
+  goal_id: string | null;
+  goal_title: string | null;
+}
+
+/** A calendar event that had already ended, that Berlin day, as of the read. */
+export interface JournalEvidenceEvent {
+  id: string;
+  summary: string;
+  start: string;
+  end: string;
+  minutes: number;
+  task_id: string | null;
+}
+
+/** One commit from either tracked repo (`/opt/forge-ai-os`, `/opt/content-forge`). */
+export interface JournalEvidenceCommit {
+  repo: string;
+  sha: string;
+  subject: string;
+  at: string;
+}
+
+export interface JournalEvidenceRender {
+  id: string;
+  title: string;
+  status: string;
+  completed_at: string;
+}
+
+export interface JournalEvidenceRunItem {
+  id: string;
+  title: string;
+  kind: string;
+  status: string;
+  started_at: string;
+}
+
+/** `items` is capped at 20 by the server — a count, not the full list. */
+export interface JournalEvidenceRuns {
+  chat: number;
+  worker: number;
+  cron: number;
+  items: JournalEvidenceRunItem[];
+}
+
+/** Trimmed to the fields the mentor read renders — see full `DecisionEntry`
+ *  for the rest of that table's columns. */
+export interface JournalEvidenceDecision {
+  ts: string;
+  kind: DecisionEntry["kind"];
+  actor: string;
+  action: string;
+}
+
+export interface JournalEvidenceHabits {
+  ticked: { key: string; label: string; icon: string }[];
+  total_active: number;
+}
+
+export interface JournalEvidenceGlucose {
+  readings: number;
+  mean_mgdl: number | null;
+  in_range_pct: number | null;
+}
+
+export interface JournalEvidenceScore {
+  score: number | null;
+  habit_pct: number | null;
+  task_pct: number | null;
+}
+
+export interface JournalEvidence {
+  tasks_done: JournalEvidenceTaskDone[] | null;
+  events: JournalEvidenceEvent[] | null;
+  commits: JournalEvidenceCommit[] | null;
+  renders: JournalEvidenceRender[] | null;
+  runs: JournalEvidenceRuns | null;
+  decisions: JournalEvidenceDecision[] | null;
+  habits: JournalEvidenceHabits | null;
+  glucose: JournalEvidenceGlucose | null;
+  score: JournalEvidenceScore | null;
+}
+
+export interface JournalReply {
+  subjective: number | null;
+  reflection: string | null;
+  updated_at: string | null;
+  note_path: string | null;
+}
+
+export interface JournalError {
+  source: string;
+  message: string;
+}
+
 export interface JournalDayResponse {
   day: string;
-  count: number;
+  mentor: JournalMentor;
+  evidence: JournalEvidence;
+  reply: JournalReply;
+  /** Paper-scan entries — unchanged shape, demoted position on the page. */
   entries: JournalEntry[];
+  errors: JournalError[];
 }
 
 export interface JournalUploadResponse {
@@ -2766,6 +2992,17 @@ export const fetchJournalDay = async (
     : "/journal/day";
   return getJson<JournalDayResponse>(path);
 };
+
+/** Konrad's reply to the mentor read — a correction/addition to the day, not
+ *  a fresh form. Upserts onto `day_plans` (same row `reflectDay` writes). */
+export const postJournalReply = (
+  day: string,
+  input: { subjective?: number; reflection?: string },
+): Promise<{ ok: boolean; reply: JournalReply }> =>
+  postJson<{ ok: boolean; reply: JournalReply }>(
+    `/journal/${encodeURIComponent(day)}/reply`,
+    input,
+  );
 
 export const uploadJournalPaper = async (
   file: File | Blob,
@@ -2950,3 +3187,200 @@ export const updateLifeGoal = (
 
 export const deleteLifeGoal = (id: string): Promise<DayWriteResult> =>
   deleteJson<DayWriteResult>(`/daily/goals/${encodeURIComponent(id)}`);
+
+/* ----------------------------------------------------------------------------
+ * THOUGHTS — the idea pool, quotes/inspiration, and dreams. Contract:
+ * PLAN.md §4.3 (aios-journal-thoughts-stats).
+ *
+ * The store is Obsidian frontmatter files, not Postgres (PLAN.md §5 rejected
+ * alternatives — "these live in Obsidian" is Konrad's own instruction). Every
+ * idea is addressed by `path` and guarded by `sha256` — `updateIdea` is
+ * optimistic-concurrency (CAS), because two writers (Konrad in Obsidian via
+ * Syncthing, an agent through this API) can touch the same file.
+ *
+ * "Un-executed ideas are of course bullshit" is Konrad's own doctrine as a
+ * view: the default `view=unexecuted` sorts by age-since-capture among ideas
+ * whose `status` is still not started — nothing here re-derives that
+ * ordering client-side, the server owns it.
+ *
+ * `layout` on the read response reports which side of the vault split
+ * (PLAN.md §3.5) is active — `"legacy"` until Konrad approves the move,
+ * `"split"` after. This client never assumes one or the other.
+ * -------------------------------------------------------------------------- */
+
+/* AREAS and STATUSES below are the server's own vocabularies, verbatim from
+ * forge-control/src/lib/thoughts.ts (`AREAS`, `STATUSES`) — the frontmatter
+ * IS the schema and `assertArea`/`assertStatus` 400 on anything else. Round 2
+ * corrected both: this client was written from PLAN.md prose before the store
+ * landed and declared capitalised areas ("Business") and Postgres-flavoured
+ * statuses ("not_started", "in_progress", "abandoned"), none of which the
+ * store accepts. Every value here is lifted from the running validator, not
+ * from the plan's prose. */
+export const THOUGHT_AREAS = [
+  "business",
+  "youtube",
+  "life",
+  "health",
+  "relationships",
+] as const;
+
+export type ThoughtArea = (typeof THOUGHT_AREAS)[number];
+
+export type ThoughtsView = "unexecuted" | "area" | "importance" | "executed";
+
+/** Closed, both ways: the store rejects an unknown status on write, and a file
+ *  on disk carrying one fails to parse and arrives in `errors[]` instead of in
+ *  `ideas[]`. So a widening `| string` would only ever describe a value the
+ *  API cannot produce. */
+export const IDEA_STATUSES = [
+  "not-started",
+  "started",
+  "executing",
+  "done",
+  "dropped",
+] as const;
+
+export type IdeaExecutionStatus = (typeof IDEA_STATUSES)[number];
+
+export type ThoughtsLayout = "legacy" | "split";
+
+export interface Idea {
+  path: string;
+  idea: string;
+  area: ThoughtArea;
+  /** 1..10. */
+  importance: number;
+  status: IdeaExecutionStatus;
+  created: string;
+  /** Calendar days since `created`, computed server-side — the doctrine view
+   *  sorts on this. */
+  age_days: number;
+  /** Which side wrote it. `"forge"` means an agent-derived seed living under
+   *  `Forge/Thoughts/Seeds/` — the pool shows those with a *derived* badge and
+   *  an Adopt button. The store refuses to parse any other value. */
+  author: "konrad" | "forge";
+  source: string;
+  /** Never null: the store parses the two body sections and returns `""` when
+   *  a section is absent, so a missing description is an empty string. */
+  description: string;
+  why_genius: string;
+  /** CAS token for `updateIdea` — the file's current content hash. */
+  sha256: string;
+}
+
+export interface Quote {
+  text: string;
+  /** Never null on the wire — a quote appended without one is stored as
+   *  `konrad`, so the field is always populated. */
+  source: string;
+  date: string;
+}
+
+export interface Dream {
+  text: string;
+  date: string;
+}
+
+/** One idea file that could not be parsed — a bad `area`, a missing `created`,
+ *  a hand-edit in Obsidian that broke the frontmatter. Surfaced per file so a
+ *  single corrupt note cannot silently shrink the pool. */
+export interface ThoughtsError {
+  path: string;
+  message: string;
+}
+
+export interface ThoughtsResponse {
+  ideas: Idea[];
+  errors: ThoughtsError[];
+  quotes: Quote[];
+  dreams: Dream[];
+  layout: ThoughtsLayout;
+}
+
+export const fetchThoughts = (
+  view: ThoughtsView,
+  area?: ThoughtArea,
+): Promise<ThoughtsResponse> => {
+  const qs = new URLSearchParams({ view });
+  if (area) qs.set("area", area);
+  return getJson<ThoughtsResponse>(`/thoughts?${qs.toString()}`);
+};
+
+export interface CreateIdeaInput {
+  idea: string;
+  area: ThoughtArea;
+  importance?: number;
+  description?: string;
+  why_genius?: string;
+  status?: IdeaExecutionStatus;
+}
+
+export const createIdea = (input: CreateIdeaInput): Promise<{ idea: Idea }> =>
+  postJson<{ idea: Idea }>("/thoughts/ideas", input);
+
+export type UpdateIdeaFields = Partial<
+  Pick<Idea, "idea" | "area" | "importance" | "description" | "why_genius" | "status">
+>;
+
+/** Raised when the idea file changed on disk since it was read — Konrad in
+ *  Obsidian (over Syncthing), a seed script, or a second tab. Typed rather
+ *  than left as `Error("409 Conflict on …")`, because the drawer has to tell
+ *  those two apart: a CAS miss is "reload, someone moved first", any other
+ *  failure is a real error. Same contract as `CanvasConflictError` above, for
+ *  the same reason. */
+export class IdeaConflictError extends Error {
+  readonly currentSha256: string | null;
+  constructor(detail: string, currentSha256: string | null) {
+    super(detail);
+    this.name = "IdeaConflictError";
+    this.currentSha256 = currentSha256;
+  }
+}
+
+/** Optimistic-concurrency write — `base_sha256` must match the server's
+ *  current hash for `path`, or the request 409s and this throws
+ *  `IdeaConflictError`. */
+export const updateIdea = async (
+  path: string,
+  base_sha256: string,
+  fields: UpdateIdeaFields,
+): Promise<{ idea: Idea }> => {
+  const res = await fetch(`${ROOT}/thoughts/ideas`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path, base_sha256, ...fields }),
+  });
+  if (res.status === 409) {
+    const b = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      current_sha256?: string;
+    };
+    throw new IdeaConflictError(
+      b.error ?? `409 Conflict on /thoughts/ideas (${path})`,
+      b.current_sha256 ?? null,
+    );
+  }
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(
+      `${res.status} ${res.statusText} on /thoughts/ideas${b.error ? `: ${b.error}` : ""}`,
+    );
+  }
+  return (await res.json()) as { idea: Idea };
+};
+
+/** Moves a Forge-seeded idea onto Konrad's side of the vault split. */
+export const adoptIdea = (path: string): Promise<{ idea: Idea }> =>
+  postJson<{ idea: Idea }>("/thoughts/ideas/adopt", { path });
+
+export const addQuote = (
+  text: string,
+  source?: string,
+): Promise<{ quote: Quote }> =>
+  postJson<{ quote: Quote }>(
+    "/thoughts/quotes",
+    source ? { text, source } : { text },
+  );
+
+export const addDream = (text: string): Promise<{ dream: Dream }> =>
+  postJson<{ dream: Dream }>("/thoughts/dreams", { text });
