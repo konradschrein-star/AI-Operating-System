@@ -374,3 +374,33 @@ For engine changes, every reviewer verdict must explicitly reason through: doubl
 (same decision applied twice), tick-overlap races, and blocked-status transitions
 mid-round — three named paragraphs in the review, each ending "defended by: <code/test>".
 Skipping them is grounds for the meta-reviewer (P5) to bounce the phase.
+
+## 7. Proving a check bites
+
+**A check that has never been observed failing is a decoration.** A task that
+ships a check ships ONE `prove-it-bites.sh` transcript with it, pasted verbatim
+into its artefact doc, restore proven by hash. One line, so nobody can plead cost:
+
+```
+bash scripts/checks/prove-it-bites.sh \
+  --subject <the file the check protects> \
+  --mutation '<shell that breaks the property, $SUBJECT is exported>' \
+  --check '<the exact command the gate runs, pipe included>' \
+  --expect-fail
+```
+
+It refuses to start on a dirty subject (exit 2) and refuses to measure a check
+that is already RED (exit 3) — that second refusal stops an inherited red being
+reported as proof of a new assertion. `BITES` (exit 0) requires all three of:
+unmutated exit 0, mutated exit non-zero, md5 before == md5 after. Anything else
+is `INERT` (5) or `INCONCLUSIVE` (4 restore failed, 6 timed out) and exits
+non-zero. No third outcome. Repeat `--mutation` and step 7 reports which
+DISCRIMINATED and which did not — the difference between a control and
+regression coverage.
+
+Mutate the claim the check's own header makes: a `BITES` verdict says the check
+observes *the mutation that was named*, nothing more, and a mutation chosen to be
+easy is the mutation-testing version of a fixture chosen to compile. If nothing
+breaks the property, that is the finding — report it, never soften the check.
+Worked transcripts, including the harness sabotaged on purpose to watch its own
+restore fail: `docs/plan/artifacts/verification-that-bites/D3-mutation-rule.md`.
