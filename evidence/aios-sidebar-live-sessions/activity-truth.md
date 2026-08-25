@@ -119,10 +119,15 @@ fails against the pre-`3e63a45` behaviour.
 
 ## 6. The 68.4% staleness figure — provenance, NOT re-derived here
 
-`LiveSessionsStrip.tsx` cites a **different** number: `current_activity` is stale on **68.4%
-of polls**. That is not this replay. It came from round 0 / T3's live poll instrument — 379
-poll samples over 6 runs, of which 108 could be compared against the thread's own event log;
-70 of those 108 served `tool_call` while the true state was `tool_result`. Cause:
+`LiveSessionsStrip.tsx` cites a **different** number: `current_activity` was stale on **68.4%
+of the 108 comparable samples**. That is not this replay. It came from round 0 / T3's live
+poll instrument — 379 poll samples over 6 runs, of which 108 could be compared against the
+thread's own event log. 68.4% is the **overall** stale rate over those 108; **70 of those 108
+(64.8%)** were a `tool_call` served while the true state was `tool_result` — the largest
+subset of the 68.4%, not a second way of writing it. Do not read one as derived from the
+other: 70/108 is 64.8%, and the instrument published the two figures separately
+(`rollup-serves-stale-activity-68-percent`, § "Checked against the thread's own event log").
+Cause:
 `maybeFlush` is called only from `ingestEvent` and throttles to one write per 2 s, with no
 timer — so a `tool_result` landing inside the throttle window is followed by seconds of model
 thinking during which no event arrives, and the DB keeps serving the `tool_call`.

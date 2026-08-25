@@ -166,10 +166,11 @@ function LiveSessionRowViewImpl({ row, onOpenNode }: LiveRowProps) {
   /* WHAT IT IS DOING, AND HOW OLD THAT IS — always both.
    *
    * The rollup flushes `current_activity` only when an event arrives and
-   * throttles to one write per 2s, so the stored value is stale on 68.4% of
-   * polls — 70 of the 108 comparable samples served `tool_call` while the true
-   * state was `tool_result`. One instrument, one run of it, provenance and the
-   * explicit "not independently reproduced" caveat in
+   * throttles to one write per 2s, so the stored value was stale on 68.4% of
+   * the 108 comparable samples; 70 of those (64.8%) were a `tool_call` served
+   * while the true state was `tool_result` — that is the largest subset of the
+   * 68.4%, not a restatement of it. One instrument, one run of it,
+   * provenance and the explicit "not independently reproduced" caveat in
    * `evidence/aios-sidebar-live-sessions/activity-truth.md` §6. The age is what
    * makes that visible instead of silently wrong: a label alone re-reads as
    * "now" forever. `null` age prints

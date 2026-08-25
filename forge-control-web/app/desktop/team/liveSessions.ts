@@ -103,8 +103,9 @@ export interface LiveSessionRow {
    *  It is rendered BESIDE the activity, always. `current_activity.ts` freezes
    *  when a run stops emitting events, and the rollup's own flush throttle
    *  leaves the stored value up to seconds behind (measured: stale on 68.4% of
-   *  polls, fleet note `rollup-serves-stale-activity-68-percent`). A bare
-   *  label re-reads as "now" forever; a label with its age cannot. */
+   *  the 108 comparable poll samples, fleet note
+   *  `rollup-serves-stale-activity-68-percent`). A bare label re-reads as
+   *  "now" forever; a label with its age cannot. */
   activityAgeMs: number | null;
   /** Attributed working time, interpolated by ./teamRows' policy — the one
    *  place client-side time policy lives. `null` means NOT MEASURABLE and

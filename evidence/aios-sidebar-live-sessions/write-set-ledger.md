@@ -64,3 +64,25 @@ the honest move is to disclose loudly rather than to bend the work to fit the le
 | `evidence/aios-sidebar-live-sessions/write-set-ledger.md` | 2 | new — this file, which discloses itself |
 
 `review.md`, the one declared path, is **deliberately untouched**.
+
+## Round 7 (fix cycle 2) — the row declares NOTHING at all
+
+The round-7 fix-cycle row was seeded with an **empty** `write_set`. Not a wrong
+declaration this time — no declaration. So, as in round 5, **every file below is undeclared
+by construction**, and the same rule applies: disclose loudly, never retro-edit the row.
+
+Round-6 review finding 2 was a wording defect in a comment: "stale on 68.4% of polls — 70 of
+the 108 comparable samples…" reads as a derivation, and 70/108 is 64.8%, not 68.4%. 68.4% is
+the *overall* stale rate over those 108 samples; 70/108 is its largest subset.
+
+| File | Finding | Why |
+|---|---|---|
+| `forge-control-web/app/desktop/team/LiveSessionsStrip.tsx` | 2 | the comment named in the finding — em dash replaced, both figures given with their bases |
+| `evidence/aios-sidebar-live-sessions/activity-truth.md` | 2 | §6, the same conflation, same fix |
+| `forge-control-web/app/desktop/team/liveSessions.ts` | 2 (extension) | **not named by the reviewer.** It carried a third, milder form of the same error — "stale on 68.4% of polls", right base missing. Corrected to "68.4% of the 108 comparable poll samples" so the three citation sites agree. |
+| `evidence/aios-sidebar-live-sessions/write-set-ledger.md` | — | this section |
+
+Round-6 finding 1 (`/opt/forge-ai-os` dirty, two sole copies) is **not closed here and cannot
+be**: it lives outside the worktree, and the worktree-only policy plus
+`live-checkout-dirty-protocol` both forbid a build task from touching the live checkout. It
+was escalated again rather than silently carried. See the round-7 report.
