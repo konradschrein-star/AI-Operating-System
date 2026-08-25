@@ -64,6 +64,11 @@ interface SelectedFile {
   root: string;
   parentRel: string;
   entry: FileEntry;
+  /** 1-based line carried in from a `path:line` reference in a chat message.
+   *  Only ever set by a programmatic open — a manual click builds a
+   *  `SelectedFile` without it, which is how "click another row" clears the
+   *  line. */
+  line?: number;
 }
 
 function selectionKey(root: string, parentRel: string, name: string): string {
@@ -140,6 +145,25 @@ function FileExplorerPanelImpl({
     setTotal(undefined);
   }, []);
 
+  /** Root METADATA only — deliberately never touches `entries`. Used when a
+   *  file/folder request has already claimed the listing but the breadcrumb
+   *  still needs "Obsidian Vault" rather than the raw key `vault`.
+   *  `fetchFileRoots` is a cached module promise, so this adds no request and
+   *  no poll. A failure degrades the labels, not the list, so it reports
+   *  through the dismissable action banner instead of replacing the file list
+   *  with an error row. */
+  const ensureRootLabels = useCallback(async () => {
+    try {
+      setRoots(await fetchFileRoots());
+    } catch (err) {
+      setActionError(
+        `file roots failed to load — breadcrumbs will show raw root keys: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }, []);
+
   const loadDir = useCallback(async (root: string | null, rel: string) => {
     if (root === null) {
       await loadRoots();
@@ -184,9 +208,28 @@ function FileExplorerPanelImpl({
     setTotal(result.total);
   }, [loadRoots]);
 
+  /* The initial listing: the root menu. Guarded on `seqRef` because this must
+   * run ONCE PER COMPONENT INSTANCE, not once per effect invocation.
+   *
+   * MEASURED 2026-08-25, and it made the whole open-a-file path unverifiable:
+   * `next.config.mjs` sets `reactStrictMode: true`, so in development React
+   * invokes mount effects twice against the SAME instance (state survives, so
+   * this is not a fresh mount). Pass 1 loaded the roots (seq 1), the latch
+   * effect below then opened the requested directory (seq 2). Pass 2 re-ran
+   * this effect — seq 3 — while `consumePendingOpenFile()` correctly returned
+   * null the second time, so nothing re-issued the directory load. The roots
+   * response won the seq guard and the panel sat on the root menu with the
+   * requested folder in its breadcrumb: right breadcrumb, wrong list, no
+   * selection, no preview. StrictMode's double-invoke is dev-only, but the
+   * fragility is not — any remount that preserves state has the same shape. */
   useEffect(() => {
+    if (seqRef.current > 0) {
+      // Something already navigated. Take the labels, leave `entries` alone.
+      void ensureRootLabels();
+      return;
+    }
     void loadDir(null, "");
-  }, [loadDir]);
+  }, [loadDir, ensureRootLabels]);
 
   /* ── Open-a-file requests from a clicked path in a chat message ────────────
    *
@@ -202,16 +245,40 @@ function FileExplorerPanelImpl({
     root: string;
     parentRel: string;
     name: string;
+    line?: number;
   } | null>(null);
 
+  /* D4: the reveal handed to VaultFileList. `nonce` is monotonic so re-opening
+   * the same file re-runs the scroll and restarts the flash — without it the
+   * second click on a pill would look dead. Held as state (not a ref) because
+   * the list has to re-render to see it. */
+  const [reveal, setReveal] = useState<{ name: string; nonce: number } | null>(null);
+  const revealSeqRef = useRef(0);
+
   const handleOpenRequest = useCallback(
-    ({ root, path }: OpenFileRequest) => {
+    ({ root, path, line, isDir }: OpenFileRequest) => {
       clearPendingOpenFile();
-      const { parentRel, name } = splitRel(path);
       setQuery("");
       setSearchResults(null);
       setSearchSelected([]);
-      setPendingOpen({ root, parentRel, name });
+      if (isDir) {
+        /* D5: the request names a directory. There is no entry to select and
+         * nothing to preview — navigating there IS the whole answer, and the
+         * breadcrumb is what confirms it. Any earlier selection would keep a
+         * preview of an unrelated file pinned under the new folder, so it
+         * goes. A directory that does not exist surfaces through loadDir's
+         * existing loadError row; there is deliberately no branch for it
+         * here, because a second error path is a second thing to keep true. */
+        setPendingOpen(null);
+        setSelected([]);
+        setReveal(null);
+        setCurrentRoot(root);
+        setCurrentRel(path);
+        void loadDir(root, path);
+        return;
+      }
+      const { parentRel, name } = splitRel(path);
+      setPendingOpen({ root, parentRel, name, line });
       setCurrentRoot(root);
       setCurrentRel(parentRel);
       void loadDir(root, parentRel);
@@ -245,7 +312,18 @@ function FileExplorerPanelImpl({
       if (!loading) setPendingOpen(null);
       return;
     }
-    setSelected([{ root: pendingOpen.root, parentRel: pendingOpen.parentRel, entry }]);
+    setSelected([
+      {
+        root: pendingOpen.root,
+        parentRel: pendingOpen.parentRel,
+        entry,
+        line: pendingOpen.line,
+      },
+    ]);
+    // D4: selection alone left the file invisible in a virtualized list. Ask
+    // the list to scroll to it and flash it. Fired here, not in
+    // handleOpenRequest, because only here is the entry known to exist.
+    setReveal({ name: entry.name, nonce: ++revealSeqRef.current });
     setPendingOpen(null);
   }, [pendingOpen, entries, currentRoot, currentRel, loading]);
 
@@ -655,6 +733,8 @@ function FileExplorerPanelImpl({
             }}
             onDragStart={handleDragStart}
             onRetry={refresh}
+            revealName={reveal?.name}
+            revealNonce={reveal?.nonce}
           />
         )}
       </div>
@@ -664,7 +744,21 @@ function FileExplorerPanelImpl({
         if (!sel || sel.entry.isDir) return null;
         const rel = selectedFullRel(sel);
         return (
-          <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div
+            /* The line the chat reference carried, published for the browser
+             * regression test and for anyone debugging why the preview did or
+             * did not scroll. It is NOT the mechanism — see the TODO on
+             * <FilePreview> below — but it is the only place the carried value
+             * is observable until the preview workstream lands.
+             *
+             * ALWAYS EMITTED, "none" when there is no line. An omitted
+             * attribute would make `[data-open-line]` mean two different
+             * things at once — "no preview" and "a preview of a reference that
+             * named no line" — and a test asserting the attribute is absent
+             * would pass for the wrong reason. */
+            data-open-line={sel.line === undefined ? "none" : String(sel.line)}
+            style={{ display: "flex", flexDirection: "column", minHeight: 0 }}
+          >
             <div
               style={{
                 display: "flex",
@@ -691,6 +785,12 @@ function FileExplorerPanelImpl({
                 open ↗
               </a>
             </div>
+            {/* D1 TODO (PLAN.md, workstream `preview`): FilePreview does not
+                accept a `line` prop yet — it is being added there in parallel,
+                along with the line-numbered code viewer that would scroll to
+                it. Passing `sel.line` today would not typecheck. The
+                integration task wires `line={sel.line}` once both halves are
+                on `project/ecacba29`; the value is already carried this far. */}
             <FilePreview root={sel.root} rel={rel} name={sel.entry.name} />
           </div>
         );

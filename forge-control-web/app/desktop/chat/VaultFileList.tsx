@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { tokens } from "../../tokens";
 import type { FileEntry } from "../../api";
@@ -25,7 +25,23 @@ export interface VaultFileListProps {
   onToggleSelect: (entry: FileEntry) => void;
   onDragStart: (entry: FileEntry, e: React.DragEvent<HTMLDivElement>) => void;
   onRetry: () => void;
+  /** Name of an entry in THIS directory to scroll into view and flash — set
+   *  when a click on a path in a chat message opened the file programmatically.
+   *  Selection alone is not enough: the list is virtualized, so the selected
+   *  row is frequently not rendered at all, and the panel showed the right
+   *  preview above a list where the file was nowhere to be seen. */
+  revealName?: string;
+  /** Bumped on every open request, including a repeat of the same file, so
+   *  re-opening re-runs the scroll and restarts the flash animation. Without
+   *  it a second click on the same pill would be indistinguishable from a
+   *  dead one. */
+  revealNonce?: number;
 }
+
+/** Flash duration. Must match the `vfl-reveal-flash` animation in
+ *  VaultFileList.css — the class is removed by this timer, the animation just
+ *  paints while it is on. */
+const FLASH_MS = 1200;
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -121,6 +137,8 @@ export function VaultFileList({
   onToggleSelect,
   onDragStart,
   onRetry,
+  revealName,
+  revealNonce,
 }: VaultFileListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -132,6 +150,92 @@ export function VaultFileList({
   });
 
   const selectedPaths = new Set(selected.map((e) => e.name));
+  /** Whether the virtualized scroll container is on screen at all — the
+   *  loading / error / empty branches below render something else entirely,
+   *  so `parentRef` is null in those states. */
+  const listRendered = entries.length > 0;
+
+  /* ── Reveal the programmatically opened entry ──────────────────────────────
+   *
+   * The name arrives BEFORE the directory does: the panel dispatches the
+   * reveal and fires the fetch in the same tick, so on the first render after
+   * an open request `entries` is still the previous folder's. This effect
+   * therefore does nothing until `entries` actually contains the name, and
+   * re-runs on every `entries` change until it does. `handledNonceRef` is what
+   * stops one request being revealed twice across those re-runs. */
+  const [revealed, setRevealed] = useState<{ name: string; nonce: number } | null>(null);
+  const handledNonceRef = useRef<number | null>(null);
+  /* The row to keep in view while the panel is still settling — see the
+   * ResizeObserver effect below. Cleared the moment the reader takes over. */
+  const stickyNameRef = useRef<string | null>(null);
+  /* `entries` read from inside the observer callback, which is installed once
+   * and would otherwise close over the first render's array. */
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+
+  useEffect(() => {
+    if (revealName === undefined || revealNonce === undefined) return;
+    if (handledNonceRef.current === revealNonce) return;
+    const idx = entries.findIndex((e) => e.name === revealName);
+    if (idx === -1) return;
+    handledNonceRef.current = revealNonce;
+    stickyNameRef.current = revealName;
+    virtualizer.scrollToIndex(idx, { align: "center" });
+    setRevealed({ name: revealName, nonce: revealNonce });
+  }, [revealName, revealNonce, entries, virtualizer]);
+
+  /* ── Keep the revealed row in view while the panel is still settling ───────
+   *
+   * MEASURED 2026-08-25 and it undid the whole of D4: the preview pane mounts
+   * a beat AFTER the reveal (it has its own fetch) and takes up to 70vh, which
+   * shrinks this list's viewport from ~700px to ~64px. The scroll OFFSET
+   * survives that; the viewport does not, so the file that was just centred
+   * drops out of sight again and the list is back to showing two unrelated
+   * neighbours — precisely the screenshot the brief complains about.
+   *
+   * So: re-issue the scroll whenever the scroll element resizes, until the
+   * reader takes over. `wheel`/`pointerdown`/`keydown` release the row —
+   * NOT `scroll`, which our own scrollToIndex fires and which would release
+   * the sticky before it had done anything. */
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const release = () => {
+      stickyNameRef.current = null;
+    };
+    const ro = new ResizeObserver(() => {
+      const name = stickyNameRef.current;
+      if (name === null) return;
+      const idx = entriesRef.current.findIndex((e) => e.name === name);
+      if (idx === -1) {
+        // The directory changed under the sticky row. Nothing to pin.
+        stickyNameRef.current = null;
+        return;
+      }
+      virtualizer.scrollToIndex(idx, { align: "center" });
+    });
+    ro.observe(el);
+    el.addEventListener("wheel", release, { passive: true });
+    el.addEventListener("pointerdown", release);
+    el.addEventListener("keydown", release);
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("wheel", release);
+      el.removeEventListener("pointerdown", release);
+      el.removeEventListener("keydown", release);
+    };
+    // `virtualizer` is a stable instance (react-virtual holds it in useState),
+    // so this installs once per mount of the scroll element.
+  }, [virtualizer, listRendered]);
+
+  /* The un-flash lives in its own effect on purpose. Cleaning the timer up
+   * from the effect above would cancel it on that effect's next re-run — which
+   * happens on the very next render — and the flash would never end. */
+  useEffect(() => {
+    if (revealed === null) return;
+    const t = setTimeout(() => setRevealed(null), FLASH_MS);
+    return () => clearTimeout(t);
+  }, [revealed]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -216,10 +320,17 @@ export function VaultFileList({
                 const entry = entries[item.index];
                 if (!entry) return null;
                 const isSelected = !entry.isDir && selectedPaths.has(entry.name);
+                const isRevealed = revealed !== null && revealed.name === entry.name;
                 return (
                   <div
-                    key={entry.name}
-                    className={`vfl-row${entry.isDir ? " vfl-row--dir" : " vfl-row--file"}${isSelected ? " vfl-row--selected" : ""}`}
+                    /* The nonce is in the key ONLY for the flashing row: a CSS
+                     * animation does not restart when the same class is
+                     * re-applied to the same element, so re-opening a file
+                     * while its previous flash is still running would show
+                     * nothing. Remounting one 32px row is cheaper than a
+                     * class-toggle-on-rAF dance. */
+                    key={isRevealed ? `${entry.name}#${revealed.nonce}` : entry.name}
+                    className={`vfl-row${entry.isDir ? " vfl-row--dir" : " vfl-row--file"}${isSelected ? " vfl-row--selected" : ""}${isRevealed ? " vfl-row--revealed" : ""}`}
                     draggable={!entry.isDir}
                     onClick={() => {
                       if (entry.isDir) onDescend(entry);
@@ -244,7 +355,13 @@ export function VaultFileList({
                       padding: "0 12px",
                       cursor: entry.isDir ? "default" : "pointer",
                       boxSizing: "border-box",
-                      background: "transparent",
+                      /* NO `background` here. The row's background belongs to
+                       * VaultFileList.css (base / hover / selected / the
+                       * reveal animation). An inline `transparent` forced
+                       * every one of those rules to carry `!important` to be
+                       * seen at all — and a CSS animation loses to an
+                       * `!important` declaration, so the flash would simply
+                       * not have painted on a selected row. */
                       borderBottom: `1px solid ${tokens.borderSoft}`,
                       userSelect: "none",
                     }}
