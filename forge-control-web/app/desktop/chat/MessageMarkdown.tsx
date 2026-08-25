@@ -16,8 +16,9 @@ import {
 import { requestOpenFile } from "./open-file-bus";
 import { toast } from "../_ui/Toasts";
 
-/** Ctrl on everything except Apple hardware, where the chord is ⌘. */
-function modifierLabel(): string {
+/** Ctrl on everything except Apple hardware, where the chord is ⌘.
+ *  Exported so the tool row's tooltip names the same chord as the pill's. */
+export function modifierLabel(): string {
   if (typeof navigator === "undefined") return "Ctrl";
   return /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)
     ? "⌘"
@@ -115,8 +116,16 @@ async function resolveTarget(
  *
  * Ctrl/Cmd-click keeps the browser's universal "open elsewhere" meaning and
  * goes to the full-window /document viewer.
+ *
+ * EXPORTED, AND DELIBERATELY THE ONLY COPY. The inline pill is not the only
+ * place a path appears in the transcript — a tool row (`AssistantThread`'s
+ * `ToolCallRow`) shows the `file_path` of every Read/Write/Edit, which is where
+ * paths are densest of all. That row opens files through THIS function, so the
+ * root mapping, the filename-not-path search, the "root isn't live yet" notice
+ * and the never-silent miss are one implementation with one set of bugs.
+ * If you move it, move it whole; do not grow a second one.
  */
-async function openPathTarget(
+export async function openPathTarget(
   target: PathTarget,
   where: "panel" | "tab",
 ): Promise<void> {

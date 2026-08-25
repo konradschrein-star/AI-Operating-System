@@ -53,6 +53,27 @@ export type ToolSummary = {
   gist: string;
   outcome: string;
   tone: ToolTone;
+  /**
+   * The ONE file this call names, verbatim from the payload — `undefined` when
+   * the row names none (bash, grep, a Read whose `file_path` never arrived).
+   *
+   * WHY IT IS HERE AND NOT REGEXED OUT OF `gist`. `gist` is a display string:
+   * `shortPath` has already eaten the leading segments and `clip` may have cut
+   * the tail. The renderer needs the real path to open it, and this file has
+   * already parsed it — round 2 of chat reference navigation makes the tool
+   * row's path openable, and a path guessed back out of prose is exactly the
+   * false-positive risk `code-path-link.ts` exists to avoid.
+   *
+   * TRUSTWORTHY EVEN WHEN SALVAGED. A clipped payload is recovered by
+   * `salvageArgs`, which stops at the first value it cannot read WHOLE — a
+   * half-written path at the cut is dropped, never handed on. So this is either
+   * the path the tool was given or nothing.
+   *
+   * A FACT ABOUT THE ARGUMENTS, NOT ABOUT THE OUTCOME. It is filled on every
+   * tone, including "error" — whether a failed call's file is worth offering as
+   * a click is a rendering policy and lives with the renderer (AssistantThread).
+   */
+  path?: string;
 };
 
 /** How `FormatterInput.args` was obtained. See `parseArgsWithSource`. */
@@ -88,6 +109,9 @@ export type Formatter = (input: FormatterInput) => {
   label: string;
   gist: string;
   outcome: string;
+  /** The single file this row names, unabbreviated — see `ToolSummary.path`.
+   *  A row that names no file, or more than one, simply omits it. */
+  path?: string;
 };
 
 /* ── Display budgets ───────────────────────────────────────────────────────
@@ -324,6 +348,7 @@ const read: Formatter = (input) => {
     gist: clip(offset === null ? base : `${base} @${offset}`, GIST_MAX),
     outcome:
       input.result === null ? "no output" : plural(lineCount(input.result), "line"),
+    path: path ?? undefined,
   };
 };
 
@@ -340,6 +365,7 @@ const write: Formatter = (input) => {
       content === null || input.argsSource === "salvaged"
         ? "written"
         : `${fmtCount(content.length)} chars written`,
+    path: path ?? undefined,
   };
 };
 
@@ -357,6 +383,7 @@ const edit: Formatter = (input) => {
       oldText === null || newText === null || input.argsSource === "salvaged"
         ? "edited"
         : `${fmtCount(oldText.length)} → ${fmtCount(newText.length)} chars`,
+    path: path ?? undefined,
   };
 };
 
@@ -369,6 +396,7 @@ const multiEdit: Formatter = (input) => {
     gist: clip(edits === null ? base : `${base} ×${edits.length}`, GIST_MAX),
     outcome:
       edits === null ? "edited" : `${plural(edits.length, "edit")} applied`,
+    path: path ?? undefined,
   };
 };
 
@@ -537,6 +565,77 @@ const fallback: Formatter = (input) => {
   };
 };
 
+/* ── The file a call names, for callers that never build a summary ─────────
+ *
+ * The manager chat and ProjectsSurface render tool rows in `mode="raw"`: the
+ * tool's name plus a 110-character slice of the payload, with no `ToolSummary`
+ * anywhere. That is the surface Konrad actually reads — and the one whose
+ * screenshots started this round, full of `Write {"file_path":"/opt/…"}` lines
+ * that were dead text. So the path has to be reachable without summarizing.
+ *
+ * Same rule, same key, one behaviour: `toolPath` and `ToolSummary.path` must
+ * agree for every tool, which `check-tool-summary.ts` asserts row by row rather
+ * than leaving to a reader to notice. */
+
+/** Tools whose payload names exactly one file, under `file_path`. Bash is
+ *  deliberately absent: a command is prose-shaped, and hunting paths inside one
+ *  is the false-positive risk `code-path-link.ts` exists to refuse. */
+const FILE_PATH_TOOLS: ReadonlySet<string> = new Set([
+  "Read",
+  "Write",
+  "Edit",
+  "MultiEdit",
+]);
+
+/**
+ * The single file `meta.tool` + `meta.input` name, or null.
+ *
+ * Never throws, never guesses: the payload is parsed (or salvaged whole — see
+ * `salvageArgs`), and a tool that is not in the table above returns null even
+ * if its payload happens to carry a `file_path` key.
+ */
+export function toolPath(
+  toolName: string,
+  argsText: string | null | undefined,
+): string | null {
+  const name = typeof toolName === "string" ? toolName.trim() : "";
+  if (!FILE_PATH_TOOLS.has(name)) return null;
+  const { args } = parseArgsWithSource(
+    typeof argsText === "string" ? argsText : "",
+  );
+  return str(args, "file_path");
+}
+
+/**
+ * Where `path` is VISIBLE inside a rendered payload slice — `[start, end)` in
+ * `preview`, or null when it is not there.
+ *
+ * WHY A RANGE AND NOT A REWRITE. The raw row shows a 110-character slice of the
+ * JSON; that text is what Konrad has been reading and it stays character for
+ * character identical. Only the sub-range that IS the path becomes a click
+ * target, so the affordance costs the transcript nothing visually.
+ *
+ * A CUT PATH STILL COUNTS. The slice routinely ends mid-path, which is exactly
+ * the long-worktree case. The range then stops at the end of the preview: the
+ * click target is the visible part of the path, while what gets opened is the
+ * whole path the payload held. What is NOT allowed is a range whose text is not
+ * a prefix of `path` — a second key can hold a lookalike string, so the match
+ * is verified character-for-character before it is returned.
+ */
+export function visiblePathRange(
+  preview: string,
+  path: string | null,
+): readonly [number, number] | null {
+  if (path === null || path === "" || preview === "") return null;
+  const anchor = path.slice(0, Math.min(path.length, 24));
+  const start = preview.indexOf(anchor);
+  if (start === -1) return null;
+  const end = Math.min(preview.length, start + path.length);
+  if (end <= start) return null;
+  if (preview.slice(start, end) !== path.slice(0, end - start)) return null;
+  return [start, end] as const;
+}
+
 /** The key `summarizeTool` uses when `meta.tool` matches no row. */
 export const FALLBACK_KEY = "Fallback";
 
@@ -587,7 +686,7 @@ export function summarizeTool(
   const text = typeof argsText === "string" ? argsText : "";
   const formatter = TOOL_FORMATTERS[name] ?? TOOL_FORMATTERS[FALLBACK_KEY];
 
-  let row: { label: string; gist: string; outcome: string };
+  let row: { label: string; gist: string; outcome: string; path?: string };
   try {
     const { args, source } = parseArgsWithSource(text);
     row = formatter({ args, argsSource: source, argsText: text, result: res, isError });
@@ -605,11 +704,25 @@ export function summarizeTool(
   // unmapped tool still reads as itself ("ScheduleWakeup", not "tool").
   const label = formatter === fallback && name !== "" ? name : row.label;
 
+  // `path` rides along on every tone: it is what the call was ASKED to touch,
+  // which is true whether the call is still running, succeeded or failed.
   if (res === null) {
-    return { label, gist: row.gist, outcome: PENDING_OUTCOME, tone: "pending" };
+    return {
+      label,
+      gist: row.gist,
+      outcome: PENDING_OUTCOME,
+      tone: "pending",
+      path: row.path,
+    };
   }
   if (isError) {
-    return { label, gist: row.gist, outcome: errorOutcome(res), tone: "error" };
+    return {
+      label,
+      gist: row.gist,
+      outcome: errorOutcome(res),
+      tone: "error",
+      path: row.path,
+    };
   }
-  return { label, gist: row.gist, outcome: row.outcome, tone: "ok" };
+  return { label, gist: row.gist, outcome: row.outcome, tone: "ok", path: row.path };
 }
