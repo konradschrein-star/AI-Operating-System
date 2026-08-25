@@ -363,3 +363,137 @@ production sign-in — which belongs to a commit-in-place owner and to the main 
 already-running fix cycle, not to a rebuild of this diff.
 
 **VERDICT: NEEDS_FIXES** (one blocker, item 1; it is not in this diff and is already owned)
+
+---
+
+# FIX CYCLE 1 — the `toggle` lane's response
+
+Written by the `toggle` **builder** at `ffdd0af`, 2026-08-25T05:58Z. The declared write_set
+for this fix cycle is **this file alone**, which is itself the shape of the answer: round 4's
+verdict contains one blocker that is not in this diff and one finding whose fix lands in a
+file this lane does not own. Neither is closed by editing product code, and re-implementing a
+diff the reviewer called correct would be the expensive wrong move. So both items are
+**discharged as measurements**, taken now rather than inherited.
+
+## Blocker 1 — re-checked, not rebuilt. STILL RED, still not this lane's to clear.
+
+Re-run of the mandatory cleanliness check, 2026-08-25T05:55:28Z, verbatim:
+
+```
+$ git -C /opt/forge-ai-os status --porcelain
+ M forge-control-web/app/desktop/ChatSurface.tsx
+ M forge-control-web/app/desktop/chat/FileExplorerPanel.tsx
+ M forge-control-web/app/desktop/chat/MessageMarkdown.tsx
+ M forge-control-web/auth.ts
+ M forge-control/src/routes/files.ts
+?? forge-control-web/app/desktop/chat/code-path-link.ts
+?? forge-control-web/app/desktop/chat/open-file-bus.ts
+
+$ git -C /opt/forge-ai-os rev-parse --short HEAD ; git -C /opt/forge-ai-os branch --show-current
+259778b
+main
+```
+
+**Unchanged: same seven paths, same HEAD.** The commit-in-place has not landed, so the
+main-lane fix cycle (`6c0a0031`, against review `2f1d89a`) has not yet discharged it.
+
+Provenance re-measured by me at blob level — `git hash-object` on the working-tree content,
+then `git log --all --find-object`, which answers *is this content committed* rather than the
+weaker *is this path committed* that missed `ChatSurface.tsx` in the first place:
+
+| path | working-tree blob | committed as |
+|---|---|---|
+| **`forge-control-web/auth.ts`** | `6386ad4` | **NONE — sole copy** |
+| **`forge-control-web/app/desktop/ChatSurface.tsx`** | `65f9c67` | **NONE — sole copy** |
+| `forge-control-web/app/desktop/chat/FileExplorerPanel.tsx` | `7b30d52` | `56031db` |
+| `forge-control-web/app/desktop/chat/MessageMarkdown.tsx` | `e8476df` | `5067233` |
+| `forge-control/src/routes/files.ts` | `2bd2ef3` | `2db8998` |
+| `forge-control-web/app/desktop/chat/code-path-link.ts` | `cc95791` | `8c101dd` |
+| `forge-control-web/app/desktop/chat/open-file-bus.ts` | `c766f6c` | `56031db` |
+
+Two of the commit ids differ from the round-4 table (`56031db` where it said `27ab8d5`) with
+no change of meaning: `--find-object` reports the most recent commit carrying that blob, and
+`56031db` is a later commit on the same `chat-ref-nav` lineage. Both readings say SAFE.
+The two sole copies are **still** sole copies — nothing on any ref has adopted either blob.
+
+**The preservation patch is still faithful — re-validated, not assumed.** Round 5's patch
+(`evidence/aios-sidebar-live-sessions/live-checkout-dirt-2026-08-25.patch`, commit `0e1c069`
+on `project/fb3b5fb2`, 675 lines) was written hours ago; a patch that has drifted from the
+tree it preserves is worse than none. Proved in the direction that works on an
+already-applied patch — a **dry run that writes nothing**:
+
+```
+$ git -C /opt/forge-ai-os apply --check -R <the patch>
+  → exit 0   (reverse-applies cleanly ⇒ matches the live tree byte-for-byte)
+```
+
+**Verdict on blocker 1: it stands, and the `toggle` lane's correct action remains a
+re-check.** None of the seven paths is in this lane's write_set; the worktree-only policy
+forbids this builder from touching `/opt/forge-ai-os`; and reverting `auth.ts` would break
+GitHub sign-in for the whole box (Konrad's 2026-08-18 ruling as corrected 2026-08-19 — the
+dangerous verb is *discard*, not *commit*). Nothing was reverted, discarded or stashed. What
+this fix cycle adds is that the preserved copy has been shown still to match, so the
+commit-in-place owner can act on it with no re-measurement.
+
+## Finding 2 — the two gate lines are now PROVEN, not merely proposed.
+
+**Still orphans, and that is a fleet fact, not a branch-local one.** Re-swept at `ffdd0af`
+over the closed runner set (`scripts/**.sh`, `instrument-manifest.txt`, all four
+`package.json`s, `*.yml`; there is no `.github/workflows`) — zero hits in command position
+for either name. And across every ref, not just this branch:
+
+```
+$ git log --all --oneline -S 'check-sidebar-scope.ts' -- scripts/checks/gates-808.sh   → (empty)
+$ git log --all --oneline -S 'check-chat-delta.ts'    -- scripts/checks/gates-808.sh   → (empty)
+```
+
+No branch anywhere has wired either. The handoff below is live work, not a duplicate of
+something a sibling lane already did.
+
+**The exact bodies were executed verbatim, from the repo root, the way `gate_sh` executes
+one** (`gates-808.sh:85`, `bash -c "set -o pipefail; $script"`):
+
+```
+GATE BODY A → 34 passed, 0 failed / check-sidebar-scope: PASS      EXIT=0
+GATE BODY B → ALL PASS — check-chat-delta suite                    EXIT=0
+```
+
+**And both were shown to go RED through the pipe**, with `scripts/checks/prove-it-bites.sh`
+— the repo's mutation control — rather than a fourth hand-rolled transcript. One mutation,
+`pollBudget.ts` `SIDEBAR_AGENTS_POLL_MS 8_000 → 4_000`:
+
+| gate body | unmutated | mutated | verdict |
+|---|---|---|---|
+| A `check-sidebar-scope.ts \| tail -2` | exit 0 | `31 passed, 3 failed` · exit 1 | **BITES** |
+| B `check-chat-delta.ts \| tail -2` | exit 0 | `5 FAILURE(S)` · exit 1 | **BITES** |
+
+Subject restored by hash in both runs (`md5 a42ab87a843ccb9f7cdb7b3c375eea49` before and
+after); `git status --porcelain` empty afterwards.
+
+**Why the pipe is the part worth proving.** Both proposed bodies end in `| tail -2`, so the
+gate's exit status is `tail`'s unless `pipefail` is set — a wired-but-inert gate, the exact
+failure mode this finding is about, one level further in. `gate_sh` does set it, and the two
+transcripts above show a real non-zero arriving at the caller through the pipe. That is the
+difference between registering these checks and actually gating on them.
+
+`prove-it-bites.sh` is not on this branch; it was materialised from commit `e83f318` as an
+untracked file for the two runs and deleted afterwards. It is in no commit of this lane.
+
+**Paste-ready for the integration task**, immediately after `gates-808.sh:214` (the closing
+line of the round-2 `check-live-sessions` body, inside that block) — text unchanged from
+round 4's finding, now with the runs above behind it:
+
+```sh
+gate_sh "check-sidebar-scope.ts — default scope, round-trip, unknown-value fallback" \
+  "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-sidebar-scope.ts | tail -2"
+gate_sh "check-chat-delta.ts — delta contract + the chat surface's req/min budget" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-chat-delta.ts | tail -2"
+```
+
+## What this fix cycle deliberately did not change
+
+No product code, no check, no gate script. Round 4 found the increment correct on all eight
+claims, with both instruments discriminating under its own mutations; a rebuild would have
+risked a verified diff to close two items that are, respectively, another owner's and another
+file's. `git diff cc8e46e..HEAD` touches `evidence/` only.
