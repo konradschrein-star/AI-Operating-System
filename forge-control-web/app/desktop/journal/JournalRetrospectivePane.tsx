@@ -2,15 +2,14 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
-import {
-  fetchJournalDay,
-  fetchDecisionsForDay,
-  type JournalEntry,
-  type DecisionEntry,
-} from "../../api";
+import { fetchJournalDay, type JournalEntry } from "../../api";
+import { MentorRead } from "./MentorRead";
+import { DayEvidence } from "./DayEvidence";
+import { ReplyBox } from "./ReplyBox";
+import { StatsPanel } from "../stats/StatsPanel";
 import { PaperCaptureDeck } from "./PaperCaptureDeck";
 import { JournalVaultEditor } from "./JournalVaultEditor";
-import { DailyDecisionsStream } from "./DailyDecisionsStream";
+import { CARD } from "../goals/ui";
 
 interface JournalRetrospectivePaneProps {
   day: string; // YYYY-MM-DD
@@ -19,7 +18,7 @@ interface JournalRetrospectivePaneProps {
 export function JournalRetrospectivePane({ day }: JournalRetrospectivePaneProps) {
   const queryClient = useQueryClient();
 
-  // Query 1: Paper Journal Entries for day
+  // Query: Journal Day Data (mentor + evidence + reply + entries + errors)
   const {
     data: journalData,
     isLoading: isJournalLoading,
@@ -32,25 +31,11 @@ export function JournalRetrospectivePane({ day }: JournalRetrospectivePaneProps)
     staleTime: 10_000,
   });
 
-  // Query 2: Daily Decisions for day
-  const {
-    data: decisionsData,
-    isLoading: isDecisionsLoading,
-    isError: isDecisionsError,
-    error: decisionsError,
-    refetch: refetchDecisions,
-  } = useQuery({
-    queryKey: ["decisions", "day", day],
-    queryFn: () => fetchDecisionsForDay(day),
-    staleTime: 15_000,
-  });
-
   const entries: JournalEntry[] = journalData?.entries ?? [];
-  const decisions: DecisionEntry[] = decisionsData ?? [];
 
   const handleSavedVault = () => {
-    // Invalidate queries that might be affected by vault changes
     queryClient.invalidateQueries({ queryKey: ["vault", "file", `Daily/${day}.md`] });
+    queryClient.invalidateQueries({ queryKey: ["journal", "day", day] });
   };
 
   const handleUploadSuccess = () => {
@@ -63,33 +48,109 @@ export function JournalRetrospectivePane({ day }: JournalRetrospectivePaneProps)
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: 16,
-        paddingBottom: 24,
+        gap: 20,
+        paddingBottom: 32,
       }}
     >
-      {/* Section 1: Paper Journal & Scans */}
-      <PaperCaptureDeck
+      {/* 1. MENTOR'S READ */}
+      <MentorRead
         day={day}
-        entries={entries}
+        mentor={journalData?.mentor}
+        errors={journalData?.errors}
         isLoading={isJournalLoading}
-        isError={isJournalError}
-        error={journalError instanceof Error ? journalError : null}
-        onRefresh={() => refetchJournal()}
-        onUploadSuccess={handleUploadSuccess}
       />
 
-      {/* Section 2: Written Journal (Obsidian Daily ## Journal CAS Editor) */}
-      <JournalVaultEditor day={day} onSaved={handleSavedVault} />
-
-      {/* Section 3: Daily Decisions Stream */}
-      <DailyDecisionsStream
+      {/* 2. WHAT HAPPENED — EVIDENCE OF THE DAY */}
+      <DayEvidence
         day={day}
-        decisions={decisions}
-        isLoading={isDecisionsLoading}
-        isError={isDecisionsError}
-        error={decisionsError instanceof Error ? decisionsError : null}
-        onRefresh={() => refetchDecisions()}
+        evidence={journalData?.evidence}
+        errors={journalData?.errors}
+        isLoading={isJournalLoading}
       />
+
+      {/* 3. YOUR REPLY — REFLECTION & FELT RATING */}
+      <ReplyBox
+        day={day}
+        reply={journalData?.reply}
+        isLoading={isJournalLoading}
+      />
+
+      {/* 4. STATS — MOUNTED IN JOURNAL */}
+      <div style={{ marginTop: 4 }}>
+        <StatsPanel mount="journal" day={day} />
+      </div>
+
+      {/* 5. COLLAPSIBLE DISCLOSURES AT THE BOTTOM */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+        {/* Paper capture disclosure */}
+        <details
+          style={{
+            ...CARD,
+            padding: "12px 16px",
+            background: tokens.bgCard,
+          }}
+        >
+          <summary
+            style={{
+              cursor: "pointer",
+              fontSize: 12.5,
+              fontWeight: 600,
+              color: tokens.textSecondary,
+              userSelect: "none",
+              outline: "none",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span>📷</span>
+            <span>
+              Paper capture
+              {entries.length > 0 ? ` (${entries.length} page${entries.length === 1 ? "" : "s"})` : " (0 pages)"}
+            </span>
+          </summary>
+          <div style={{ marginTop: 14 }}>
+            <PaperCaptureDeck
+              day={day}
+              entries={entries}
+              isLoading={isJournalLoading}
+              isError={isJournalError}
+              error={journalError instanceof Error ? journalError : null}
+              onRefresh={() => refetchJournal()}
+              onUploadSuccess={handleUploadSuccess}
+            />
+          </div>
+        </details>
+
+        {/* Edit day note disclosure */}
+        <details
+          style={{
+            ...CARD,
+            padding: "12px 16px",
+            background: tokens.bgCard,
+          }}
+        >
+          <summary
+            style={{
+              cursor: "pointer",
+              fontSize: 12.5,
+              fontWeight: 600,
+              color: tokens.textSecondary,
+              userSelect: "none",
+              outline: "none",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span>📝</span>
+            <span>Edit day note (Daily/{day}.md)</span>
+          </summary>
+          <div style={{ marginTop: 14 }}>
+            <JournalVaultEditor day={day} onSaved={handleSavedVault} />
+          </div>
+        </details>
+      </div>
     </div>
   );
 }
