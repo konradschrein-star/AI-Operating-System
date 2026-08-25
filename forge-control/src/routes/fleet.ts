@@ -36,7 +36,21 @@ r.put("/default-tier", async (c) => {
   }
   const actor = body.actor ?? body.updated_by ?? "user";
   const result = await setFleetDefaultTier(rawTier, actor);
-  await appendDecision("manager", actor, `set fleet default tier to ${rawTier}`);
+  /* The setting is already committed by the time this runs. An audit-log insert
+   * that fails must therefore not turn an APPLIED switch into a 500: the UI
+   * would keep showing the old tier while dispatch used the new one — the
+   * worst of the two possible lies. Logged, never swallowed silently. */
+  await appendDecision(
+    "manager",
+    actor,
+    `set fleet default tier to ${rawTier}`,
+  ).catch((e: unknown) =>
+    console.warn(
+      `[fleet] default tier is now '${rawTier}' but the decision log entry failed: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    ),
+  );
   return c.json(result);
 });
 
@@ -56,7 +70,21 @@ r.post("/default-tier", async (c) => {
   }
   const actor = body.actor ?? body.updated_by ?? "user";
   const result = await setFleetDefaultTier(rawTier, actor);
-  await appendDecision("manager", actor, `set fleet default tier to ${rawTier}`);
+  /* The setting is already committed by the time this runs. An audit-log insert
+   * that fails must therefore not turn an APPLIED switch into a 500: the UI
+   * would keep showing the old tier while dispatch used the new one — the
+   * worst of the two possible lies. Logged, never swallowed silently. */
+  await appendDecision(
+    "manager",
+    actor,
+    `set fleet default tier to ${rawTier}`,
+  ).catch((e: unknown) =>
+    console.warn(
+      `[fleet] default tier is now '${rawTier}' but the decision log entry failed: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    ),
+  );
   return c.json(result);
 });
 

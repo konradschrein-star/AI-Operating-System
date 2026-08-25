@@ -66,6 +66,10 @@ import {
   agyConnection,
   claudeConnection,
   fetchFleetDefaultTier,
+  fleetTierOptionLabel,
+  FLEET_CODE_DEFAULT_TIER,
+  FLEET_TASK_TIERS,
+  FLEET_TIER_COPY,
   geminiCliConnection,
   geminiKeyConnection,
   githubConnection,
@@ -375,54 +379,50 @@ export function ConnectionsPanel(): JSX.Element {
   );
 }
 
-const FLEET_TIER_DESCRIPTIONS: Record<string, { label: string; desc: string }> = {
-  gemini: {
-    label: "gemini — Gemini 3.7 Flash via agy (Default)",
-    desc: "Default engine for sub-agent work: builders, tests, boilerplate, docs, evidence and all re-checks.",
-  },
-  junior: {
-    label: "junior — Claude 3.5 Sonnet",
-    desc: "Claude junior: deploy/host-touching tasks where work must definitely land on disk.",
-  },
-  standard: {
-    label: "standard — Claude Opus / Sonnet",
-    desc: "Claude standard: gating reviews of product code and tasks requiring high judgement.",
-  },
-  fast: {
-    label: "fast — Claude 3.5 Haiku",
-    desc: "Claude fast: trivial mechanical work and fast scout recon.",
-  },
-  flagship: {
-    label: "flagship — Claude Opus / Fable",
-    desc: "Claude flagship: genuinely hard top-level architecture and system design only.",
-  },
-};
-
 /**
  * Fleet default engine switch — runtime tier configuration for sub-agent dispatch.
  *
  * Untiered and newly created tasks resolve against this setting at tick / dispatch time
  * (GET /api/fleet/default-tier), backed by app_settings['fleet.default_tier'].
  * Changing this setting updates the default immediately at runtime without restart.
+ *
+ * ── A FAILED READ SHOWS NOTHING, NOT A GUESS ─────────────────────────────
+ * This section's entire job is "the current default must be VISIBLE in the OS".
+ * It used to render `tierData?.default_tier ?? "gemini"` with the source chip
+ * reading DEFAULT — so when the fetch failed it asserted, in the operator's own
+ * settings surface, a fleet default that nothing had measured, and left the
+ * `<select>` permanently dead with no way back short of a page reload. A
+ * plausible number is worse than no number here: it is the one place Konrad
+ * goes to find out what the fleet is actually doing.
+ *
+ * So a failed read renders `—` / `UNREADABLE` and offers RETRY, and the three
+ * states — loading, failed, loaded — are distinguishable at a glance.
  */
 export function FleetDefaultEngineSection(): JSX.Element {
   const [tierData, setTierData] = useState<FleetDefaultTierSetting | null>(null);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let active = true;
+    setError(null);
     fetchFleetDefaultTier()
       .then((data) => {
         if (active) setTierData(data);
       })
       .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : String(err));
+        if (active) {
+          setTierData(null);
+          setError(err instanceof Error ? err.message : String(err));
+        }
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadKey]);
+
+  const retry = useCallback(() => setReloadKey((k) => k + 1), []);
 
   const handleChange = useCallback(async (newTier: string) => {
     setUpdating(true);
@@ -437,9 +437,20 @@ export function FleetDefaultEngineSection(): JSX.Element {
     }
   }, []);
 
-  const activeTier = tierData?.default_tier ?? "gemini";
-  const source = tierData?.source ?? "default";
-  const isGemini = activeTier === "gemini";
+  /* THREE STATES, never collapsed into two. `loaded` is the only one that may
+   * name a tier; `failed` names none and offers a retry; `loading` says so. */
+  const loaded = tierData !== null;
+  const failed = tierData === null && error !== null;
+  const activeTier = tierData?.default_tier ?? "";
+  const isGemini = activeTier === FLEET_CODE_DEFAULT_TIER;
+  const tierCopy = FLEET_TASK_TIERS.find((t) => t === activeTier);
+  const sourceLabel = !loaded
+    ? failed
+      ? "UNREADABLE"
+      : "READING…"
+    : tierData.source === "app_settings"
+      ? "APP_SETTINGS (RUNTIME)"
+      : "DEFAULT";
 
   return (
     <div
@@ -469,22 +480,47 @@ export function FleetDefaultEngineSection(): JSX.Element {
             fontWeight: 600,
           }}
         >
-          {tierData ? tierData.default_tier.toUpperCase() : "GEMINI"}
+          {loaded ? tierData.default_tier.toUpperCase() : "—"}
         </span>
         <span
           className="mono"
           data-fleet-tier-source
           style={{
             background: tokens.bgGutter,
-            color: source === "app_settings" ? tokens.ok : tokens.textFaint,
+            color: !loaded
+              ? failed
+                ? tokens.warn
+                : tokens.textFaint
+              : tierData.source === "app_settings"
+                ? tokens.ok
+                : tokens.textFaint,
             border: `1px solid ${tokens.borderSoft}`,
             borderRadius: 5,
             padding: "2px 7px",
             fontSize: 10.5,
           }}
         >
-          {source === "app_settings" ? "APP_SETTINGS (RUNTIME)" : "DEFAULT"}
+          {sourceLabel}
         </span>
+        {failed && (
+          <button
+            type="button"
+            data-fleet-tier-retry
+            onClick={retry}
+            className="mono"
+            style={{
+              background: tokens.bgGutter,
+              border: `1px solid ${tokens.borderEmphasis}`,
+              borderRadius: 5,
+              color: tokens.textHi,
+              cursor: "pointer",
+              fontSize: 10.5,
+              padding: "2px 8px",
+            }}
+          >
+            RETRY
+          </button>
+        )}
         <span style={{ flex: 1 }} />
         {tierData?.updated_at && (
           <span
@@ -516,7 +552,7 @@ export function FleetDefaultEngineSection(): JSX.Element {
             id="fleet-default-tier-select"
             data-fleet-tier-select
             value={activeTier}
-            disabled={updating || tierData === null}
+            disabled={updating || !loaded}
             onChange={(e) => void handleChange(e.target.value)}
             className="mono"
             style={{
@@ -530,11 +566,16 @@ export function FleetDefaultEngineSection(): JSX.Element {
               minWidth: 260,
             }}
           >
-            <option value="gemini">gemini — Gemini 3.7 Flash via agy (Default)</option>
-            <option value="junior">junior — Claude 3.5 Sonnet</option>
-            <option value="standard">standard — Claude Opus / Sonnet</option>
-            <option value="fast">fast — Claude 3.5 Haiku</option>
-            <option value="flagship">flagship — Claude Opus / Fable</option>
+            {/* No option is selected while the read is unresolved, so the
+                control shows an empty box rather than a tier it has not
+                measured. The `value=""` entry exists only to give React a
+                matching option for that state. */}
+            {!loaded && <option value="">{failed ? "— unreadable —" : "— reading… —"}</option>}
+            {FLEET_TASK_TIERS.map((tier) => (
+              <option key={tier} value={tier}>
+                {fleetTierOptionLabel(tier)}
+              </option>
+            ))}
           </select>
           {updating && (
             <span className="mono" style={{ fontSize: 11, color: tokens.textSoft }}>
@@ -543,7 +584,11 @@ export function FleetDefaultEngineSection(): JSX.Element {
           )}
         </div>
         <div style={{ fontSize: 11.5, color: tokens.textSoft, lineHeight: 1.45, marginTop: 2 }}>
-          {FLEET_TIER_DESCRIPTIONS[activeTier]?.desc ?? ""}
+          {tierCopy
+            ? FLEET_TIER_COPY[tierCopy].desc
+            : failed
+              ? "The current fleet default could not be read, so none is shown. Retry above."
+              : ""}
         </div>
       </div>
 

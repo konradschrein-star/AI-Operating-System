@@ -842,6 +842,66 @@ export const FLEET_TASK_TIERS: readonly FleetTaskTier[] = [
   "flagship",
 ] as const;
 
+/** The tier the ENGINE falls back to when `app_settings['fleet.default_tier']`
+ *  is absent — `DEFAULT_FLEET_TIER` in forge-control/src/db/ai_os.ts. Named
+ *  here so the picker does not hard-code "gemini" in a third place. */
+export const FLEET_CODE_DEFAULT_TIER: FleetTaskTier = "gemini";
+
+/**
+ * What each tier actually dispatches on, and what it is for.
+ *
+ * ── WHY THE MODEL ID IS SPELLED OUT ──────────────────────────────────────
+ * This picker chooses which model spends Konrad's money. It used to read
+ * "junior — Claude 3.5 Sonnet" and "fast — Claude 3.5 Haiku" while
+ * `TIER_MODELS` (forge-control/src/lib/project-tick.ts) dispatched
+ * `claude-sonnet-5` and `claude-haiku-4-5-20251001` — a whole model generation
+ * apart, at a different price. So the label carries the ID THE ENGINE USES,
+ * verbatim, not a marketing name someone has to keep in sync by hand.
+ *
+ * MIRRORED, AND PINNED. `TIER_MODELS` lives in a server module this bundle
+ * cannot import, so this is a copy — and a copy of a constant rots. It is held
+ * to the original by `forge-control/src/lib/fleet-tier.test.ts`, which reads
+ * BOTH source files and fails on any drift in either direction. That test runs
+ * in `pnpm test` (gate 27), which is the half of the fleet that actually runs.
+ */
+export interface FleetTierCopy {
+  /** Verbatim `TIER_MODELS[tier].model` from lib/project-tick.ts. */
+  model: string;
+  /** What this tier is for, in the words the brief's exception list uses. */
+  desc: string;
+}
+
+export const FLEET_TIER_COPY: Record<FleetTaskTier, FleetTierCopy> = {
+  gemini: {
+    model: "gemini-3.7-flash-high",
+    desc: "Gemini via agy — the fleet default for builders, tests, docs, evidence and re-checks. Free, and it drops roughly 4 tasks in 10 onto the one-retry-then-Claude path.",
+  },
+  junior: {
+    model: "claude-sonnet-5",
+    desc: "Claude junior — deploy and host-touching tasks, where the work must definitely land on disk.",
+  },
+  standard: {
+    model: "claude-opus-5",
+    desc: "Claude standard — the one gating review of product code, and anything needing real judgement.",
+  },
+  fast: {
+    model: "claude-haiku-4-5-20251001",
+    desc: "Claude fast — trivial mechanical work and scout recon.",
+  },
+  flagship: {
+    model: "claude-fable-5",
+    desc: "Claude flagship — top-level architecture and system design only.",
+  },
+};
+
+/** The one place the picker's option text is built. `<option>` strings used to
+ *  be hand-copied duplicates of a `label` field nothing read, which is how the
+ *  two drifted apart in the first place. */
+export function fleetTierOptionLabel(tier: FleetTaskTier): string {
+  const suffix = tier === FLEET_CODE_DEFAULT_TIER ? " · code default" : "";
+  return `${tier} — ${FLEET_TIER_COPY[tier].model}${suffix}`;
+}
+
 export interface FleetDefaultTierSetting {
   default_tier: string;
   source: "app_settings" | "default";

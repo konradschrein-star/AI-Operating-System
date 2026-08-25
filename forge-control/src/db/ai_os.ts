@@ -240,6 +240,50 @@ export async function setFleetDefaultTier(
   };
 }
 
+/** The degrading read behind `getFleetState()`. Exported so a test can drive it
+ *  directly against a malformed row without having to fake `fleet_state` too —
+ *  and so the pause gates' one dependency has a name to grep for. */
+export async function readFleetDefaultTierOrDegrade(
+  db: Querier = pool,
+): Promise<FleetDefaultTierSetting> {
+  try {
+    return await getFleetDefaultTier(db);
+  } catch (e) {
+    console.warn(
+      `[ai_os] could not read the fleet default tier (${
+        e instanceof Error ? e.message : String(e)
+      }) — reporting the code default '${DEFAULT_FLEET_TIER}'. The fleet's ` +
+        "run/pause status in this same response is unaffected and remains authoritative.",
+    );
+    return {
+      default_tier: DEFAULT_FLEET_TIER,
+      source: "default",
+      updated_at: null,
+    };
+  }
+}
+
+/* ── WHY THE TIER READ IS CAUGHT HERE AND NOWHERE ELSE ─────────────────────
+ *
+ * `getFleetState()` answers TWO questions that have nothing to do with each
+ * other: "is the fleet paused?" and "which engine is the default?". Only the
+ * first one is a safety control, and all three pause gates spell it
+ * `getFleetState().catch(() => ({ status: "running" }))` —
+ * lib/project-tick.ts, lib/cron-tick.ts, lib/telegram-bridge.ts. That `catch`
+ * cannot tell WHICH of the two questions failed, so before this clause existed
+ * a malformed `app_settings['fleet.default_tier']` row made
+ * `getFleetDefaultTier()` throw, the pause gate read the throw as "running",
+ * and a FROZEN fleet spawned paid runs — silently, and on every tick
+ * thereafter. `"sonnet"` written by hand into that row was enough.
+ *
+ * So the tier read degrades and the pause read does not. This is the same
+ * doctrine `resolveFleetDefaultTier()` states in lib/project-tick.ts: the throw
+ * is right for an API caller who can be told 500, and wrong anywhere it can
+ * decide whether work runs. Loud (console.warn, full reason) and degraded to
+ * the code default, never silent.
+ *
+ * NOT a silent fallback in the NF-sense: the setting's source is reported as
+ * `"default"`, which is exactly what it now is, and the reason is on the log. */
 export async function getFleetState(db: Querier = pool): Promise<FleetState> {
   const r = await db.query<{
     status: FleetStatus;
@@ -250,7 +294,7 @@ export async function getFleetState(db: Querier = pool): Promise<FleetState> {
        FROM fleet_state
       WHERE id = 1`,
   );
-  const tierInfo = await getFleetDefaultTier(db);
+  const tierInfo = await readFleetDefaultTierOrDegrade(db);
   const base = r.rows[0] ?? {
     status: "running" as FleetStatus,
     updated_at: new Date().toISOString(),
@@ -269,6 +313,7 @@ export async function setFleetState(
   status: FleetStatus,
   updatedBy = "user",
 ): Promise<FleetState> {
+  let base: { status: FleetStatus; updated_at: string; updated_by: string };
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -290,14 +335,15 @@ export async function setFleetState(
       [status === "paused"],
     );
     await client.query("COMMIT");
-    const base = r.rows[0];
-    const tierInfo = await getFleetDefaultTier();
-    return {
-      status: base.status,
-      updated_at: base.updated_at,
-      updated_by: base.updated_by,
-      default_tier: tierInfo.default_tier,
-      default_tier_source: tierInfo.source,
+    /* Same shape as `getFleetState()` ten lines above, and for the same reason:
+     * the migration seeds this row, but if it is somehow missing the freeze
+     * still COMMITTED and the caller must be told the state it asked for — not
+     * handed a TypeError on `undefined.status` that reads as "the freeze did
+     * not take". */
+    base = r.rows[0] ?? {
+      status,
+      updated_at: new Date().toISOString(),
+      updated_by: updatedBy,
     };
   } catch (err) {
     await client.query("ROLLBACK");
@@ -305,6 +351,21 @@ export async function setFleetState(
   } finally {
     client.release();
   }
+
+  /* AFTER the transaction, deliberately. Inside the `try` this read's throw ran
+   * `ROLLBACK` on an ALREADY-COMMITTED transaction and rethrew, so a malformed
+   * `app_settings['fleet.default_tier']` row turned an applied freeze into a
+   * 500: `fleet_state` and `guardrail_rules` already said `paused`, and Konrad
+   * was told the freeze failed. Out here it cannot touch the transaction, and
+   * `readFleetDefaultTierOrDegrade` cannot throw at all. */
+  const tierInfo = await readFleetDefaultTierOrDegrade();
+  return {
+    status: base.status,
+    updated_at: base.updated_at,
+    updated_by: base.updated_by,
+    default_tier: tierInfo.default_tier,
+    default_tier_source: tierInfo.source,
+  };
 }
 
 /* ============================================================================
