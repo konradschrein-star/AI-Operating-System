@@ -65,6 +65,15 @@ module.exports = {
         // when launched via `CLAUDE_POOL_API_KEY=... pm2 start ecosystem.config.cjs`.
         CLAUDE_POOL_URL: process.env.CLAUDE_POOL_URL || 'http://127.0.0.1:8092',
         CLAUDE_POOL_API_KEY: process.env.CLAUDE_POOL_API_KEY || '',
+        // Browser takeover (aios-browser-takeover-live). PASS-THROUGH, never
+        // required(): the nginx location /api/browser-takeover/ws/ bypasses
+        // NextAuth and this key is the only thing authenticating that socket —
+        // but required() THROWS and refuses to boot the whole control plane,
+        // so a restart that landed ahead of the secrets file would take the
+        // entire AI OS down for a browser feature. Absent value => the ticket
+        // code throws on mint and on verify, the feature dies loudly, the OS
+        // stays up. See forge-control/src/lib/takeover-ticket.ts.
+        TAKEOVER_TICKET_SECRET: process.env.TAKEOVER_TICKET_SECRET || '',
         OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
         REMINDER_TZ: 'Europe/Berlin',
         UPLOAD_DIR: '/opt/ai-os/uploads',
