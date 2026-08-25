@@ -21,6 +21,7 @@
 #   PHASE700_API_URL=http://127.0.0.1:7830 \
 #   FORGE_SESSION_COOKIE="$(cat /tmp/p808-cookie.txt)" \
 #     bash scripts/checks/gates-808.sh --browser     # + network-700 + nav-walk
+#                                                    # + chat-reference-navigation
 #
 #   bash scripts/checks/gates-808.sh --strict         # same run, but exit
 #     nonzero if RED>0 — see the note above the final exit for why this is a
@@ -266,9 +267,20 @@ gate_sh "nav-walk-sampling.cjs — round 807 finding 4, the arithmetic" \
 if [ "$BROWSER" = "1" ]; then
   gate_sh "phase700/network-700.cjs (NFU3)" "node docs/plan/artifacts/phase700/network-700.cjs | tail -12"
   gate_sh "phase600/nav-walk.cjs — P1/P2/P3" "node docs/plan/artifacts/phase600/nav-walk.cjs | tail -12"
+  # Chat reference navigation: clicks a path pill FROM THE TEAM TAB and asserts
+  # the tab flip, the breadcrumbs, the selected row, the rendered content and a
+  # tab count that stays at one. Every bug this feature has shipped was wiring
+  # between components that each worked alone — invisible to tsc, to
+  # check-code-path-link.ts and to a grep of the bundle. It needs its own stack
+  # (a probe forge-control on a scratch database + a console built against it):
+  # docs/plan/artifacts/chat-ref-nav/README.md.
+  gate_sh "check-chat-reference-navigation.mjs — click a path pill, panel opens the file" \
+    "node scripts/checks/check-chat-reference-navigation.mjs | tail -30"
 else
   skip "phase700/network-700.cjs (NFU3)" "browser harness not requested (--browser); run separately, results in README §8"
   skip "phase600/nav-walk.cjs — P1/P2/P3" "browser harness not requested (--browser); run separately, results in README §8"
+  skip "check-chat-reference-navigation.mjs — click a path pill, panel opens the file" \
+    "browser harness not requested (--browser); run separately, recipe in docs/plan/artifacts/chat-ref-nav/README.md"
 fi
 
 gate_sh "reproduce-cleanliness — re-running a protocol leaves the tree untouched" \
