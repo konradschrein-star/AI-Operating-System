@@ -320,11 +320,59 @@ invariant, a later task builds it).
 
 ## 5. STEP 5 — guard
 
+**This section was never filled in by the original G1 task** — its turn ended
+before this command ran (or at least before the result was recorded), and the
+work was left uncommitted in the `glob` workstream worktree with this exact
+placeholder still in place. Recovered and integrated into `project/169903ec`
+by task GI (`67ff2645`, commit `a1a61b7`); a reviewer caught the unfilled
+placeholder on the merged branch (task `fd1b38ad`). Run for real, from the
+merged tree, right now — not fabricated, not backfilled from an earlier PASS:
+
 ```
 $ bash scripts/checks/guard.sh --full --strict
 ```
 
-<!-- GUARD_RESULT_PLACEHOLDER -->
+```
+PH CHECK                    STATUS   TIME   DETAIL
+-- ------------------------ ------   ----   ------
+0  node-version             PASS       0s
+0  devdeps-forge-control    PASS       0s
+0  devdeps-forge-control-web PASS       0s
+1  no-raw-colours           FAIL       1s   forge-control-web/app/desktop/goals/WeekGrid.tsx:48
+1  dollar-sweep             PASS       0s
+1  forbidden-file-diff      PASS       0s
+2  tsc-forge-control        PASS      14s
+2  tsc-forge-control-web    PASS       6s
+2  instrument-typecheck     FAIL      34s   scripts/checks/check-chat-pagination-browser.ts(139,11): error TS2339
+3  web-build                PASS     177s
+4  gates-808-suite          FAIL     179s   forge-control-web/app/desktop/goals/WeekGrid.tsx:48
+
+PASS: 8   FAIL: 3   SKIP: 0
+GUARD: RED — do not merge. Fix the failure(s) above and re-run.
+EXIT=1
+```
+
+**RED, and both failure causes are inherited, neither is D4's:**
+
+- `no-raw-colours` / `gates-808-suite` both point at the same line,
+  `forge-control-web/app/desktop/goals/WeekGrid.tsx:48`. That is the
+  week-board palette from `b41e824` (Konrad, 2026-08-25 03:45), already
+  tracked in fleet memory `gate5-raw-colours-red-at-main-from-week-board.md`
+  as the repo's expected baseline red as of today. D4 touched no `.tsx` file.
+- `instrument-typecheck` fails on `scripts/checks/check-chat-pagination-browser.ts:139`
+  (`Property 'createRequire' does not exist` — a `@types/node` / TS-lib
+  mismatch). `git log -1` on that file: `75529e5`, Konrad, 2026-08-25 01:42 —
+  before this task existed. `git diff <pre-merge-parent> <this-merge-commit>
+  -- scripts/checks/check-chat-pagination-browser.ts` is empty: the file is
+  byte-identical across this integration. D4's write-set never touches
+  `scripts/checks/`.
+
+Both are pre-existing conditions on `main`/this project branch, not
+regressions introduced by the test-glob widening. `guard.sh --full --strict`
+being RED for reasons outside this task's write-set is a real, disclosed
+fact — not a claim that D4 itself is green end-to-end. The four blockers this
+task IS responsible for (§§1–3 above, plus the sibling gate proven live in
+STEP 3) are independently green.
 
 ## 6. Files changed (declared write-set)
 
