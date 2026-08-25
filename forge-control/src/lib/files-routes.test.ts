@@ -4,6 +4,14 @@
  * becomes a dedicated read-only root, `memory`, instead of a special case
  * bolted onto an existing one.
  *
+ * WHY A ROUTE TEST LIVES IN src/lib/. `pnpm test` runs `tsx --test src/lib/*.test.ts`
+ * and nothing else — a test file under src/routes/ DOES NOT RUN, it merely looks
+ * like coverage. This file was born at src/routes/files.test.ts (matching where
+ * files.ts itself lives) and passed standalone there, which is indistinguishable
+ * from passing in CI unless you check the glob. It is relocated here, alongside
+ * lib/vault-routes.test.ts (same reasoning, same fix), so `pnpm test` actually
+ * executes it. Do not move it back next to files.ts — that silently un-runs it.
+ *
  * NOTHING here touches the real trees (vault, workspace, uploads, media, the
  * live aios/forge-src checkouts, or the real fleet memory directory). Every
  * ROOTS.*.dir env var is pointed at a temp dir BEFORE routes/files.ts is
@@ -11,14 +19,7 @@
  * hence the dynamic import and the top-level await (same technique as
  * lib/vault-routes.test.ts).
  *
- * Run alone: ../forge-control/node_modules/.bin/tsx --test src/routes/files.test.ts
- *
- * NOTE FOR WHOEVER WIRES THIS INTO CI: package.json's "test" script is
- * `tsx --test src/lib/*.test.ts` — a glob that does not reach src/routes/.
- * This file is placed at src/routes/files.test.ts per this round's explicit
- * brief (it names that exact path), matching where files.ts itself lives.
- * It will NOT run under `pnpm test` / gates-808 gate 8 until something widens
- * that glob or adds a second one — flagged to the manager, not silently left.
+ * Run alone: ../forge-control/node_modules/.bin/tsx --test src/lib/files-routes.test.ts
  */
 
 import { test, describe } from "node:test";
@@ -61,7 +62,7 @@ await fs.writeFile(path.join(MEMORY, "notes.txt"), "not markdown\n", "utf8");
 await fs.mkdir(path.join(MEMORY, "sub"), { recursive: true });
 await fs.writeFile(path.join(MEMORY, "sub", "nested.md"), "nested\n", "utf8");
 
-const router = (await import("./files.ts")).default;
+const router = (await import("../routes/files.ts")).default;
 const app = new Hono();
 app.route("/api/files", router);
 
