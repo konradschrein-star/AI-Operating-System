@@ -28,6 +28,18 @@ const MEDIA_DIR = process.env.FORGE_MEDIA_DIR ?? "/opt/content-forge/media";
 const AIOS_DIR = process.env.AIOS_DIR ?? "/opt/ai-os";
 const FORGE_SRC_DIR = process.env.FORGE_SRC_DIR ?? "/opt/forge-ai-os";
 
+/* The fleet knowledge base every worker is told to read first and cites
+ * constantly in chat (`/root/.claude/projects/.../memory/MEMORY.md`,
+ * `tmux-has-session-is-not-process-alive.md`). It sat outside every root AND
+ * doubly unreachable even if it hadn't: resolveInRoot's dot-segment guard
+ * (below) only inspects the root-RELATIVE path, so a root directory that
+ * itself contains a dotted segment (`.claude`) is unaffected — the guard
+ * never sees it, because it is baked into ROOTS.memory.dir, not into any
+ * `rel` a caller supplies. D6 decision, 2026-08-25: a dedicated read-only
+ * root, not a special case bolted onto an existing one. */
+const FLEET_MEMORY_DIR =
+  process.env.FLEET_MEMORY_DIR ?? "/root/.claude/projects/-opt-forge-ai-os/memory";
+
 /* The trees the LIBRARY surface browses. `uploads` and `media` are the
  * artefact stores every run and every render already writes to — they were
  * reachable only through /api/uploads/:id/:name and /api/media before, i.e.
@@ -59,6 +71,11 @@ const ROOTS: Record<string, { dir: string; label: string; readOnly?: true }> = {
   "forge-src": {
     dir: FORGE_SRC_DIR,
     label: "forge-control source",
+    readOnly: true,
+  },
+  memory: {
+    dir: FLEET_MEMORY_DIR,
+    label: "Fleet memory (worker notes)",
     readOnly: true,
   },
 };
