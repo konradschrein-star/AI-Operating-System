@@ -256,22 +256,41 @@ wired into `scripts/checks/gates-808.sh` — both are orphan checks.
 
 ## Task graph
 
-Two workstreams. Items 1+2 are one file and one builder (`main`). Item 3 is a different
-file set and runs in parallel (`oracle`) — separate rather than same-workstream-disjoint
-because the oracle tasks run `tsx --test` and a scratch-Postgres harness while a sibling
-edits the tree, which is the documented case for real isolation.
+One workstream, `main`. All four builders write disjoint file sets; ordering is by
+`depends_on` alone.
 
 | id | role | ws | tier | writes | depends |
 |----|------|-----|------|--------|---------|
 | B1 | builder | main | standard | `scripts/ops/stalled-projects.sh` | — |
+| B3 | builder | main | standard | `task-graph.ts`, `db/projects.ts`, `project-status-reconcile.test.ts` | — |
 | B2 | builder | main | junior | `evidence/stall-detector-accuracy.md` | B1 |
-| B3 | builder | oracle | standard | `task-graph.ts`, `db/projects.ts`, `project-status-reconcile.test.ts` | — |
-| B4 | builder | oracle | standard | `scripts/checks/check-scheduler-sql.sh` | B3 |
-| I1 | builder | main | junior | union of B3+B4 | B3, B4 |
-| R1 | reviewer | main | standard | — | B1, B2, B3, B4, I1 |
+| B4 | builder | main | standard | `scripts/checks/check-scheduler-sql.sh` | B3 |
+| R1 | reviewer | main | standard | — | B1, B2, B3, B4 |
 
-`I1` merges `oracle` into `main` and **stops on conflict**, reporting the conflicting
-paths verbatim and unresolved. No auto-merge.
+No integration task: nothing forks, so there is no branch to merge and no conflict to
+stop on.
+
+**Why one workstream and not two — this was forced, and it cost the parallelism.**
+The plan first put item 3 in an `oracle` workstream. Both of its tasks failed to
+dispatch, twice, at `attempt 0` with no run:
+
+```
+[project-tick] failed to spawn run for task b0979a7d-… (builder):
+  The requested module '../db/ai_os.ts' does not provide an export named 'getFleetDefaultTier'
+```
+
+The export exists on disk (`/opt/forge-ai-os/forge-control/src/db/ai_os.ts:161`). The
+*running* executor holds a stale ESM module graph from a deploy landing mid-flight;
+`project-tick.ts:95` imports the symbol statically (resolved at boot, fine), but
+`workspace.ts:197` does `await import("../routes/projects.ts")` in the **worktree-creation
+path**, which re-resolves changed code against the cached old module. That path fires only
+for a workstream with no worktree yet — which is why `main`, `web` and `toggle` kept
+spawning normally and only the new lane died. No `--oracle` worktree was ever created.
+
+The fix is an executor restart, which this phase may not perform (it kills every run in
+flight). So the lane was collapsed into `main`; the four superseded rows are `cancelled`,
+not deleted. Under the round-222 ruling (one running task per workstream) this does cost
+real concurrency — the work is small enough to absorb it.
 
 ## What owns what, and how a failure is seen
 
