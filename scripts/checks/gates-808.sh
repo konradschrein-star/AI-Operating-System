@@ -283,10 +283,18 @@ if [ "$BROWSER" = "1" ]; then
   # docs/plan/artifacts/chat-ref-nav/README.md.
   gate_sh "check-chat-reference-navigation.mjs — click a path pill, panel opens the file" \
     "node scripts/checks/check-chat-reference-navigation.mjs | tail -30"
+  # Same stack, the other half of the affordance: the paths agents name inside
+  # TOOL ROWS. Committed in round 7 and invoked by nothing until round 9 — a
+  # check no runner runs is worse than no check, because its silence reads as a
+  # pass. It shares check-chat-reference-navigation's harness and README.
+  gate_sh "check-chat-tool-path.mjs — tool-row paths are openable, prose is not" \
+    "node scripts/checks/check-chat-tool-path.mjs | tail -30"
 else
   skip "phase700/network-700.cjs (NFU3)" "browser harness not requested (--browser); run separately, results in README §8"
   skip "phase600/nav-walk.cjs — P1/P2/P3" "browser harness not requested (--browser); run separately, results in README §8"
   skip "check-chat-reference-navigation.mjs — click a path pill, panel opens the file" \
+    "browser harness not requested (--browser); run separately, recipe in docs/plan/artifacts/chat-ref-nav/README.md"
+  skip "check-chat-tool-path.mjs — tool-row paths are openable, prose is not" \
     "browser harness not requested (--browser); run separately, recipe in docs/plan/artifacts/chat-ref-nav/README.md"
 fi
 

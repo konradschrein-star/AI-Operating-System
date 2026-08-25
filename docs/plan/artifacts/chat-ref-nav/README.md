@@ -370,3 +370,48 @@ open-request started in the first pass, and the roots listing wins the race. It 
 reproduce in a production build, which is why §3 says to use one. It is also not
 nothing: the same mount effect is what leaves `roots` empty in production, which is
 `2d`.
+
+## 8. Round 9 results (2026-08-25, `project/ecacba29`) — **42/42, exit 0**
+
+Fix cycle 1 against round 8's review. Same stack as §§1–3 (scratch DB
+`forge_probe_r9refnav`, read-only probe on 7871, production console on 7873),
+run three times: **41/42 after the first pass of fixes, then 42/42 twice.**
+
+| assertion | round 8 | round 9 | what changed |
+| --- | --- | --- | --- |
+| `2h` / `3c` / `4b` / `8d` — the row is revealed in the list | FAIL (0 rows, or below the fold) | **PASS** | The preview wrapper in `FileExplorerPanel.tsx` is bounded against its PARENT (`maxHeight: 58%`), `.fp-meta` is capped at 140px and the three scroll regions became shrinkable flex items. Measured on the exact case the memory note records: the list box goes **792px → 278px** where it used to go **792px → 0px**, 6 rows rendered before and after, `.fp-meta` 140px + `.fp-scroll` 343px. |
+| `2d` — the crumb is readable | FAIL (`Home/forge-src/docs/plan`) | **PASS** | `ensureRootLabels()` now runs unconditionally and reads the shared `cachedFileRoots()` promise. |
+| `6b` — a miss is reported fast | FAIL (39.0 s / 8 s budget) | **PASS (6.3 s)** | The roots are searched concurrently, read back in priority order, each on a 6 s deadline. |
+| `4a` — a relative path resolves | PASS (11.0 s) | **PASS (0.3 s)** | Regression caught mid-round and fixed: see below. |
+
+**A regression this round created and this check caught.** The first
+concurrency fix was a plain `Promise.all`, which collects every root before
+deciding — so a vault hit that used to land in 0.3–0.6 s waited **11.0 s** for
+`aios` to finish saying no. `4a` still passed (it asserts the breadcrumb, not
+the clock) but printed the number, which is why it prints the number. The loop
+now awaits the already-in-flight promises **in `SEARCH_ROOTS` order** and
+returns on the first hit. Per-root latency, measured against the live route with
+the check's own miss query: vault 0.04 s, forge-src 0.14 s, uploads 0.23 s,
+workspace 11.69 s, aios 13.91 s — the sum was the defect and the max is the
+honest cost of a miss, which is what the 6 s deadline then bounds.
+
+`2d` had a second half nobody had measured. After the guard fix, five of six
+breadcrumbs read the human label and `4a` still read `Home/vault/…` — the one
+case that resolved fast enough to beat its own label fetch. `fetchFileRoots` in
+`api.ts` has **no cache of its own**; the module promise the no-new-poll rule
+refers to lived in `resolve-path.ts` and held only the key set. It now holds
+`FileRoot[]`, so the panel reads labels the resolver already fetched, off a
+settled promise, in a microtask. All six breadcrumbs read the label.
+
+### `check-chat-tool-path.mjs` — the orphan, now wired
+
+Committed in round 7 and invoked by nothing: absent from `gates-808.sh` and from
+this README, and RED at HEAD on a stale fixture — `UNREACHABLE_FILE` still named
+`/root/.claude/projects/-opt-forge-ai-os/memory/MEMORY.md`, which D6 had made a
+real read-only root, so the assertion asserted the opposite of the product's
+intent. It now names `/opt/nowhere/not-a-root/notes.md` and runs as **gate 31**
+beside gate 30, behind `--browser`, skipped loudly without it. Against this
+stack: **21/21, exit 0.**
+
+A check no runner runs is worse than no check, because its silence reads as a
+pass.

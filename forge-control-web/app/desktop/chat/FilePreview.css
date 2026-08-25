@@ -17,6 +17,16 @@
  * pane's long-standing contract; the full-window /document route owns more
  * space than that and can raise it by setting the property on an ancestor,
  * which is why this is a variable rather than a literal in three places.
+ *
+ * IT IS A CEILING, NOT THE CONSTRAINT THAT MATTERS. 70vh is 70% of the
+ * VIEWPORT, and the Files panel is not the viewport: measured 2026-08-25,
+ * opening a note WITH frontmatter gave `.fp-meta` 143px + `.fp-scroll` 646px
+ * inside a panel that had ~790px to give, and the `flex: 1` file list above
+ * absorbed the shortfall down to 0px — right preview, no list at all. The
+ * scroll regions below are flex items now (`flex: 1 1 auto; min-height: 0`),
+ * so inside the panel their real bound is the wrapper's `maxHeight` and this
+ * variable never binds. In the block-layout /document route they are not flex
+ * items, nothing shrinks them, and 70vh is still the contract.
  */
 :root {
   --fp-max-h: 70vh;
@@ -25,6 +35,8 @@
 /* ── Text / markdown body ── */
 .fp-scroll {
   padding: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: var(--fp-max-h);
   overflow-y: auto;
 }
@@ -47,12 +59,22 @@
   color: var(--fg-textFaint);
 }
 
-/* ── Frontmatter meta strip (D3) ── */
+/* ── Frontmatter meta strip (D3) ──
+ *
+ * CAPPED, because it sits ABOVE the scroll region and every pixel it takes is
+ * a pixel the file list above the preview loses. A profile note's frontmatter
+ * measured 143px and there is no upper bound on how many keys a note carries.
+ * 140px is eight rows at this line-height plus the padding; past that the
+ * strip scrolls itself. `flex: none` so it is never the thing that shrinks —
+ * the body below it is. */
 .fp-meta {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 2px 10px;
   align-items: baseline;
+  flex: none;
+  max-height: 140px;
+  overflow-y: auto;
   padding: 10px 16px;
   background: var(--fg-bgGutter);
   border-bottom: 1px solid var(--fg-borderSoft);
@@ -78,6 +100,8 @@
 
 /* ── Line-numbered code viewer ── */
 .fp-code-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: var(--fp-max-h);
   overflow: auto;
   background: var(--fg-bgBody);
@@ -123,6 +147,8 @@
 
 /* ── CSV table ── */
 .fp-csv-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: var(--fp-max-h);
   overflow: auto;
 }

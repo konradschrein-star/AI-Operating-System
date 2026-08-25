@@ -162,9 +162,20 @@ const VAULT_FILE = "/opt/obsidian-vault/Mentor/Profile/Operating Manual.md";
 const VAULT_MARKER = "How to Work With Konrad";
 const SRC_FILE = "/opt/forge-ai-os/forge-control-web/app/desktop/chat/tool-summary.ts";
 const WORKSPACE_FILE = "/opt/ai-os/workspace/OVERNIGHT.md";
-/** Outside every configured root AND behind resolveInRoot's dot-segment guard:
- *  the fleet knowledge base. It must render as plain text, never as a click. */
-const UNREACHABLE_FILE = "/root/.claude/projects/-opt-forge-ai-os/memory/MEMORY.md";
+/** Outside every configured root: a path under no root's directory at all. It
+ *  must render as plain text, never as a click.
+ *
+ *  THIS FIXTURE WENT STALE AND THE CHECK WENT RED FOR IT. It used to name
+ *  `/root/.claude/projects/-opt-forge-ai-os/memory/MEMORY.md` — the fleet
+ *  knowledge base, "outside every root AND behind resolveInRoot's dot-segment
+ *  guard". D6 then made that directory a real read-only root (`ROOTS.memory` in
+ *  forge-control/src/routes/files.ts), so the assertion was asserting the
+ *  opposite of the product's intent and failed correctly. `/opt/nowhere/` is
+ *  chosen because it is not a root, is not INSIDE a root, and — unlike a
+ *  dot-segment path — nothing about it depends on a guard that could later be
+ *  relaxed. If a root is ever added over it, this constant is the thing to
+ *  change, not the assertion. */
+const UNREACHABLE_FILE = "/opt/nowhere/not-a-root/notes.md";
 
 const CALLS = [
   {

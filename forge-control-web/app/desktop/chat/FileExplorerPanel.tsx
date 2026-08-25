@@ -25,6 +25,7 @@ import {
   type FileSearchEntry,
   type UploadedFile,
 } from "../../api";
+import { cachedFileRoots } from "./resolve-path";
 import { VaultFileList, VPS_FILE_DRAG_MIME } from "./VaultFileList";
 import { FilePreview } from "./FilePreview";
 import {
@@ -148,13 +149,21 @@ function FileExplorerPanelImpl({
   /** Root METADATA only — deliberately never touches `entries`. Used when a
    *  file/folder request has already claimed the listing but the breadcrumb
    *  still needs "Obsidian Vault" rather than the raw key `vault`.
-   *  `fetchFileRoots` is a cached module promise, so this adds no request and
-   *  no poll. A failure degrades the labels, not the list, so it reports
-   *  through the dismissable action banner instead of replacing the file list
-   *  with an error row. */
+   *
+   *  Through `cachedFileRoots()`, NOT `fetchFileRoots()`: the resolver awaited
+   *  that same promise before it dispatched the open request, so by the time
+   *  this panel mounts it is already settled and the labels land in a
+   *  microtask. Calling the raw fetch here bought a fresh round trip for data
+   *  the page already had, and lost the race against a fast resolution —
+   *  measured 2026-08-25 as "Home/vault/Mentor/Profile" on the one case that
+   *  resolved in under a second. It also means no request and no poll.
+   *
+   *  A failure degrades the labels, not the list, so it reports through the
+   *  dismissable action banner instead of replacing the file list with an
+   *  error row. */
   const ensureRootLabels = useCallback(async () => {
     try {
-      setRoots(await fetchFileRoots());
+      setRoots(await cachedFileRoots());
     } catch (err) {
       setActionError(
         `file roots failed to load — breadcrumbs will show raw root keys: ${
@@ -223,9 +232,20 @@ function FileExplorerPanelImpl({
    * selection, no preview. StrictMode's double-invoke is dev-only, but the
    * fragility is not — any remount that preserves state has the same shape. */
   useEffect(() => {
+    /* Labels UNCONDITIONALLY, and before the guard. Both branches need them and
+     * only one of them reliably got them: React runs this effect BEFORE the
+     * latch effect below, so on a real (non-StrictMode) mount `seqRef` is still
+     * 0 here, `loadDir(null, "")` wins the guard, the latch then bumps the
+     * sequence, and the roots response is dropped as stale at loadDir's own seq
+     * check — leaving `roots` empty and the breadcrumb rendering the internal
+     * key ("Home / forge-src / docs / plan"). MEASURED 2026-08-25; only
+     * StrictMode's dev-only second pass ever reached the labels branch, which is
+     * why it looked correct in a dev browser. `ensureRootLabels` carries no seq
+     * guard and touches only `roots`, so it is safe to run in both cases and
+     * costs no request — `fetchFileRoots` is a cached module promise. */
+    void ensureRootLabels();
     if (seqRef.current > 0) {
-      // Something already navigated. Take the labels, leave `entries` alone.
-      void ensureRootLabels();
+      // Something already navigated. Leave `entries` alone.
       return;
     }
     void loadDir(null, "");
@@ -757,7 +777,45 @@ function FileExplorerPanelImpl({
              * named no line" — and a test asserting the attribute is absent
              * would pass for the wrong reason. */
             data-open-line={sel.line === undefined ? "none" : String(sel.line)}
-            style={{ display: "flex", flexDirection: "column", minHeight: 0 }}
+            /* BOUNDED AGAINST THE PANEL, NOT THE VIEWPORT. This used to be an
+             * ordinary flex child with no `flex` and no `maxHeight`, so it took
+             * its natural height — `.fp-meta` (uncapped) plus `.fp-scroll`
+             * (capped at 70vh, i.e. 70% of the WINDOW) — and the `flex: 1` file
+             * list above it absorbed the entire shortfall. Measured 2026-08-25
+             * opening a note with frontmatter: the list box went 792px -> 0px
+             * and rendered zero rows. That is the D4 complaint ("the opened file
+             * is nowhere visible in the list"): the reveal in VaultFileList was
+             * always correct, it just had a zero-height viewport to scroll into.
+             *
+             * `maxHeight` and not `flex: 1 1 0`: a three-line note should not be
+             * forced to occupy 58% of the panel. The basis stays `auto`, so the
+             * preview takes its natural height and the CAP is what binds — past
+             * it the inner scroll region (now a flex item with `min-height: 0`)
+             * takes over. The list therefore keeps at least 42% whenever the
+             * preview would have wanted more, and its full share when it would
+             * not.
+             *
+             * Why the shrink phase alone could never have fixed this: the list
+             * is `flex: 1`, i.e. basis 0, so its scaled shrink factor is 0 and
+             * it absorbs none of an overflow — the preview absorbs all of it and
+             * still ends up taller than the panel's remaining space. A ceiling
+             * is the only thing that leaves the list anything to grow into.
+             *
+             * The percentage resolves because every ancestor up to the chat's
+             * right panel has a definite height (ChatSurface's `flex: 1 minHeight: 0`
+             * column -> this panel's `height: 100%`). If that chain is ever
+             * broken the cap silently stops applying and this bug returns, which
+             * is why check-chat-reference-navigation MEASURES the list's height
+             * instead of trusting the style. Deliberately no `minHeight` floor on
+             * the list: a floor would hide exactly that regression. */
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              flex: "0 1 auto",
+              minHeight: 0,
+              maxHeight: "58%",
+              overflow: "hidden",
+            }}
           >
             <div
               style={{

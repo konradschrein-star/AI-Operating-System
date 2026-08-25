@@ -22,7 +22,7 @@
  * fetched once per page load and every resolution reuses it.
  */
 
-import { fetchFileRoots, searchFiles, type FileSearchEntry } from "../../api";
+import { fetchFileRoots, searchFiles, type FileRoot, type FileSearchEntry } from "../../api";
 import type { PathTarget, RootKey } from "./code-path-link";
 
 /**
@@ -48,6 +48,24 @@ const SEARCH_ROOTS: readonly RootKey[] = [
 ];
 
 /**
+ * How long ONE root gets to answer a filename search before the resolution
+ * stops waiting for it.
+ *
+ * 6s, chosen against two measurements and not by feel: the two big trees
+ * (`aios` 13.9s, `workspace` 11.7s) are what a miss actually costs, and the UX
+ * bar the regression check enforces is 8s
+ * (`check-chat-reference-navigation.mjs`, `MISS_BUDGET_MS`). 6s leaves the
+ * round trip, the React render and the toast inside the budget while still
+ * being long enough that a merely-busy root is not abandoned — the four fast
+ * roots answer in 0.04-0.23s, two orders of magnitude under it.
+ *
+ * A HIT IS NOT AFFECTED BY THIS. The loop below returns as soon as the
+ * highest-priority root that hit has answered, so the deadline only ever
+ * shortens the case where the answer is "nothing matched anywhere".
+ */
+const ROOT_DEADLINE_MS = 6000;
+
+/**
  * The roots the API actually serves right now, fetched once and cached.
  *
  * The prefix table in code-path-link.ts is a static map and the server's ROOTS
@@ -61,14 +79,42 @@ const SEARCH_ROOTS: readonly RootKey[] = [
  * as "unknown, proceed" rather than "no roots exist", so a flaky /files/roots
  * degrades to today's behaviour instead of disabling the feature.
  */
-let rootsPromise: Promise<Set<string>> | null = null;
-export function knownRoots(): Promise<Set<string>> {
+let rootsPromise: Promise<FileRoot[]> | null = null;
+
+/**
+ * The roots as the API describes them — KEY AND LABEL — fetched once per page
+ * load and shared by everything that needs either.
+ *
+ * `fetchFileRoots` in `api.ts` is a plain fetch with no cache of its own, and
+ * this is the module promise the brief's no-new-poll rule refers to. It caches
+ * the PROMISE, not the value, so N callers racing on first paint make one
+ * request; a rejection is deliberately NOT cached, so a flaky roots response
+ * does not poison the page for its whole lifetime.
+ *
+ * It holds `FileRoot[]` rather than the key set it used to, because the
+ * BREADCRUMB needs the labels and had no cached way to get them: the panel
+ * mounts only when the tab flips to Files — i.e. after the click — and paid a
+ * fresh round trip for labels it was about to render, so a resolution that
+ * landed fast enough (0.9s, measured) drew "Home/vault/…" before the labels
+ * arrived. Reading them off this already-settled promise makes it a microtask.
+ */
+export function cachedFileRoots(): Promise<FileRoot[]> {
   if (!rootsPromise) {
-    rootsPromise = fetchFileRoots()
-      .then((rs) => new Set(rs.map((r) => r.key)))
-      .catch(() => new Set<string>());
+    rootsPromise = fetchFileRoots().catch((e: unknown) => {
+      rootsPromise = null;
+      throw e;
+    });
   }
   return rootsPromise;
+}
+
+/** Just the keys, for "does this server serve that root". An empty set means
+ *  the lookup itself failed — see the callers, which all treat that as
+ *  "unknown, proceed" rather than "no roots exist". */
+export function knownRoots(): Promise<Set<string>> {
+  return cachedFileRoots()
+    .then((rs) => new Set(rs.map((r) => r.key)))
+    .catch(() => new Set<string>());
 }
 
 /** Test seam: drop the cached roots promise so a check can re-fetch. Never
@@ -207,33 +253,77 @@ export async function resolveTarget(target: PathTarget): Promise<Resolution> {
   }
 
   const live = await knownRoots();
-  const searched: string[] = [];
-  const failures: string[] = [];
-  for (const root of SEARCH_ROOTS) {
-    // A root the server does not serve yet answers 400/404 for everything;
-    // skipping it keeps the diagnostics about the search that matters.
-    if (live.size > 0 && !live.has(root)) continue;
-    searched.push(root);
-    try {
-      const { entries } = await searchFiles(root, "", target.label);
-      const hit = pickHit(root, entries, {
-        query: target.query,
-        label: target.label,
-        isDir,
-      });
-      if (hit) {
-        return {
-          ok: true,
-          root,
-          path: hit.path,
-          ...(line !== undefined ? { line } : null),
-          ...(isDir ? { isDir: true } : null),
-        };
-      }
-    } catch (e) {
-      failures.push(`${root}: ${errorText(e)}`);
+  // A root the server does not serve yet answers 400/404 for everything;
+  // skipping it keeps the diagnostics about the search that matters.
+  const searched = SEARCH_ROOTS.filter((root) => live.size === 0 || live.has(root));
+
+  /* FIRED TOGETHER, READ IN ORDER, AND EACH ONE ON A CLOCK. Three properties,
+   * and each of them is a separately measured defect.
+   *
+   * 1. CONCURRENT. These searches used to run in a `for` loop with an `await`
+   *    per root, so a reference that matched nothing paid for all of them one
+   *    after another: 39.0s measured 2026-08-25, 14.8-159.3s across the runs the
+   *    README records. Measured per root against the live route, same query:
+   *    vault 0.04s, forge-src 0.14s, uploads 0.23s, workspace 11.69s, aios
+   *    13.91s. The sum is the whole problem and the max is the honest cost.
+   *
+   * 2. READ IN `SEARCH_ROOTS` ORDER, awaiting one promise at a time. The array
+   *    is built by `.map`, so every request is already in flight before the
+   *    first `await` — but the ANSWER is still the first root in priority order
+   *    that hit, exactly as the serial loop decided it. This is not a detail:
+   *    a plain `Promise.all` collects every root before deciding, which made a
+   *    vault hit that used to land in 0.3-0.6s wait 11.0s for `aios` to finish
+   *    saying no (measured, this round, before this loop existed). A hit now
+   *    costs what ITS root costs; only a miss pays for the slowest root.
+   *
+   * 3. DEADLINED PER ROOT. A miss must still wait for everything, and the two
+   *    big trees put that at ~14s against an 8s UX bar. A root that has not
+   *    answered within `ROOT_DEADLINE_MS` is abandoned — reported by name in the
+   *    diagnostic, never silently dropped, so "Couldn't find X" always arrives
+   *    with the sentence that says which roots were not searched to the end. The
+   *    in-flight request is left to finish and be discarded: `searchFiles` takes
+   *    no AbortSignal, and inventing one here would be a route change smuggled
+   *    into a latency fix. */
+  type Outcome = {
+    root: RootKey;
+    hit: FileSearchEntry | null;
+    error: string | null;
+    timedOut: boolean;
+  };
+  const pending: Promise<Outcome>[] = searched.map((root) => {
+    const search: Promise<Outcome> = searchFiles(root, "", target.label).then(
+      ({ entries }) => ({
+        root,
+        hit: pickHit(root, entries, { query: target.query, label: target.label, isDir }),
+        error: null,
+        timedOut: false,
+      }),
+      (e: unknown) => ({ root, hit: null, error: errorText(e), timedOut: false }),
+    );
+    const deadline = new Promise<Outcome>((resolve) => {
+      setTimeout(() => resolve({ root, hit: null, error: null, timedOut: true }), ROOT_DEADLINE_MS);
+    });
+    return Promise.race([search, deadline]);
+  });
+
+  const outcomes: Outcome[] = [];
+  for (const p of pending) {
+    const o = await p;
+    outcomes.push(o);
+    if (o.hit) {
+      return {
+        ok: true,
+        root: o.root,
+        path: o.hit.path,
+        ...(line !== undefined ? { line } : null),
+        ...(isDir ? { isDir: true } : null),
+      };
     }
   }
+
+  const failures = outcomes
+    .filter((o): o is Outcome & { error: string } => o.error !== null)
+    .map((o) => `${o.root}: ${o.error}`);
   if (failures.length > 0) {
     return {
       ok: false,
@@ -242,13 +332,18 @@ export async function resolveTarget(target: PathTarget): Promise<Resolution> {
       detail: `Search failed — ${failures.join("; ")}.`,
     };
   }
+  const abandoned = outcomes.filter((o) => o.timedOut).map((o) => o.root);
   return {
     ok: false,
     reason: "not-found",
     label: target.label,
     detail: `No ${isDir ? "folder" : "file"} matching "${target.query}" in ${
       searched.join(", ") || "any live root"
-    }.`,
+    }.${
+      abandoned.length > 0
+        ? ` (${abandoned.join(", ")} did not answer within ${ROOT_DEADLINE_MS / 1000}s and was not searched to the end.)`
+        : ""
+    }`,
   };
 }
 

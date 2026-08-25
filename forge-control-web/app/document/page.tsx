@@ -80,9 +80,28 @@ function DocumentWindow() {
     }
     let cancelled = false;
     setWikiResolution("loading");
-    resolveWikilink(wikilink, wikipath).then((res) => {
-      if (!cancelled) setWikiResolution(res);
-    });
+    resolveWikilink(wikilink, wikipath)
+      .then((res) => {
+        if (!cancelled) setWikiResolution(res);
+      })
+      /* `resolveWikilink` is total today — it catches its own search failure and
+       * returns a `search-failed` resolution. This is the guard for the day it
+       * stops being: without it a rejection is an unhandled promise and the page
+       * sits on "locating …" forever, which is the one failure mode this whole
+       * feature exists to eliminate. Reported as `search-failed` because that is
+       * literally what happened and it is the reason whose `detail` is rendered
+       * verbatim by the branch below. */
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setWikiResolution({
+          ok: false,
+          reason: "search-failed",
+          label: wikilink,
+          detail: `Could not resolve [[${wikilink}]] — ${
+            err instanceof Error ? err.message : String(err)
+          }.`,
+        });
+      });
     return () => {
       cancelled = true;
     };
