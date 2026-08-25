@@ -169,11 +169,28 @@ RUN."*
 
 ### F7 — Terrain for D5: nothing gates a project's close.
 
+> **CORRECTED 2026-08-25, after the C1 task contradicted this section and I re-measured.
+> Two of the four claims below were wrong, and both were mine — relayed from a scout's
+> report without re-running them because they agreed with what I expected. That is
+> evidence item 5 of this project's own brief, committed into its own plan. The
+> corrections are inline and marked; the original wording is struck so the mistake stays
+> legible rather than being tidied away.**
+
 `closeFinishedProjects()` (`forge-control/src/db/projects.ts:625-693`) closes a project
 when: status is active, ≥1 task is done, no task is open, and every non-main workstream
-has a main task depending on all of it. **There is no other condition.** No
-`acceptance_criteria`, `success_metric`, `baseline`, or `verification_command` exists
-anywhere in the schema (grepped; only `mentor_metrics`/`coach_metrics` match, unrelated).
+has a main task depending on all of it.
+
+~~**There is no other condition.**~~ **WRONG — there are TWO close points.**
+`reconcileProjectStatuses()` (`db/projects.ts:799-863`) *also* sets `status='done'`:
+`UPDATE projects SET status='done' … WHERE id=$1 AND status='blocked'`, for any *blocked*
+project whose tasks are all terminal, **with no R70 term at all**. A contract wired into
+only the first is bypassed by `blocked → done`. Verified by reading `:845-856`.
+
+No `acceptance_criteria`, `success_metric`, `baseline`, or `verification_command` exists
+anywhere in the schema. **Re-verified against the LIVE table** rather than by grep —
+`select column_name from information_schema.columns where table_name='projects'` returns
+exactly 11 columns: `id, name, brief, repo, workspace_dir, base_branch, work_branch,
+status, metadata, created_at, updated_at`. This claim stands, on better evidence.
 `projects.metadata` is free-form jsonb already carrying `mode`, `checkin_hours`,
 `origin_chat_id`, `tier_pin`, `strict_write_sets`.
 
@@ -181,11 +198,23 @@ Two facts make an acceptance contract mechanically possible **without a migratio
 
 - `projects.metadata` jsonb is the seeding-time slot, already in the POST body path
   (`routes/projects.ts:99-108`, `buildProjectMetadata()` `:134-188`).
-- **Workers hold no database credentials.** They are Claude agents called via
-  `claude-pool`; they receive a prompt and a metadata object carrying `workspace_dir`
-  and nothing else (`db/projects.ts:2529-2569`). `DATABASE_URL` lives only in the
-  `forge-control` and `forge-executor` pm2 envs. A number that forge-control measures
-  and stores is genuinely outside a worker's reach.
+- ~~**Workers hold no database credentials.**~~ **WRONG, and this was the load-bearing
+  fact.** `forge-control/src/lib/cc-runner.ts:438` is `const env = { ...process.env }` —
+  the child inherits forge-executor's entire environment and only `ANTHROPIC_API_KEY` is
+  deleted. Measured from inside this very run:
+  `env | cut -d= -f1 | grep -iE 'PG|DATABASE'` → `AI_OS_DATABASE_URL`, `DATABASE_URL`,
+  `HCP_DATABASE_URL`, `PGPASSWORD`. `gemini-runner.ts:183` and `cli-runner.ts:1354,1547`
+  do the same, and `guard-autonomy.py:182-190` blocks `psql` only for
+  `DROP|TRUNCATE|FLUSHALL|FLUSHDB` — an `UPDATE projects` passes. **A worker can reach
+  the database that would hold its own acceptance number.** So substrate (i) is not
+  out of reach today; C1 proposes stripping the four DSN variables from the child env in
+  those three runners as a prerequisite in its own project — and notes honestly that even
+  then `pm2 jlist` prints forge-control's env to any root process, so this is a policy
+  line and a deliberate boundary crossing, not a wall. It is still far better than a file
+  in the worker's own tree.
+  The fleet memory note `worker-shell-inherits-database-url` recorded both this and the
+  two-close-points correction at 05:36 today — twenty minutes into this project, while I
+  was writing the opposite. **Read the memory directory before relaying a scout.**
 
 And one free acceptance number is already sitting there unused: `write_set` is stored
 verbatim and **never compared to the real `git diff`** (`lib/task-graph.ts:738-757`
