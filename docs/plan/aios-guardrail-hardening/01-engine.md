@@ -20,7 +20,7 @@ live `POST /api/autonomy/check`, and no `guardrail_trips` row was written.
 |---|---|
 | `forge-control/src/db/autonomy.ts` | `evaluateOne` → exported as **`evaluateRule`** (pure, DB-free); default branch rewritten; header comment rewritten; unreachable second `fleet_state` sync removed from `updateRule`; `resolveRunProvider` now returns role + title in the same query; `hookAgentLabel`; `recordRuleChange` / `listRuleChanges` / `normalizeChangeSource`; `AutonomyResponse.rule_changes` |
 | `forge-control/src/routes/autonomy.ts` | `createAutonomyRouter(deps)` factory (default export unchanged in behaviour); `POST /rules/:id` and `POST /trips/:id/resolve` now notify + audit; `ruleChangeNotice` / `tripResolveNotice` |
-| `db/migrations/0047_guardrail_rule_changes.sql` | new table + `created_at DESC` index |
+| `db/migrations/0051_guardrail_rule_changes.sql` | new table + `created_at DESC` index (round 5: renumbered from 0047, §4) |
 | `forge-control/src/lib/autonomy-blanket.test.ts` | 21 tests — the enforcement matrix |
 | `forge-control/src/lib/autonomy-changes.test.ts` | 15 tests — the route's audit + notify contract |
 | `docs/plan/aios-guardrail-hardening/01-engine.md` | this file |
@@ -175,8 +175,10 @@ against the old code at all.
 
 ## 4. Audit + notify
 
-New table, `db/migrations/0047_guardrail_rule_changes.sql`. **0047 was proved free before
-it was used** (memory: a migration number can collide through a merge):
+New table, **`db/migrations/0051_guardrail_rule_changes.sql`**.
+
+Round 1 wrote it as `0047` and proved that number free — with the wrong instrument. The
+transcript below is kept verbatim as the record of what was actually run:
 
 ```
 $ git ls-tree --name-only main db/migrations/ | tail -1
@@ -186,6 +188,31 @@ $ git merge-tree $(git merge-base HEAD main) HEAD main | grep -c db/migrations
 $ git log --all --oneline --diff-filter=A -- 'db/migrations/0047*'
 (empty — no ref anywhere has added a 0047)
 ```
+
+**All three checks were true when run and all three were blind to the collision.**
+`git ls-tree main | tail -1` read main *at the fork point this branch already had
+fetched*; `merge-tree | grep -c db/migrations` counts CONFLICT lines, and two files with
+different names never conflict; `git log --diff-filter=A` walks commits reachable from
+refs the worktree had at that moment. Round 4's reviewer ran the repo's own gate against
+the merged file set instead and it failed: `main` carries `0047_day_tasks_gtask.sql`
+(`b41e824`), plus `0048_glucose_readings.sql` and `0049_importance_six_levels.sql`.
+
+Round 5 renumbered to **0051** — 0050 is `0050_day_tasks_goal.sql` on `project/d6371f2d`.
+The survey that decides the number has to read the merged set and every sibling lane:
+
+```
+$ git ls-tree --name-only main db/migrations/ | grep -E '00(4[4-9]|5[0-9])'
+db/migrations/0044_goals_and_calendar.sql … db/migrations/0049_importance_six_levels.sql
+$ for b in $(git branch --format='%(refname:short)'); do \
+    git ls-tree --name-only "$b" db/migrations/ | grep -E '005[0-9]'; done | sort -u
+db/migrations/0050_day_tasks_goal.sql
+$ ls /opt/ai-os/workspace/projects/*/db/migrations/005* | sed 's|.*/||' | sort -u
+0050_day_tasks_goal.sql
+```
+
+`git mv` only — `sha256sum` was `432bdd1e…9df6c` before the move and after it, so no byte
+of the schema moved. The committed digest differs from that value because the same commit
+adds a provenance note to the file's own header explaining why 0050 was skipped.
 
 Behaviour:
 
@@ -211,7 +238,7 @@ Three design decisions worth stating, because each has a cheaper wrong version:
    Konrad's notification. `autonomy-changes.test.ts` asserts the ordering and the
    audit-throws case explicitly.
 3. **`rule_changes` is `GuardrailRuleChange[] | null`, not `[]` on failure.** A control
-   plane talking to a database that has not had 0047 applied yet must not take the fleet's
+   plane talking to a database that has not had 0051 applied yet must not take the fleet's
    pause switch down with it, and an empty array would read as *"nobody has touched
    anything"*. Same shape and same reasoning as the existing `gemini_daily` field beside it.
 
@@ -219,6 +246,11 @@ Three design decisions worth stating, because each has a cheaper wrong version:
 
 Route is `docker exec content-forge-postgres psql`; a host-side bare `psql` reaches an
 unrelated cluster on :5434. Live `content_forge` was never written to.
+
+Run in round 1, when the file was still named `0047_guardrail_rule_changes.sql` — the
+transcript keeps that name because that is the command that ran. The file is `0051_…`
+today and its SQL is byte-identical (`git mv`, sha256 `432bdd1e…9df6c` on both sides),
+so the proof carries over unchanged.
 
 ```
 scratch database: guardrail_0047_scratch_8858f1fe

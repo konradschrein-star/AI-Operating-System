@@ -1,4 +1,17 @@
--- 0047: guardrail_rule_changes — the audit log for the guardrails themselves.
+-- 0051: guardrail_rule_changes — the audit log for the guardrails themselves.
+--
+-- NUMBERED 0051, NOT 0047. This file was written as 0047 while that number was
+-- free on this branch, which forked at c03d9aa. It is not free on `main`:
+-- 0047_day_tasks_gtask.sql (b41e824), 0048_glucose_readings.sql and
+-- 0049_importance_six_levels.sql all landed there afterwards, and
+-- project/d6371f2d holds 0050_day_tasks_goal.sql. Git does not conflict on a
+-- duplicate prefix — the filenames differ — so the collision is invisible to
+-- every in-lane check and only shows up against the merge-tree. 0050 is skipped
+-- because it is taken on that other lane; 0051 was proved free on `main`, on
+-- every `project/*` ref, and in every worktree on disk before the rename.
+-- `git mv` only: sha256 432bdd1e69a3c942a3e8a4cb665b5c68a7e9e8239dc6883a58f573acd1e9df6c
+-- before the move and after it, so no byte of the schema below changed. Adding
+-- this note changes the committed digest, and that is the only reason it differs.
 --
 -- Round-0 finding P1-1 of aios-guardrail-hardening: `POST /api/autonomy/rules/:id`
 -- and `POST /api/autonomy/trips/:id/resolve` are unauthenticated on localhost,

@@ -13,7 +13,7 @@ import { guardrail } from "../middleware/guardrail.ts";
 
 /**
  * The two mutating routes here write to the guardrails themselves, so both of
- * them are LOUD: an audit row in `guardrail_rule_changes` (migration 0047) and
+ * them are LOUD: an audit row in `guardrail_rule_changes` (migration 0051) and
  * a Telegram push, on every single change.
  *
  * There is no bypass header and the console is not exempt. Konrad seeing his

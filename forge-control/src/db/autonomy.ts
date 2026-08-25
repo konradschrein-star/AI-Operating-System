@@ -68,7 +68,7 @@ export interface AutonomyResponse {
   /** The 20 newest guardrail audit rows — every rule patch and every trip
    *  resolve, with the surface that made it. `null` when the log could not be
    *  read (e.g. the console is talking to a database that has not had
-   *  migration 0047 applied yet); the UI says so rather than rendering an
+   *  migration 0051 applied yet); the UI says so rather than rendering an
    *  empty log, which would read as "nobody has touched anything". */
   rule_changes: GuardrailRuleChange[] | null;
   /** Today's real Gemini draw and the cap it is measured against, so the
@@ -139,7 +139,7 @@ export async function getAutonomy(): Promise<AutonomyResponse> {
   // show the number that will fire, not the default it replaced.
   // Never fail the whole Autonomy payload over the audit log — the fleet's
   // pause switch lives in this response, and the log's own table arrives with
-  // migration 0047, which a deploy applies after the code lands.
+  // migration 0051, which a deploy applies after the code lands.
   const ruleChanges = await listRuleChanges(20).catch((e) => {
     console.error(
       "[autonomy] listRuleChanges failed:",
@@ -179,7 +179,7 @@ export async function getAutonomy(): Promise<AutonomyResponse> {
 }
 
 /* ----------------------------------------------------------------------------
- * The guardrail audit log (`guardrail_rule_changes`, migration 0047).
+ * The guardrail audit log (`guardrail_rule_changes`, migration 0051).
  *
  * Every write to a guardrail — a rule patch or a trip resolve — leaves a row
  * here and pings Konrad. There is no bypass header and the console is not
@@ -338,7 +338,7 @@ export async function updateRule(
  * engine does not understand fails towards blocking. The cost is real and
  * accepted: adding a config key to an enabled catch-all rule cannot loosen it,
  * only `enabled=false` can — and that is a decision Konrad sees, because since
- * migration 0047 every rule patch writes a `guardrail_rule_changes` row and
+ * migration 0051 every rule patch writes a `guardrail_rule_changes` row and
  * pings him.
  *
  * Rules WITH a specific evaluator are untouched by all of the above:
