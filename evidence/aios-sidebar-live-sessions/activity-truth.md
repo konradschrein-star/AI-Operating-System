@@ -119,14 +119,23 @@ fails against the pre-`3e63a45` behaviour.
 
 ## 6. The 68.4% staleness figure — provenance, NOT re-derived here
 
-`LiveSessionsStrip.tsx` cites a **different** number: `current_activity` was stale on **68.4%
-of the 108 comparable samples**. That is not this replay. It came from round 0 / T3's live
-poll instrument — 379 poll samples over 6 runs, of which 108 could be compared against the
-thread's own event log. 68.4% is the **overall** stale rate over those 108; **70 of those 108
-(64.8%)** were a `tool_call` served while the true state was `tool_result` — the largest
-subset of the 68.4%, not a second way of writing it. Do not read one as derived from the
-other: 70/108 is 64.8%, and the instrument published the two figures separately
-(`rollup-serves-stale-activity-68-percent`, § "Checked against the thread's own event log").
+`LiveSessionsStrip.tsx` cites a **different** number: `current_activity` was stale on **108 of
+158 comparable poll samples (68.4%)**. That is not this replay. It came from round 0 / T3's
+live poll instrument, which took **379 poll samples over 6 runs**, of which **158 could be
+compared** against the thread's own event log; of those 158, **108 served a stale activity
+(68.4%)** and 50 matched the true in-memory state (31.6%). **70 of the 108 stale samples
+(64.8% of the staleness)** were a `tool_call` served while the true state was `tool_result` —
+the largest single stale case, not a second way of writing the headline rate.
+
+The three numbers step down and each has its own denominator: 379 polls → 158 comparable →
+108 stale → 70 of that particular shape. Divide only within a step: 108/158 = 68.4%,
+70/108 = 64.8%. **70/158 = 44.3%, and no integer over 108 gives 68.4%** — that impossibility
+is how rounds 6 and 7 were caught having taken 108 for the base. The authority is the
+instrument's raw output, quoted verbatim in `rollup-serves-stale-activity-68-percent`
+(§ "Checked against the thread's own event log") and recoverable from run
+`18ec3069-d88d-4724-9d93-d215e281b5f9`'s thread; do not re-derive the denominator from any
+summary's layout, which is exactly how it was got wrong twice.
+
 Cause:
 `maybeFlush` is called only from `ingestEvent` and throttles to one write per 2 s, with no
 timer — so a `tool_result` landing inside the throttle window is followed by seconds of model
