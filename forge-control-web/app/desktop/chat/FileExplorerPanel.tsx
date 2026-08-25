@@ -785,13 +785,7 @@ function FileExplorerPanelImpl({
                 open ↗
               </a>
             </div>
-            {/* D1 TODO (PLAN.md, workstream `preview`): FilePreview does not
-                accept a `line` prop yet — it is being added there in parallel,
-                along with the line-numbered code viewer that would scroll to
-                it. Passing `sel.line` today would not typecheck. The
-                integration task wires `line={sel.line}` once both halves are
-                on `project/ecacba29`; the value is already carried this far. */}
-            <FilePreview root={sel.root} rel={rel} name={sel.entry.name} />
+            <FilePreview root={sel.root} rel={rel} name={sel.entry.name} line={sel.line} />
           </div>
         );
       })()}
