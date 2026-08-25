@@ -18,8 +18,17 @@
 
 export interface OpenFileRequest {
   root: string;
-  /** Path relative to the root, e.g. "Mentor/Profile/OPEN-QUESTIONS.md". */
+  /** Path relative to the root, e.g. "Mentor/Profile/OPEN-QUESTIONS.md".
+   *  When `isDir` is set this names the DIRECTORY itself, not a file in it. */
   path: string;
+  /** 1-based line the agent referenced (`MessageMarkdown.tsx:160`). The panel
+   *  carries it down to the preview so the reader lands on the line that was
+   *  being discussed instead of at the top of a 700-line file. Absent when the
+   *  reference named no line. */
+  line?: number;
+  /** The reference named a directory (`docs/plan/`), not a file. The panel
+   *  navigates there and shows no preview — the breadcrumb is the answer. */
+  isDir?: boolean;
 }
 
 type Listener = (req: OpenFileRequest) => void;
@@ -65,17 +74,60 @@ export function clearPendingOpenFile(): void {
   pending = null;
 }
 
-export function requestOpenFile(req: OpenFileRequest): void {
+/**
+ * Dispatch a request and report HOW MANY LISTENERS TOOK IT.
+ *
+ * The count is the caller's only way to distinguish "the panel is opening it"
+ * from "nothing on this surface can open anything". `MessageMarkdown` uses a
+ * zero to fall back to the full-window `/document` viewer instead of leaving
+ * the click looking dead — which is the failure Konrad reported. A surface
+ * with no Files panel at all (the mobile shell) is exactly the zero case.
+ *
+ * A listener that THROWS is not counted: it did not act, and counting it would
+ * suppress the fallback for a subscriber that is broken. The throw is still
+ * swallowed so one bad subscriber cannot stop the others from opening the file.
+ */
+export function requestOpenFile(req: OpenFileRequest): number {
   pending = req;
+  let delivered = 0;
   // Copy before iterating: a listener that unsubscribes itself during
   // dispatch would otherwise mutate the set mid-loop.
   for (const fn of [...listeners]) {
     try {
       fn(req);
+      delivered++;
     } catch {
       // One bad subscriber must not stop the others from opening the file.
     }
   }
+  return delivered;
+}
+
+declare global {
+  interface Window {
+    /** Dev/test-only dispatch hook — see the note below. */
+    __forgeOpenFile?: (req: OpenFileRequest) => number;
+  }
+}
+
+/**
+ * DEV-ONLY TEST HOOK, never present in a production bundle.
+ *
+ * The regression test has to dispatch an open request from the Team tab, and
+ * the only production publisher is a pill inside a rendered chat message —
+ * which means the test would have to seed a message with exactly the right
+ * inline code in it, then find and click it in a windowed thread. That is a
+ * test of `detectPath` and the thread window, not of the panel wiring it is
+ * supposed to protect.
+ *
+ * So in development the bus exposes its own publisher. `process.env.NODE_ENV`
+ * is inlined by the bundler, so the `if` is statically false in a production
+ * build and the assignment is dropped entirely — it cannot become an attack
+ * surface on the live console. The `typeof window` guard is for SSR, where
+ * this module's top level runs on the server too.
+ */
+if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
+  window.__forgeOpenFile = requestOpenFile;
 }
 
 /** Split "a/b/c.md" into the containing dir and the file name. */

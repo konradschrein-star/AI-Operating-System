@@ -1,139 +1,315 @@
 "use client";
 
-import { memo, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { tokens } from "../../tokens";
-import { searchFiles, fetchFileRoots } from "../../api";
 import { rehypeForgeAllowlist, safeHref } from "./rehype-forge-allowlist";
+import { remarkWikilink } from "./remark-wikilink";
 import {
   codeText,
   detectPath,
   documentHref,
   type PathTarget,
-  type RootKey,
 } from "./code-path-link";
+import {
+  resolveRootPath,
+  resolveTarget,
+  resolveWikilink,
+  type Resolution,
+} from "./resolve-path";
 import { requestOpenFile } from "./open-file-bus";
 import { toast } from "../_ui/Toasts";
 
-/** Ctrl on everything except Apple hardware, where the chord is ⌘. */
-function modifierLabel(): string {
+/** Ctrl on everything except Apple hardware, where the chord is ⌘.
+ *  Exported so the tool row's tooltip names the same chord as the pill's. */
+export function modifierLabel(): string {
   if (typeof navigator === "undefined") return "Ctrl";
   return /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)
     ? "⌘"
     : "Ctrl";
 }
 
-/** Roots searched for a bare filename, in the order Konrad is likeliest to
- *  mean. The vault first: most references in chat are to his own notes; the
- *  source trees last, because a bare `page.tsx` matches in a dozen places
- *  there and a vault note of the same name is almost certainly what was
- *  meant. */
-const SEARCH_ROOTS: readonly RootKey[] = [
-  "vault",
-  "workspace",
-  "uploads",
-  "forge-src",
-  "aios",
-];
+/** Where a click wants the file: the right sidebar's Files panel (plain
+ *  click) or the full-window /document viewer (Ctrl/Cmd-click). */
+type OpenWhere = "panel" | "tab";
 
 /**
- * The roots the API actually serves right now, fetched once and cached.
+ * Act on a resolution — the ONE place a reference becomes a navigation.
  *
- * The prefix table in code-path-link.ts is a static map, and the server's ROOTS
- * is the truth. They go out of step for real: `aios` and `forge-src` were added
- * to both on 2026-08-25, but forge-control only picks up a route change on
- * restart — and a restart waits for the fleet to go quiet. In that window the
- * UI would confidently open /document on a root the API has never heard of and
- * render "(failed to load)". Asking is cheaper than guessing.
- */
-let rootsPromise: Promise<Set<string>> | null = null;
-function knownRoots(): Promise<Set<string>> {
-  if (!rootsPromise) {
-    rootsPromise = fetchFileRoots()
-      .then((rs) => new Set(rs.map((r) => r.key)))
-      // A failed lookup must not disable the feature — assume the mapping is
-      // right and let the viewer report its own error if it isn't.
-      .catch(() => new Set<string>());
-  }
-  return rootsPromise;
-}
-
-/**
- * Turn a detected path into a concrete (root, path). An exact target is
- * already there; a bare name is placed by asking the search API, vault first.
- */
-async function resolveTarget(
-  target: PathTarget,
-): Promise<{ root: string; path: string } | null> {
-  if (target.kind === "exact") {
-    const live = await knownRoots();
-    if (live.size > 0 && !live.has(target.root)) {
-      toast(
-        `Can't open ${target.label} yet`,
-        "info",
-        `The "${target.root}" file root isn't live on this server yet.`,
-      );
-      return null;
-    }
-    return { root: target.root, path: target.path };
-  }
-  for (const root of SEARCH_ROOTS) {
-    try {
-      // SEARCH BY FILENAME, NOT BY THE PATH. `/files/search` matches with
-      // `name.toLowerCase().includes(q)` against each entry's NAME — so a
-      // query containing a slash can never match anything. Measured: clicking
-      // `Mentor/Profile/Operating Manual.md` sent q=the whole path, got zero
-      // hits, and the click did nothing. The directory part is not thrown
-      // away though: it is what picks the right file out of the results below.
-      const { entries } = await searchFiles(root, "", target.label);
-      const files = entries.filter((e) => !e.isDir);
-      const wantPath = target.query.toLowerCase();
-      const hit =
-        // The author wrote a path: honour it exactly, then as a suffix
-        // ("Profile/OPEN-QUESTIONS.md" should beat a same-named file
-        // elsewhere in the root).
-        files.find((e) => e.path.toLowerCase() === wantPath) ??
-        files.find((e) => e.path.toLowerCase().endsWith(`/${wantPath}`)) ??
-        // Bare name: exact filename beats a substring match — searching
-        // "Operator Log.md" also returns "AI OS Operator Log.md".
-        files.find((e) => e.name.toLowerCase() === target.label.toLowerCase()) ??
-        files[0];
-      if (hit) return { root, path: hit.path };
-    } catch {
-      // Try the next root; a search failure is not worth a dialog.
-    }
-  }
-  return null;
-}
-
-/**
  * Plain click: show the file in the right sidebar's Files panel, keeping the
  * chat you were reading on screen. Konrad's UI model puts selection on the
  * left and views on the right — a new tab throws the conversation away, which
- * is the exact thing this feature exists to avoid.
+ * is the exact thing this feature exists to avoid. Ctrl/Cmd-click keeps the
+ * browser's universal "open elsewhere" meaning and goes to /document.
  *
- * Ctrl/Cmd-click keeps the browser's universal "open elsewhere" meaning and
- * goes to the full-window /document viewer.
+ * THREE FAILURE PATHS, ALL VISIBLE:
+ *  • a root that this server has not restarted into yet → an info toast that
+ *    names the root (the `memory` root is in this state today);
+ *  • nothing matched → an info toast naming what was searched;
+ *  • a search that ERRORED → an ERROR toast carrying the status. "Not found"
+ *    and "the search 500'd" are different facts and reporting the second as
+ *    the first is how a broken index looks like an empty one for a week.
+ *
+ * D8, THE ZERO-LISTENER FALLBACK: `requestOpenFile` reports how many
+ * subscribers took the request. Zero means this surface has no Files panel at
+ * all — the mobile shell renders control tabs and no chat sidebar, and any
+ * future embedding of the transcript is the same case. Rather than a click
+ * that looks dead, navigate the current tab to the full-window viewer. Same
+ * tab on purpose: a popup blocker eats `window.open` from an async
+ * continuation, and the reader asked to read a file, not to get a second tab.
  */
-async function openPathTarget(
-  target: PathTarget,
-  where: "panel" | "tab",
-): Promise<void> {
-  const hit = await resolveTarget(target);
-  if (!hit) {
-    // NEVER silent. The first live test of this feature failed exactly here:
-    // the click fired, both searches went out, neither matched, and nothing
-    // whatsoever happened on screen — which reads as "the feature is broken"
-    // and is indistinguishable from a dead handler. A miss has to say so.
-    toast(`Couldn't find ${target.label}`, "info", "Not in any indexed file root.");
+function applyResolution(res: Resolution, where: OpenWhere): void {
+  if (!res.ok) {
+    if (res.reason === "root-not-live") {
+      toast(`Can't open ${res.label} yet`, "info", res.detail);
+    } else if (res.reason === "search-failed") {
+      toast(`Couldn't open ${res.label}`, "error", res.detail);
+    } else {
+      toast(`Couldn't find ${res.label}`, "info", res.detail);
+    }
     return;
   }
+  const href = documentHref(res.root, res.path, res.line);
   if (where === "tab") {
-    window.open(documentHref(hit.root, hit.path), "_blank", "noopener");
+    window.open(href, "_blank", "noopener");
     return;
   }
-  requestOpenFile(hit);
+  const heard = requestOpenFile({
+    root: res.root,
+    path: res.path,
+    ...(res.line !== undefined ? { line: res.line } : null),
+    ...(res.isDir ? { isDir: true } : null),
+  });
+  if (heard === 0) window.location.assign(href);
+}
+
+/**
+ * EXPORTED, AND DELIBERATELY THE ONLY COPY. The inline pill is not the only
+ * place a path appears in the transcript — a tool row (`AssistantThread`'s
+ * `ToolCallRow`) shows the `file_path` of every Read/Write/Edit, which is where
+ * paths are densest of all. That row opens files through THIS function, so the
+ * root mapping, the filename-not-path search, the "root isn't live yet" notice
+ * and the never-silent miss are one implementation with one set of bugs.
+ * If you move it, move it whole; do not grow a second one.
+ */
+export async function openPathTarget(
+  target: PathTarget,
+  where: OpenWhere,
+): Promise<void> {
+  applyResolution(await resolveTarget(target), where);
+}
+
+/** How long a click may look like nothing before it has to say something.
+ *  A bare-name click searches up to six roots in sequence; on a cold cache the
+ *  measured worst case was four seconds of an entirely still screen. */
+const PENDING_TOAST_MS = 1_000;
+
+/**
+ * The click behaviour every openable reference shares: a pending flag while
+ * the resolver works, a "locating…" toast if it takes longer than a second,
+ * and a visible end in every branch.
+ *
+ * A hook rather than a helper because the pending flag is per-reference state
+ * and has to re-render that one pill. It lives in `PathPill`/`DocLink` — real
+ * components, defined at module level — and NOT in the `components` map's
+ * arrow functions: those are re-created on every render of `MessageMarkdown`,
+ * so React would see a new component type each time and remount, throwing the
+ * state away. The memo on `source` alone is untouched by any of this.
+ */
+function useOpener(): {
+  resolving: boolean;
+  open: (label: string, where: OpenWhere, resolve: () => Promise<Resolution>) => void;
+} {
+  const [resolving, setResolving] = useState(false);
+  const open = useCallback(
+    (label: string, where: OpenWhere, resolve: () => Promise<Resolution>) => {
+      setResolving(true);
+      const slow = window.setTimeout(() => {
+        toast(`locating ${label}…`, "info", "Searching the file roots.");
+      }, PENDING_TOAST_MS);
+      void resolve()
+        .then((res) => applyResolution(res, where))
+        .catch((e: unknown) => {
+          // The resolver returns its failures; reaching here means it THREW,
+          // which is a bug in this app rather than a missing file. Say so with
+          // the message — a swallowed exception here is the defect that made
+          // the whole feature look dead in the first place.
+          toast(
+            `Couldn't open ${label}`,
+            "error",
+            e instanceof Error ? e.message : String(e),
+          );
+        })
+        .finally(() => {
+          window.clearTimeout(slow);
+          setResolving(false);
+        });
+    },
+    [],
+  );
+  return { resolving, open };
+}
+
+/** Base look of an inline `code` pill, openable or not. */
+const PILL_STYLE = {
+  fontFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+  fontSize: "0.92em",
+  background: "rgba(var(--v2-accent-rgb), 0.08)",
+  padding: "1px 5px",
+  borderRadius: 4,
+} as const;
+
+/**
+ * D7, DISCOVERABILITY — the restrained version, and the default Konrad was
+ * asked about: an openable pill takes THE APP'S LINK COLOUR on top of the
+ * dotted underline it already had. Nothing else. No badge, no icon, no
+ * permanent chrome on every pill in the transcript; the colour is a signal
+ * Konrad already reads everywhere else in this console as "this is a link".
+ * Non-openable pills are untouched.
+ */
+const OPENABLE_PILL_STYLE = {
+  ...PILL_STYLE,
+  color: "var(--v2-accent)",
+  textDecoration: "underline",
+  textDecorationStyle: "dotted" as const,
+  textUnderlineOffset: 2,
+  textDecorationColor: "rgba(var(--v2-accent-rgb), 0.5)",
+} as const;
+
+/**
+ * An inline `code` span that names a file or a folder.
+ *
+ * `data-openable-path` is what the Playwright regression test keys on and must
+ * not be renamed. `data-openable-kind` says which affordance it is, so a test
+ * (and a stylesheet) can tell a folder from a file from a note without parsing
+ * the text. `data-resolving` appears only while a search is in flight.
+ */
+function PathPill({
+  target,
+  passThrough,
+  children,
+}: {
+  target: PathTarget;
+  passThrough: Record<string, unknown>;
+  children: ReactNode;
+}) {
+  const { resolving, open } = useOpener();
+  const kind = target.isDir ? "dir" : "file";
+  const noun = target.isDir ? "folder" : "file";
+  return (
+    <code
+      /* The renderer's own props first so nothing below can be clobbered by
+       * whatever react-markdown passes through. */
+      {...passThrough}
+      data-openable-path="true"
+      data-openable-kind={kind}
+      {...(resolving ? { "data-resolving": "true" } : null)}
+      title={`click to open the ${noun} ${target.label} in the Files panel · ${modifierLabel()}-click for a new tab`}
+      style={{
+        ...OPENABLE_PILL_STYLE,
+        cursor: resolving ? "progress" : "pointer",
+      }}
+      onClick={(e: ReactMouseEvent<HTMLElement>) => {
+        // A click that is really a text selection (the user dragged across
+        // the pill) must not navigate.
+        const sel = window.getSelection();
+        if (sel && !sel.isCollapsed) return;
+        e.preventDefault();
+        e.stopPropagation();
+        open(target.label, e.ctrlKey || e.metaKey ? "tab" : "panel", () =>
+          resolveTarget(target),
+        );
+      }}
+    >
+      {children}
+    </code>
+  );
+}
+
+/**
+ * An `a` whose href points into the full-window viewer — a `[[wikilink]]` the
+ * remark plugin created, or a `/document?root=…&path=…` link somebody wrote.
+ *
+ * It is a REAL ANCHOR with a real href, so Ctrl/Cmd-click and middle-click
+ * keep their universal meaning and the browser handles them (the `click` event
+ * does not even fire for the middle button). Only the plain left click is
+ * intercepted, to open the file in the panel beside the conversation instead
+ * of navigating away from it.
+ *
+ * The href it renders is the SANITISED one: `safeHref` has already run, and it
+ * only ever permits http(s), mailto, a fragment or a same-origin relative path.
+ * Nothing an agent writes as markup becomes a handler here — the handler is
+ * this component, and it fires for one shape of same-origin path.
+ */
+function DocLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: ReactNode;
+}) {
+  const { resolving, open } = useOpener();
+  const params = new URLSearchParams(href.slice(href.indexOf("?") + 1));
+  const wikilink = params.get("wikilink");
+  const root = params.get("root");
+  const rawLine = params.get("line");
+  const line = rawLine !== null && /^\d{1,9}$/.test(rawLine) ? Number(rawLine) : undefined;
+  const label = wikilink ?? params.get("path")?.split("/").pop() ?? root ?? href;
+  return (
+    <a
+      href={href}
+      rel="noopener"
+      data-openable-path="true"
+      data-openable-kind={wikilink !== null ? "wikilink" : "file"}
+      {...(resolving ? { "data-resolving": "true" } : null)}
+      title={
+        wikilink !== null
+          ? `click to open the note ${wikilink} in the Files panel · ${modifierLabel()}-click for a new tab`
+          : `click to open ${label} in the Files panel · ${modifierLabel()}-click for a new tab`
+      }
+      style={{
+        color: "var(--v2-accent)",
+        textDecoration: "underline",
+        textDecorationStyle: "dotted",
+        textUnderlineOffset: 2,
+        textDecorationColor: "rgba(var(--v2-accent-rgb), 0.5)",
+        cursor: resolving ? "progress" : "pointer",
+      }}
+      onClick={(e: ReactMouseEvent<HTMLAnchorElement>) => {
+        if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        const sel = window.getSelection();
+        if (sel && !sel.isCollapsed) return;
+        e.preventDefault();
+        e.stopPropagation();
+        open(label, "panel", () =>
+          wikilink !== null
+            ? resolveWikilink(wikilink, params.get("wikipath"))
+            : resolveRootPath(root ?? "", params.get("path") ?? "", { label, line }),
+        );
+      }}
+    >
+      {/* NO LEADING `[[` GLYPH. It was built and photographed
+        * (20260825T061654Z-r3-thread-references.png): rendered, a wikilink read
+        * "[[Operating Manual" — an opening bracket with nothing closing it,
+        * which looks like markdown the renderer failed to finish rather than
+        * like restraint.
+        *
+        * RULING, 2026-08-25: AN AFFORDANCE ENCODES BEHAVIOUR, NOT SYNTAX. A
+        * wikilink and a path pill do the identical thing — open in the Files
+        * panel — so they look identical. Marking them apart would advertise
+        * how the author happened to type the reference, which is of no use to
+        * the reader at the moment of clicking. One behaviour, one visual
+        * language: the link colour with a dotted underline. */}
+      {children}
+    </a>
+  );
 }
 
 /**
@@ -179,7 +355,12 @@ export const MessageMarkdown = memo(function MessageMarkdown({
   return (
     <div style={{ fontSize: 13, lineHeight: 1.6, color: tokens.text }}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        /* remarkWikilink runs AFTER remarkGfm on purpose: gfm is what turns a
+         * table row into cells, and an aliased wikilink inside a cell has to
+         * be written `[[Target\|Alias]]` so the pipe is not read as a cell
+         * separator. It produces mdast `link` nodes — ordinary links, which
+         * then go through urlTransform and the allowlist like any other. */
+        remarkPlugins={[remarkGfm, remarkWikilink]}
         rehypePlugins={[rehypeForgeAllowlist]}
         /* Runs on every url-bearing node before the tree is handed over.
          * Returning "" is react-markdown's own "no link" signal. */
@@ -264,6 +445,12 @@ export const MessageMarkdown = memo(function MessageMarkdown({
                 </span>
               );
             }
+            /* A link into this app's own viewer — every `[[wikilink]]` the
+             * remark plugin created, and a hand-written `/document?root=…`.
+             * It opens beside the conversation instead of replacing it. */
+            if (safe.startsWith("/document?")) {
+              return <DocLink href={safe}>{children}</DocLink>;
+            }
             return (
               <a
                 href={safe}
@@ -292,49 +479,23 @@ export const MessageMarkdown = memo(function MessageMarkdown({
             // Fenced block: parent <pre> sets background; we just keep mono.
             const inline = !className;
             if (inline) {
-              // Ctrl/Cmd-click opens a referenced file in the /document
-              // viewer. `detectPath` is deliberately narrow — see
-              // code-path-link.ts on why a dead click is worse than no
-              // affordance. Non-path pills fall through unchanged.
+              // A plain click opens a referenced file in the Files panel;
+              // Ctrl/Cmd-click opens the /document viewer. `detectPath` is
+              // deliberately narrow — see code-path-link.ts on why a dead
+              // click is worse than no affordance. Non-path pills fall
+              // through unchanged, INCLUDING their colour: the accent colour
+              // means "openable" and must not appear on a pill that is not.
               const target = detectPath(codeText(children));
+              if (target) {
+                return (
+                  <PathPill target={target} passThrough={props}>
+                    {children}
+                  </PathPill>
+                );
+              }
               return (
                 <code
-                  style={{
-                    fontFamily:
-                      "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
-                    fontSize: "0.92em",
-                    background: "rgba(var(--v2-accent-rgb), 0.08)",
-                    padding: "1px 5px",
-                    borderRadius: 4,
-                    color: "var(--v2-accent-secondary)",
-                    ...(target
-                      ? {
-                          cursor: "pointer",
-                          textDecoration: "underline",
-                          textDecorationStyle: "dotted" as const,
-                          textUnderlineOffset: 2,
-                          textDecorationColor: "rgba(var(--v2-accent-rgb), 0.5)",
-                        }
-                      : null),
-                  }}
-                  {...(target
-                    ? {
-                        "data-openable-path": "true",
-                        title: `click to open ${target.label} in the Files panel · ${modifierLabel()}-click for a new tab`,
-                        onClick: (e: ReactMouseEvent<HTMLElement>) => {
-                          // A click that is really a text selection (the user
-                          // dragged across the pill) must not navigate.
-                          const sel = window.getSelection();
-                          if (sel && !sel.isCollapsed) return;
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void openPathTarget(
-                            target,
-                            e.ctrlKey || e.metaKey ? "tab" : "panel",
-                          );
-                        },
-                      }
-                    : null)}
+                  style={{ ...PILL_STYLE, color: "var(--v2-accent-secondary)" }}
                   {...props}
                 >
                   {children}

@@ -26,6 +26,26 @@
  * The mode travels by context rather than by prop because `ToolCallRow` is
  * mounted by assistant-ui's `tools: { Fallback }` slot, which passes the
  * message part and nothing of ours.
+ *
+ * ── Chat reference navigation, round 2: the tool row's path opens ─────────
+ * A read/write/edit row NAMES A FILE, and until now that was dead text — the
+ * pill work only reached inline `code` in prose, and prose is not where paths
+ * mostly live. Both modes now open it, through the same
+ * `detectPath` → `openPathTarget` pair as a pill: plain click opens the Files
+ * panel, Ctrl/Cmd-click the /document viewer.
+ *   · summary — `summary.path`, the whole gist is the target;
+ *   · raw     — `toolPath(toolName, argsText)`, and only the sub-range of the
+ *               payload slice that IS the path (`visiblePathRange`), so the
+ *               manager chat's text does not move by a character.
+ * Neither reads the path back out of the rendered string: tool-summary.ts
+ * parsed it out of the payload, and that is the value both use. See
+ * `ToolCallRow`.
+ *
+ * THE PATH IS TEXT, NEVER MARKUP. Tool payloads are agent-authored — the same
+ * attacker-facing surface MessageMarkdown's header describes. It is rendered as
+ * a text child of a span; nothing an agent writes becomes a tag, a URL or a
+ * handler, and the only thing a click can do is ask the read-only files API for
+ * a path inside a configured root.
  */
 
 import {
@@ -46,7 +66,8 @@ import {
 } from "@assistant-ui/react";
 import { tokens, dot } from "../../tokens";
 import type { RunDetail } from "../../api";
-import { MessageMarkdown } from "./MessageMarkdown";
+import { MessageMarkdown, modifierLabel, openPathTarget } from "./MessageMarkdown";
+import { detectPath } from "./code-path-link";
 import { RichActionsProvider, RichMessage, type RichActions } from "./RichMessage";
 import {
   commsCensus,
@@ -59,7 +80,12 @@ import {
   type PeerFacts,
 } from "./comms-identity";
 import { readControlEnvelope, type ControlEnvelope } from "./machinery";
-import { summarizeTool, type ToolTone } from "./tool-summary";
+import {
+  summarizeTool,
+  toolPath,
+  visiblePathRange,
+  type ToolTone,
+} from "./tool-summary";
 import { extractBrowserShots } from "./browser-shots";
 import { BrowserShots } from "./BrowserShots";
 import {
@@ -594,6 +620,80 @@ function ToolCallRow({
     [toolName, argsText, resultText],
   );
 
+  /* ── The path in this row is openable (chat reference navigation, round 2) ──
+   *
+   * WHY HERE. Inline `code` pills in prose already open; tool rows did not, and
+   * this is where paths are DENSEST — a transcript is mostly `read …/x.ts`,
+   * `write …/y.sql`. Konrad clicked those first and nothing happened, which
+   * reads as "the feature does not work".
+   *
+   * BOTH MODES, because the mode Konrad reads is the raw one. `mode="summary"`
+   * is mounted in exactly one place (AgentChatView's drilled worker view); the
+   * manager chat and ProjectsSurface render `mode="raw"`, and the screenshots
+   * that opened this round are raw rows — `Write {"file_path":"/opt/…"}`. A fix
+   * that only reached summary mode would have missed the surface entirely.
+   *
+   * NOT A SECOND IMPLEMENTATION. The path comes from tool-summary.ts, which
+   * already parsed it out of the payload (no regex over prose, no guessing),
+   * and `detectPath` → `openPathTarget` is the same pair the pill uses, so root
+   * mapping, search fallback and the never-silent miss behave identically.
+   *
+   * NEVER A DEAD CLICK. `detectPath` returns null for anything it cannot place
+   * in a file root, and an errored call is left plain: a failed Read usually
+   * failed BECAUSE the file is not there, and offering to open it is the false
+   * affordance code-path-link.ts is written to avoid. */
+  const rowPath = useMemo(
+    () => (summary ? (summary.path ?? null) : toolPath(toolName, argsText)),
+    [summary, toolName, argsText],
+  );
+  const pathTarget = useMemo(
+    () => (rowPath !== null && isError !== true ? detectPath(rowPath) : null),
+    [rowPath, isError],
+  );
+  /* Restraint (the tool row is already busy, and legibility of these blocks is
+   * a standing requirement): AT REST the gist looks exactly as it did before —
+   * no second underline style running down the transcript. The affordance
+   * appears under the pointer, where the question "can I click this?" is
+   * actually being asked, and the tooltip names the chord. */
+  const [pathHover, setPathHover] = useState(false);
+
+  /** The row's one click target, wrapped around whatever text renders it.
+   *  An element factory, not a component: `pathTarget` is captured, and both
+   *  modes must produce the SAME affordance and the SAME handler. */
+  const openable = (text: string) =>
+    pathTarget === null ? (
+      text
+    ) : (
+      <span
+        data-openable-path="true"
+        data-openable-source="tool"
+        title={`click to open ${pathTarget.label} in the Files panel · ${modifierLabel()}-click for a new tab`}
+        onMouseEnter={() => setPathHover(true)}
+        onMouseLeave={() => setPathHover(false)}
+        onClick={(e) => {
+          // The row's own onClick toggles the payload pane. Opening a file must
+          // not also expand the JSON underneath it.
+          e.preventDefault();
+          e.stopPropagation();
+          void openPathTarget(pathTarget, e.ctrlKey || e.metaKey ? "tab" : "panel");
+        }}
+        style={{
+          cursor: "pointer",
+          ...(pathHover
+            ? {
+                color: "var(--v2-accent-secondary)",
+                textDecoration: "underline",
+                textDecorationStyle: "dotted" as const,
+                textUnderlineOffset: 2,
+                textDecorationColor: "rgba(var(--v2-accent-rgb), 0.5)",
+              }
+            : null),
+        }}
+      >
+        {text}
+      </span>
+    );
+
   const color = summary
     ? TONE_COLOR[summary.tone]
     : isError
@@ -602,6 +702,16 @@ function ToolCallRow({
         ? tokens.warn
         : tokens.info;
   const argsPreview = (argsText ?? "").replace(/\s+/g, " ").slice(0, 110);
+
+  /* RAW MODE keeps its payload slice byte for byte — the manager chat is
+   * Konrad's main surface and this round is not licensed to restyle it. Only
+   * the sub-range that IS the path becomes the click target; everything before
+   * and after it renders exactly as before, and a slice that cuts the path in
+   * half offers the visible half (opening, as always, the whole one). */
+  const rawRange = useMemo(
+    () => (pathTarget === null ? null : visiblePathRange(argsPreview, rowPath)),
+    [pathTarget, argsPreview, rowPath],
+  );
 
   const preStyle: CSSProperties = {
     margin: 0,
@@ -661,7 +771,12 @@ function ToolCallRow({
                 minWidth: 0,
               }}
             >
-              {summary.gist}
+              {/* The click target is the TEXT, not this flex cell: the cell
+                  stretches to fill the row, and a click on its empty half must
+                  keep meaning "expand", not "open a file". The whole gist is
+                  the target here because the whole gist is about that one file
+                  — `…/chat/x.ts ×3` is the path plus how many edits it took. */}
+              {openable(summary.gist)}
             </span>
             {subagent && <SubagentChip fold={subagent} />}
             <span
@@ -688,7 +803,15 @@ function ToolCallRow({
                 flex: 1,
               }}
             >
-              {argsPreview}
+              {rawRange === null ? (
+                argsPreview
+              ) : (
+                <>
+                  {argsPreview.slice(0, rawRange[0])}
+                  {openable(argsPreview.slice(rawRange[0], rawRange[1]))}
+                  {argsPreview.slice(rawRange[1])}
+                </>
+              )}
             </span>
             <span style={{ color: tokens.textFaint }}>
               {pending ? "running" : isError ? "error" : "done"} {open ? "▾" : "▸"}

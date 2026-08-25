@@ -207,6 +207,13 @@ gate_sh "check-team-rows.ts — flatten, hiddenRows, frozen time" \
 gate_sh "check-code-path-link.ts — detectPath: what's an openable file pill" \
   "cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-code-path-link.ts | tail -3"
 
+gate_sh "check-remark-wikilink.ts — [[wikilinks]] become links, and injections stay text" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-remark-wikilink.ts | tail -3"
+
+gate_sh "check-frontmatter.ts — a note's YAML block is a meta strip, and the body survives it" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-frontmatter.ts | tail -3"
+
 gate_sh "check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)" \
   "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-confirm.ts | tail -2"
 

@@ -23,6 +23,8 @@ import {
   salvageArgs,
   summarizeTool,
   TOOL_FORMATTERS,
+  toolPath,
+  visiblePathRange,
   type ToolSummary,
 } from "../../forge-control-web/app/desktop/chat/tool-summary.ts";
 
@@ -699,6 +701,243 @@ console.log("\n── NO ROW EVER RENDERS A BLANK GIST (round 1353) ────
     summarizeTool("SendMessage", "{}", "ok", false).gist,
     "{}",
   );
+}
+
+console.log("\n── summary.path: THE FILE THE ROW NAMES (chat ref nav, r2) ──");
+/* The tool row's gist is now an openable target in the transcript
+ * (AssistantThread → detectPath → openPathTarget), and it opens `summary.path`,
+ * NOT the gist. These cases pin the difference, because getting it wrong is
+ * silent: `shortPath` would still render a plausible-looking row while the
+ * click resolved `…/chat/x.ts`, which is in no file root and never opens.
+ *
+ * The rule under test: `path` is the payload's `file_path` verbatim, on the
+ * four rows that have one, on every tone — and `undefined` everywhere else. */
+{
+  const LONG = "/opt/ai-os/workspace/projects/abc/forge-control-web/app/x.tsx";
+
+  check(
+    "read carries the FULL path, not the shortened gist",
+    summarizeTool("Read", j({ file_path: LONG }), "a\nb", false).path,
+    LONG,
+  );
+  check(
+    "…and the gist really is the short form (so the two cannot be confused)",
+    summarizeTool("Read", j({ file_path: LONG }), "a\nb", false).gist,
+    "…/app/x.tsx",
+  );
+  check(
+    "read with an offset still carries the bare path (no ' @120' suffix)",
+    summarizeTool("Read", j({ file_path: LONG, offset: 120 }), "a", false).path,
+    LONG,
+  );
+  check(
+    "write carries it",
+    summarizeTool("Write", j({ file_path: LONG, content: "x" }), "ok", false).path,
+    LONG,
+  );
+  check(
+    "edit carries it",
+    summarizeTool("Edit", j({ file_path: LONG, old_string: "a", new_string: "b" }), "ok", false)
+      .path,
+    LONG,
+  );
+  check(
+    "multiedit carries it",
+    summarizeTool("MultiEdit", j({ file_path: LONG, edits: [1, 2] }), "ok", false).path,
+    LONG,
+  );
+
+  // Rows that name no single file must not offer one. A bash command is
+  // prose-shaped and a grep `path` is a directory the row did not open.
+  check(
+    "bash carries none — a command is not a file reference",
+    summarizeTool("Bash", j({ command: `grep -n x ${LONG}` }), "out", false).path,
+    undefined,
+  );
+  check(
+    "grep carries none — its `path` is a search root, not a file it opened",
+    summarizeTool("Grep", j({ pattern: "x", path: "/opt/ai-os" }), "hit", false).path,
+    undefined,
+  );
+  check(
+    "an unmapped tool carries none even with a file_path key",
+    summarizeTool("NoSuchToolExists", j({ file_path: LONG }), "ok", false).path,
+    undefined,
+  );
+  check(
+    "read without a file_path carries none",
+    summarizeTool("Read", j({ offset: 3 }), "ok", false).path,
+    undefined,
+  );
+
+  // Tone is the renderer's business, not this file's: a pending or failed call
+  // still names the file it was asked to touch.
+  check(
+    "a PENDING write still names its file",
+    summarizeTool("Write", j({ file_path: LONG, content: "x" }), null, false).path,
+    LONG,
+  );
+  check(
+    "a FAILED write still names its file",
+    summarizeTool("Write", j({ file_path: LONG, content: "x" }), "denied", true).path,
+    LONG,
+  );
+
+  /* CLIPPED PAYLOADS — the case that would ship a wrong path if salvageArgs
+   * ever started guessing. `meta.input` is stored clipped at 1500 chars, so a
+   * Write's payload is routinely truncated. Salvage stops at the first value it
+   * cannot read WHOLE, so either the path is complete or there is none. */
+  check(
+    "a SALVAGED path is whole and is carried",
+    summarizeTool("Write", `{"file_path":"${LONG}","content":"aaaa`, "ok", false).path,
+    LONG,
+  );
+  check(
+    "a path cut mid-value is NOT carried (no half path becomes a click target)",
+    summarizeTool("Write", '{"file_path":"/opt/ai-os/workspa', "ok", false).path,
+    undefined,
+  );
+  check(
+    "…and that row still renders an honest gist",
+    summarizeTool("Write", '{"file_path":"/opt/ai-os/workspa', "ok", false).gist,
+    '{"file_path":"/opt/ai-os/workspa',
+  );
+
+  // Real wire data, same two claims.
+  {
+    interface FixtureEntry {
+      content: string;
+      kind?: string;
+      meta?: Record<string, unknown>;
+    }
+    const run = (
+      JSON.parse(
+        readFileSync(
+          new URL(
+            "../../docs/plan/artifacts/phase600/fixtures/run-3853c154-chat.json",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ) as { run: { thread: FixtureEntry[] } }
+    ).run;
+    const results = new Map<string, FixtureEntry>();
+    for (const e of run.thread) {
+      const id = e.meta?.tool_use_id;
+      if (e.kind === "tool_result" && typeof id === "string") results.set(id, e);
+    }
+    const at = (i: number): ToolSummary => {
+      const meta = run.thread[i].meta ?? {};
+      const r = results.get(String(meta.tool_use_id));
+      return summarizeTool(
+        String(meta.tool),
+        typeof meta.input === "string" ? meta.input : null,
+        r === undefined ? null : r.content,
+        (r?.meta as { is_error?: boolean } | undefined)?.is_error === true,
+      );
+    };
+    check(
+      "real Read (entry 21) carries the absolute path the payload held",
+      at(21).path,
+      "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/forge-control-web/app/desktop/live/AgentActivity.tsx",
+    );
+    check(
+      "real failed Write with a CLIPPED payload (entry 238) still carries a whole path",
+      at(238).path,
+      "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/00-vision.md",
+    );
+    check("real Bash (entry 2) carries none", at(2).path, undefined);
+  }
+}
+
+console.log("\n── toolPath + visiblePathRange: the RAW row's click target ──");
+/* `mode="summary"` is mounted in exactly one place. The manager chat and
+ * ProjectsSurface render `mode="raw"` — tool name + a 110-char slice of the
+ * payload — and that is the surface whose screenshots opened this round. So the
+ * path must be reachable WITHOUT a summary, and the visible sub-range of the
+ * slice is what becomes the click target. */
+{
+  const LONG = "/opt/ai-os/workspace/projects/abc/forge-control-web/app/x.tsx";
+
+  /* The two extractors are one behaviour. Asserted per tool rather than left to
+   * a reader: if a future row starts carrying a path, or `toolPath`'s table and
+   * the formatter table drift apart, this fails by name. */
+  const AGREEMENT: ReadonlyArray<readonly [string, string]> = [
+    ["Read", j({ file_path: LONG })],
+    ["Write", j({ file_path: LONG, content: "x" })],
+    ["Edit", j({ file_path: LONG, old_string: "a", new_string: "b" })],
+    ["MultiEdit", j({ file_path: LONG, edits: [1] })],
+    ["Bash", j({ command: `cat ${LONG}` })],
+    ["Grep", j({ pattern: "x", path: "/opt/ai-os" })],
+    ["Glob", j({ pattern: "**/*.ts" })],
+    ["NoSuchToolExists", j({ file_path: LONG })],
+    ["Read", "{}"],
+    ["Read", ""],
+    ["Write", `{"file_path":"${LONG}","content":"aaa`],
+    ["Write", '{"file_path":"/opt/ai-os/workspa'],
+  ];
+  for (const [tool, args] of AGREEMENT) {
+    check(
+      `toolPath agrees with summary.path · ${tool} · ${args.slice(0, 28)}`,
+      toolPath(tool, args) ?? undefined,
+      summarizeTool(tool, args, "ok", false).path,
+    );
+  }
+
+  const raw = `{"file_path":"${LONG}","content":"hello"}`;
+  const r1 = visiblePathRange(raw, LONG);
+  check("range found in a whole payload", r1 !== null, true);
+  check(
+    "…and it covers exactly the path",
+    r1 === null ? "" : raw.slice(r1[0], r1[1]),
+    LONG,
+  );
+
+  // The case that matters most: the 110-char slice ends mid-path. The visible
+  // half is offered; the whole path is what opens.
+  const cut = raw.slice(0, 40);
+  const r2 = visiblePathRange(cut, LONG);
+  check("range survives a payload cut mid-path", r2 !== null, true);
+  check(
+    "…and stops at the end of what is visible",
+    r2 === null ? -1 : r2[1],
+    cut.length,
+  );
+  check(
+    "…and the visible text is a real prefix of the path",
+    r2 !== null && LONG.startsWith(cut.slice(r2[0], r2[1])),
+    true,
+  );
+
+  check("no path → no range", visiblePathRange(raw, null), null);
+  check(
+    "a path that is not in the slice → no range",
+    visiblePathRange(raw, "/opt/obsidian-vault/AI OS/Operator Log.md"),
+    null,
+  );
+  check("an empty preview → no range", visiblePathRange("", LONG), null);
+  /* A lookalike must not be wrapped: the first 24 characters match, the rest
+   * does not, and offering the visible text as if it were the parsed path would
+   * highlight the wrong span. */
+  check(
+    "a lookalike sharing the first 24 chars is rejected",
+    visiblePathRange(
+      '{"file_path":"/opt/ai-os/workspace/projects/DIFFERENT/y.tsx"}',
+      LONG,
+    ),
+    null,
+  );
+  // A real vault path — spaces and all — is found in a real-shaped payload.
+  {
+    const vault = "/opt/obsidian-vault/AI OS/Operator Log.md";
+    const payload = `{"file_path":"${vault}","offset":4000}`;
+    const r = visiblePathRange(payload, vault);
+    check(
+      "a path with spaces is located exactly",
+      r === null ? "" : payload.slice(r[0], r[1]),
+      vault,
+    );
+  }
 }
 
 console.log(

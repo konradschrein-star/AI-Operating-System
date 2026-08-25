@@ -497,6 +497,34 @@ const PAYLOADS: Payload[] = [
     source: `| host | note |\n| - | - |\n| vps1 | <img src=x onerror=alert(1)> |\n| vps2 | [go](javascript:alert(2)) |`,
     literal: ["vps1", "vps2"],
   },
+  /* ── the wikilink round: `[[…]]` is a LINK now (D2), which means agent text
+   * can create an anchor without writing markdown link syntax. Every payload
+   * below is a `[[…]]` whose inner is chosen to escape the same-origin
+   * `/document?…` shape the plugin is supposed to be locked into. The battery's
+   * own assertions (b) no live node, (c) nothing can fetch and (d) no
+   * dangerous scheme in an href are what judges them; the cases exist so those
+   * assertions run against this surface at all. Unit-level coverage of the
+   * plugin is scripts/checks/check-remark-wikilink.ts. ── */
+  {
+    id: "wikilink-markup-inner",
+    source: `Read [[<img src="${BEACON}-wiki" onerror="fetch('${BEACON}-wiki-onerror')">]] for context.`,
+    literal: ["&lt;img src="],
+  },
+  {
+    id: "wikilink-javascript-scheme",
+    source: "Open [[javascript:alert(document.cookie)]] to continue.",
+    literal: ["javascript:alert(document.cookie)"],
+  },
+  {
+    id: "wikilink-absolute-url",
+    source: `Open [[${BEACON}-wiki-url]] to continue.`,
+    literal: [`${BEACON}-wiki-url`],
+  },
+  {
+    id: "wikilink-in-escaped-table-cell",
+    source: `| note | why |\n| - | - |\n| [[Operating Manual\\|the manual]] | onboarding |`,
+    literal: ["the manual", "onboarding"],
+  },
 ];
 
 /**
