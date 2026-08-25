@@ -34,6 +34,7 @@ import { SettingsSurface } from "./settings/SettingsSurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { GoalsSurface } from "./GoalsSurface";
+import { ThoughtsSurface } from "./ThoughtsSurface";
 import { JournalSurface } from "./JournalSurface";
 import { LibrarySurface } from "./LibrarySurface";
 import { MapSurface } from "./MapSurface";
@@ -416,6 +417,7 @@ export function DesktopApp() {
               `main`'s 553fa38 line, carried forward unmodified — this merge is
               the integration that brings it in. */}
           {surface === "goals" && <GoalsSurface />}
+          {surface === "thoughts" && <ThoughtsSurface />}
           {surface === "journal" && <JournalSurface />}
           {surface === "library" && <LibrarySurface />}
           {surface === "map" && (

@@ -3208,23 +3208,39 @@ export const deleteLifeGoal = (id: string): Promise<DayWriteResult> =>
  * `"split"` after. This client never assumes one or the other.
  * -------------------------------------------------------------------------- */
 
-export type ThoughtArea =
-  | "Business"
-  | "YouTube"
-  | "Life"
-  | "Health"
-  | "Relationships";
+/* AREAS and STATUSES below are the server's own vocabularies, verbatim from
+ * forge-control/src/lib/thoughts.ts (`AREAS`, `STATUSES`) — the frontmatter
+ * IS the schema and `assertArea`/`assertStatus` 400 on anything else. Round 2
+ * corrected both: this client was written from PLAN.md prose before the store
+ * landed and declared capitalised areas ("Business") and Postgres-flavoured
+ * statuses ("not_started", "in_progress", "abandoned"), none of which the
+ * store accepts. Every value here is lifted from the running validator, not
+ * from the plan's prose. */
+export const THOUGHT_AREAS = [
+  "business",
+  "youtube",
+  "life",
+  "health",
+  "relationships",
+] as const;
+
+export type ThoughtArea = (typeof THOUGHT_AREAS)[number];
 
 export type ThoughtsView = "unexecuted" | "area" | "importance" | "executed";
 
-/** Not a closed set server-side — `| string` so a status this client has not
- *  seen yet still round-trips instead of being typed away. */
-export type IdeaExecutionStatus =
-  | "not_started"
-  | "in_progress"
-  | "done"
-  | "abandoned"
-  | string;
+/** Closed, both ways: the store rejects an unknown status on write, and a file
+ *  on disk carrying one fails to parse and arrives in `errors[]` instead of in
+ *  `ideas[]`. So a widening `| string` would only ever describe a value the
+ *  API cannot produce. */
+export const IDEA_STATUSES = [
+  "not-started",
+  "started",
+  "executing",
+  "done",
+  "dropped",
+] as const;
+
+export type IdeaExecutionStatus = (typeof IDEA_STATUSES)[number];
 
 export type ThoughtsLayout = "legacy" | "split";
 
@@ -3239,19 +3255,24 @@ export interface Idea {
   /** Calendar days since `created`, computed server-side — the doctrine view
    *  sorts on this. */
   age_days: number;
-  /** Which side of the split wrote it — `"konrad"` or `"agent"`, until the
-   *  split lands still whatever `lib/vault-layout.ts` (B4) reports. */
-  author: string;
+  /** Which side wrote it. `"forge"` means an agent-derived seed living under
+   *  `Forge/Thoughts/Seeds/` — the pool shows those with a *derived* badge and
+   *  an Adopt button. The store refuses to parse any other value. */
+  author: "konrad" | "forge";
   source: string;
-  description: string | null;
-  why_genius: string | null;
+  /** Never null: the store parses the two body sections and returns `""` when
+   *  a section is absent, so a missing description is an empty string. */
+  description: string;
+  why_genius: string;
   /** CAS token for `updateIdea` — the file's current content hash. */
   sha256: string;
 }
 
 export interface Quote {
   text: string;
-  source: string | null;
+  /** Never null on the wire — a quote appended without one is stored as
+   *  `konrad`, so the field is always populated. */
+  source: string;
   date: string;
 }
 
@@ -3260,8 +3281,17 @@ export interface Dream {
   date: string;
 }
 
+/** One idea file that could not be parsed — a bad `area`, a missing `created`,
+ *  a hand-edit in Obsidian that broke the frontmatter. Surfaced per file so a
+ *  single corrupt note cannot silently shrink the pool. */
+export interface ThoughtsError {
+  path: string;
+  message: string;
+}
+
 export interface ThoughtsResponse {
   ideas: Idea[];
+  errors: ThoughtsError[];
   quotes: Quote[];
   dreams: Dream[];
   layout: ThoughtsLayout;
@@ -3292,15 +3322,52 @@ export type UpdateIdeaFields = Partial<
   Pick<Idea, "idea" | "area" | "importance" | "description" | "why_genius" | "status">
 >;
 
+/** Raised when the idea file changed on disk since it was read — Konrad in
+ *  Obsidian (over Syncthing), a seed script, or a second tab. Typed rather
+ *  than left as `Error("409 Conflict on …")`, because the drawer has to tell
+ *  those two apart: a CAS miss is "reload, someone moved first", any other
+ *  failure is a real error. Same contract as `CanvasConflictError` above, for
+ *  the same reason. */
+export class IdeaConflictError extends Error {
+  readonly currentSha256: string | null;
+  constructor(detail: string, currentSha256: string | null) {
+    super(detail);
+    this.name = "IdeaConflictError";
+    this.currentSha256 = currentSha256;
+  }
+}
+
 /** Optimistic-concurrency write — `base_sha256` must match the server's
- *  current hash for `path`, or the request 409s (CAS miss: someone else,
- *  Obsidian or another agent, wrote the file first). */
-export const updateIdea = (
+ *  current hash for `path`, or the request 409s and this throws
+ *  `IdeaConflictError`. */
+export const updateIdea = async (
   path: string,
   base_sha256: string,
   fields: UpdateIdeaFields,
-): Promise<{ idea: Idea }> =>
-  patchJson<{ idea: Idea }>("/thoughts/ideas", { path, base_sha256, ...fields });
+): Promise<{ idea: Idea }> => {
+  const res = await fetch(`${ROOT}/thoughts/ideas`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path, base_sha256, ...fields }),
+  });
+  if (res.status === 409) {
+    const b = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      current_sha256?: string;
+    };
+    throw new IdeaConflictError(
+      b.error ?? `409 Conflict on /thoughts/ideas (${path})`,
+      b.current_sha256 ?? null,
+    );
+  }
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(
+      `${res.status} ${res.statusText} on /thoughts/ideas${b.error ? `: ${b.error}` : ""}`,
+    );
+  }
+  return (await res.json()) as { idea: Idea };
+};
 
 /** Moves a Forge-seeded idea onto Konrad's side of the vault split. */
 export const adoptIdea = (path: string): Promise<{ idea: Idea }> =>
