@@ -88,15 +88,32 @@
  *
  * LiveSync (or whatever sync layer is active) propagates writes to
  * Konrad's devices — this module only touches the filesystem.
+ *
+ * WHO IS WRITING (PLAN.md §3.5, added with ./vault-layout.ts). Every write verb
+ * now takes an optional `actor: "agent" | "konrad"`, defaulting to "agent"
+ * because an unattributed write is an agent's — a route acting for Konrad has to
+ * say so, and only the UI-facing routes (thoughts, journal reply, vault editor)
+ * ever may. Under `VAULT_LAYOUT=split` an "agent" write outside the agent root
+ * (`Forge/`) THROWS, naming the path and the rule; a "konrad" write is
+ * unrestricted, because his journal reply legitimately appends to the agent-side
+ * daily note. Under `legacy` — today, and the default — the guard refuses
+ * nothing, logs nothing and stamps nothing: the bytes this module writes are
+ * identical to the ones it wrote before the flag existed, which is the property
+ * that lets the flag ship long before the vault is actually split.
+ *
+ * The stamp: under `split`, a note this module CREATES for an agent gets
+ * `author: forge` frontmatter. Created, never rewritten — appending to a note
+ * that already exists leaves its frontmatter exactly as it found it, whoever
+ * wrote it, because rewriting a header is an edit to somebody else's note.
  */
 
 import { promises as fs } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 
+import { layout } from "./vault-layout.ts";
+
 const VAULT_DIR = process.env.OBSIDIAN_VAULT_DIR ?? "/opt/obsidian-vault";
-const DAILY_DIR = process.env.VAULT_DAILY_DIR ?? "Daily";
-const INBOX_DIR = process.env.VAULT_INBOX_DIR ?? "Inbox";
 const TZ = process.env.REMINDER_TZ ?? "Europe/Berlin";
 
 export type DailySection = "Tasks" | "Notes" | "Journal";
@@ -282,11 +299,15 @@ export async function appendToDailyNote(input: {
   section: DailySection;
   text: string;
   prefix?: string;
+  actor?: VaultActor;
 }): Promise<VaultWriteResult> {
   const text = input.text.trim();
   if (!text) throw new Error("text required");
+  const actor = input.actor ?? "agent";
   const { date, time } = nowParts();
-  const rel = `${DAILY_DIR}/${date}.md`;
+  const rel = `${layout().dailyDir()}/${date}.md`;
+  // Before the first mkdir: a refusal must leave the filesystem untouched.
+  assertActorMayWrite(actor, rel);
   const abs = resolveInVault(rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });
 
@@ -315,7 +336,9 @@ export async function appendToDailyNote(input: {
       // snapshot and nothing to restore from. EIO, EACCES, ENOMEM and
       // ERR_FS_FILE_TOO_LARGE all reach this line on a note that exists (R20).
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-      content = DAILY_TEMPLATE(date);
+      // The one branch of this verb that CREATES a note, so the one branch that
+      // may stamp it. The append branch below never touches the header.
+      content = stampAgentAuthor(DAILY_TEMPLATE(date), actor);
       created = true;
     }
     const prefix = input.prefix ?? "- ";
@@ -336,11 +359,17 @@ export async function createNote(input: {
   title: string;
   content?: string;
   folder?: string;
+  actor?: VaultActor;
 }): Promise<VaultWriteResult> {
-  const folder = input.folder?.trim() || INBOX_DIR;
+  const folder = input.folder?.trim() || layout().inboxDir();
+  const actor = input.actor ?? "agent";
   const base = slugTitle(input.title);
   const { date, time } = nowParts();
 
+  // The folder is the destination, so it is what the guard judges — and it is
+  // judged before the mkdir, which would otherwise leave an empty `Konrad/…`
+  // directory behind every refusal.
+  assertActorMayWrite(actor, folder);
   await fs.mkdir(resolveInVault(folder), { recursive: true });
 
   for (let n = 0; n < 50; n++) {
@@ -351,7 +380,7 @@ export async function createNote(input: {
       (input.content?.trim() ? input.content.trim() + "\n" : "") +
       `\n---\ncaptured: ${date} ${time}\nsource: ai-os\n`;
     try {
-      await fs.writeFile(abs, `# ${name}\n\n${body}`, { flag: "wx" });
+      await fs.writeFile(abs, stampAgentAuthor(`# ${name}\n\n${body}`, actor), { flag: "wx" });
       return { path: rel, created: true };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
@@ -367,7 +396,7 @@ export async function readDailyNote(): Promise<{
   content: string | null;
 }> {
   const { date } = nowParts();
-  const rel = `${DAILY_DIR}/${date}.md`;
+  const rel = `${layout().dailyDir()}/${date}.md`;
   try {
     const content = await fs.readFile(resolveInVault(rel), "utf8");
     return { path: rel, date, content };
@@ -401,6 +430,105 @@ export class VaultRefusedError extends Error {
     this.name = "VaultRefusedError";
     this.reason = reason;
   }
+}
+
+// ---------------------------------------------------------------------------
+// The actor guard (PLAN.md §3.5). Declared HERE, below VaultRefusedError,
+// because a class may not extend a binding that is still in its temporal dead
+// zone; the two verbs above reach it through function hoisting.
+// ---------------------------------------------------------------------------
+
+/** Who is writing. Defaults to "agent" everywhere: an unattributed write is the
+ *  OS's own, and a route acting for Konrad has to say so explicitly. */
+export type VaultActor = "agent" | "konrad";
+
+/** An agent tried to write outside the agent root while the vault is split.
+ *  A VaultRefusedError, so the route layer's existing 400 mapping applies and
+ *  the reason reaches the caller instead of a bare 500 — and a distinct name,
+ *  so a test (and a log line) can tell this refusal from a bad path. */
+export class VaultActorRefusedError extends VaultRefusedError {
+  readonly actor: VaultActor;
+  readonly attemptedPath: string;
+  readonly agentRoot: string;
+  constructor(input: { actor: VaultActor; attemptedPath: string; agentRoot: string }) {
+    super(
+      `vault write refused: actor "${input.actor}" may only write under "${input.agentRoot}" ` +
+        `while VAULT_LAYOUT=split, and "${input.attemptedPath}" is outside it. ` +
+        `Konrad's side of the vault is read-only for agents — a write on his behalf must pass ` +
+        `actor: "konrad" from a UI-facing route (thoughts, journal reply, vault editor).`,
+    );
+    this.name = "VaultActorRefusedError";
+    this.actor = input.actor;
+    this.attemptedPath = input.attemptedPath;
+    this.agentRoot = input.agentRoot;
+  }
+}
+
+/** Vault-relative, forward slashes, no leading "./" or "/" — the one form the
+ *  guard compares. Every caller already has a canonical path from
+ *  vaultRelative(); this exists for the two verbs that build a path themselves. */
+function canonicalRelative(rel: string): string {
+  return rel.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "");
+}
+
+/** Refuse an agent write that lands outside the agent root. INERT under
+ *  `legacy`: it returns before reading anything else, so today's writers keep
+ *  their exact behaviour and nothing is logged (a log line per write IS a
+ *  behaviour change — it is what fills a disk at 03:00).
+ *
+ *  "konrad" is deliberately unrestricted rather than confined to the human
+ *  root: his journal reply appends to the AGENT-side daily note, and a guard
+ *  that refused it would make the split's first user-visible feature fail.
+ *
+ *  Exported because a route that writes through some other path — a thoughts
+ *  route creating a file itself, a future mover — needs the SAME rule rather
+ *  than a second implementation of it, and because the one call site inside
+ *  this module that today's resolvers cannot make fire (appendToDailyNote,
+ *  whose destination is always under the agent root) is otherwise untestable
+ *  except by source inspection. */
+export function assertActorMayWrite(actor: VaultActor, rel: string): void {
+  const active = layout();
+  if (active.name === "legacy") return;
+  if (actor === "konrad") return;
+  const root = active.roots.agent;
+  const candidate = canonicalRelative(rel);
+  const folder = root.replace(/\/+$/, "");
+  if (candidate === folder || candidate.startsWith(root)) return;
+  throw new VaultActorRefusedError({ actor, attemptedPath: candidate, agentRoot: root });
+}
+
+/** Frontmatter marking a note as this fleet's output. Only ever ADDED, and only
+ *  to a note being created — see the module header. */
+const AUTHOR_FRONTMATTER = "author: forge";
+
+/** Stamp `author: forge` onto content about to become a NEW note. Under
+ *  `legacy` this is the identity function: the flag must not change a single
+ *  byte of what today's writers produce.
+ *
+ *  If the content already opens with a frontmatter block the key is inserted
+ *  into it (unless an `author:` is already there — his own, or a previous
+ *  stamp); otherwise a block is prepended. It is never applied to content read
+ *  off disk, so "never rewrite existing frontmatter" holds by construction:
+ *  every call site is a creation path.
+ *
+ *  Exported for the lanes that create notes with frontmatter of their own (a
+ *  thought seed carries `area`, `importance`, `status`): they compose their
+ *  header and hand it here, instead of each inventing where the key goes. */
+export function stampAgentAuthor(content: string, actor: VaultActor): string {
+  if (layout().name === "legacy" || actor !== "agent") return content;
+  if (!content.startsWith("---\n")) {
+    return `---\n${AUTHOR_FRONTMATTER}\n---\n${content}`;
+  }
+  const close = content.indexOf("\n---", 3);
+  if (close === -1) {
+    // An opening fence with no closing one is not frontmatter — Obsidian reads
+    // it as a horizontal rule. Prepending a real block would bury it; refusing
+    // to guess, the content is left exactly as the caller wrote it.
+    return content;
+  }
+  const head = content.slice(4, close);
+  if (/^author:/m.test(head)) return content;
+  return `---\n${AUTHOR_FRONTMATTER}\n${content.slice(4)}`;
 }
 
 /** The note changed on disk since the caller read it — route layer maps to 409.
@@ -631,10 +759,15 @@ export async function writeVaultFile(input: {
   path: string;
   content: string;
   baseSha256: string;
+  actor?: VaultActor;
 }): Promise<{ path: string; sha256: string; bytes: number; snapshot: string }> {
-  // 1. Path: traversal, dot segments, non-.md, symlink escape.
+  // 1. Path: traversal, dot segments, non-.md, symlink escape — and, under a
+  //    split vault, whether this actor may write there at all. The canonical
+  //    relative path is what the guard judges, so `./Konrad/x.md` and
+  //    `Konrad//x.md` cannot walk around it.
   const abs = await resolveOrRefuse(input.path);
   const rel = vaultRelative(abs);
+  assertActorMayWrite(input.actor ?? "agent", rel);
 
   // 2. Body: the accident the append-only contract existed to prevent (R7).
   //    Typed as unknown first so a non-string from an untyped caller is refused
