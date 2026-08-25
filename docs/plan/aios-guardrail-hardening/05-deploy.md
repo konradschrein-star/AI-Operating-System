@@ -96,8 +96,11 @@ no-op. All three verified in round 4, against a copy.
 4. Toggle it back. Both directions are audited.
 5. `python3 scripts/ops/test-guard-autonomy.py` on the deployed checkout:
    **exit 0, with the `N/N passed` line showing the same number on both sides**
-   — at round 7 that is 244/244, and the suite grows every cycle, so the exit
-   code and the equality are the assertion, never a number copied from here.
+   — the suite grows every cycle, so the exit code and the equality are the
+   assertion, and no expected count is written here at all. Round 7 put an
+   illustrative "244/244" in this sentence and it was stale inside its own
+   commit (the suite reported 246/246); a figure that was wrong on the day it
+   was written is better deleted than corrected.
    (Round 6's reviewer found this step still demanding 188/188 against a
    199-case suite: a verifier following the doc literally reads a correct run
    as a mismatch, which is a doc that makes the deploy fail.)
@@ -106,10 +109,10 @@ no-op. All three verified in round 4, against a copy.
    (memory: guard-hook-tests-never-hit-live-api). Count the table before and
    after; equal counts are the assertion.
 6. `bash scripts/checks/prove-guard-bites.sh` → prints `BITES`, exits 0, every
-   mutation `DISCRIMINATED` (15 at round 7 — again, read the verdict line, not
-   a count from this doc), and the hook's md5 unchanged across the run. Allow
-   it ~4 minutes: it runs the whole suite once per mutation and exceeds the
-   default 2-minute Bash timeout (memory: gate-run-exceeds-bash-default-timeout).
+   mutation `DISCRIMINATED` — again, read the verdict line and the "all N
+   mutations DISCRIMINATED" equality, never a count from this doc — and the
+   hook's md5 unchanged across the run. Allow it ~6 minutes: it runs the whole
+   suite once per mutation and exceeds the default 2-minute Bash timeout (memory: gate-run-exceeds-bash-default-timeout).
 
 ---
 

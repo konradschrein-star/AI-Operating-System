@@ -120,12 +120,19 @@ s = s.replace("punctuation_chars=\"();<>|&\\n\"", "punctuation_chars=\"();<>|&\"
 '
 
 # --- M3: revert the round-5 B4 fix by ignoring quote/arith state, i.e. put back
-# the plain re.search over the raw line.
-mutate "B4 — heredoc_marker() ignores quoting and arithmetic" '
+# a plain regex sweep over the raw line. (Round 8 moved the scan out of
+# heredoc_marker into the shared walker input_redirections, which now feeds the
+# here-string scan too; the behaviour reverted is identical, the anchor is not.)
+mutate "B4 — input_redirections() ignores quoting and arithmetic" '
 s = s.replace(
     "    i, n = 0, len(line)\n    quote = None\n    arith = 0\n",
-    "    m = HEREDOC_OP_RE.search(line)\n"
-    "    return (m.group(1), m.group(3)) if m else None\n"
+    "    for _m in re.finditer(r\"<<\", line):\n"
+    "        _hit = HEREDOC_OP_RE.match(line, _m.start())\n"
+    "        if _hit:\n"
+    "            yield \"heredoc\", _m.start(), (_hit.group(1), _hit.group(3))\n"
+    "        elif line.startswith(\"<<<\", _m.start()):\n"
+    "            yield \"herestring\", _m.start(), None\n"
+    "    return\n"
     "    i, n = 0, len(line)\n    quote = None\n    arith = 0\n",
     1)
 '
@@ -187,8 +194,8 @@ s = s.replace(
 # again, so `bash <<EOF` + a recursive delete classifies as nothing.
 mutate "R7/B1 — heredoc_consumer() calls every body prose again" '
 s = s.replace(
-    "    upstream = [seg for seg in segments(line[:pos])]",
-    "    return \"prose\", []\n    upstream = [seg for seg in segments(line[:pos])]",
+    "    words = command_words(line[:pos], \"last\")",
+    "    return \"prose\", []\n    words = command_words(line[:pos], \"last\")",
     1)
 '
 
@@ -244,6 +251,74 @@ s = s.replace(
     "        \\s*(?=$|[;&|\\n)])\n",
     1)
 assert s.count("(?<=[;&|") == 1 and "(?=$|[;&|" in s, "R7/B2 revert applied only half"
+'
+
+# --- M16: revert round 8 blocker 1 — `command_words` stops stripping
+# redirections, so a redirection is a command boundary again, exactly as
+# `segments()` treats it. This is ONE mutation for BOTH round-8 blockers,
+# because they are one defect seen from its two sides: the catch goes
+# (`bash > /tmp/out <<EOF` becomes prose) and the false positive comes back
+# (`cat > /tmp/node <<'"'"'EOF'"'"'` reads its output file as the interpreter).
+mutate "R8/B1+B2 — command_words() treats a redirection as a command boundary" '
+s = s.replace(
+    "                if op in REDIRECT_OPS:\n",
+    "                if False:\n",
+    1)
+'
+
+# --- M17: revert only the FALL-THROUGH half. A redirection may precede the
+# command word, and `<<EOF bash` left nothing before the operator at all.
+mutate "R8/B1b — heredoc_consumer() stops reading past the operator when nothing precedes it" '
+s = s.replace(
+    "    words = command_words(line[:pos], \"last\")\n"
+    "    if not words:\n"
+    "        words = command_words(line[pos:], \"first\")\n",
+    "    words = command_words(line[:pos], \"last\")\n",
+    1)
+'
+
+# --- M18: the OTHER direction on the same fall-through — always union the
+# words after the operator into the consumer scan. The catch survives; the
+# fleet'"'"'s `python3 - <<PY <args>` idiom starts reading its own ARGV as an
+# interpreter, which is the false positive that gets a guard switched off.
+mutate "R8/B1b — the words AFTER the operator always nominate a consumer" '
+s = s.replace(
+    "    words = command_words(line[:pos], \"last\")\n"
+    "    if not words:\n"
+    "        words = command_words(line[pos:], \"first\")\n",
+    "    words = command_words(line[:pos], \"last\") + command_words(line[pos:], \"first\")\n",
+    1)
+'
+
+# --- M19: revert round 8'"'"'s here-string pass. `bash <<< '"'"'rm -rf /opt/x'"'"'` goes
+# back to arriving as one opaque shlex word that matches nothing, while
+# `bash -c` with the identical program still blocks.
+mutate "R8/B1c — classify() stops looking at here-strings" '
+s = s.replace(
+    "    for kind, consumer, body in herestring_programs(cmd):",
+    "    for kind, consumer, body in ():",
+    1)
+'
+
+# --- M20: the OTHER direction on the here-string pass — every consumer counts,
+# so `grep -q x <<< "rm -rf /opt/x"` classifies its own HAYSTACK as a program.
+mutate "R8/B1c — every here-string consumer counts as an interpreter" '
+s = s.replace(
+    "            if kind == \"prose\":\n                continue\n",
+    "            if False:\n                continue\n",
+    1)
+'
+
+# --- M21: revert round 9's scan_context() latency fix — drop the left boundary
+# from the mktemp regex and `[A-Za-z0-9_]*` backtracks once per character at
+# every start offset again. This is the only mutation whose witness is a CLOCK
+# rather than a verdict, which is exactly why it is here: every other case in
+# the suite would stay green while the hook stalled the agent in front of it.
+mutate "R9 — scan_context() mktemp regex loses its left boundary (quadratic again)" '
+s = s.replace(
+    "        r\"(?:^|[\\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=[\\\"'\'']?(?:\\$\\(\\s*mktemp|`\\s*mktemp)\", cmd",
+    "        r\"([A-Za-z_][A-Za-z0-9_]*)=[\\\"'\'']?(?:\\$\\(\\s*mktemp|`\\s*mktemp)\", cmd",
+    1)
 '
 
 # ---------------------------------------------------------------------------

@@ -581,19 +581,33 @@ about this hole. Layer B (real subprocess, stub API) is the witness that cannot
 drift; the five round-7 Layer B cases are RED at `8650693` and green at HEAD.
 
 **The narrowness is the load-bearing part**, and it is asserted, not asserted-
-about. Only the LAST segment before the `<<` and only a head AFTER A PIPE can
-nominate an interpreter:
+about. Only the LAST bash COMMAND before the `<<` and only a head AFTER A PIPE
+can nominate an interpreter.
 
-| shape | verdict | why |
-|---|---|---|
-| `cat <<'EOF' > note.md` | prose | the canonical fleet note |
-| `bash deploy.sh && cat <<'EOF' > note.md` | prose | a shell on the line is not the consumer |
-| `cat <<'EOF' > /tmp/node` | prose | the redirection TARGET is not a consumer — a naive `segments()` scan offers it as a head |
-| `cat <<'EOF' \| tee /tmp/n.md` | prose | `tee` is not an interpreter |
-| `cat <<'EOF' \| bash` | shell | it is |
+**Both orderings of every shape are in the table**, and that is a round-9
+correction, not decoration. Round 7 wrote this table with one spelling per
+shape and round 8's reviewer showed that the reordering did the opposite in
+every case — the table was testing the spelling, not the grammar. A redirection
+is not a command separator in bash, so the two columns below must agree, and
+until round 9 they did not:
 
-Mutation M12 reverts exactly this narrowness (every consumer counts as an
-interpreter) and turns 15 cases red.
+| shape | `… <<EOF > file` | `… > file <<EOF` | verdict |
+|---|---|---|---|
+| `cat` writing a note | prose | prose | the canonical fleet note |
+| `cat … > /tmp/node` | prose | prose (**was: shell** — blocked a builder writing a note) | the redirection TARGET is never a consumer |
+| `bash` | shell | shell (**was: prose** — total bypass of every wired rule) | bash runs the body either way |
+| `psql -U postgres` | db | db (**was: prose**) | same |
+| `python3 -` | python | python (**was: prose**) | same |
+| `bash deploy.sh && cat …` | prose | prose | a shell elsewhere on the line is not the consumer |
+| `cat … \| tee /tmp/n.md` | prose | — | `tee` is not an interpreter |
+| `cat … \| bash` | shell | — | it is |
+| `<<EOF bash` (operator first) | — | shell (**was: prose**) | a redirection may precede the command word |
+| `python3 - <<'PY' /opt/bin/node` | prose-argv | — | while a command word exists to the LEFT, everything right of the operator is its ARGV |
+
+Mutation M12 reverts the round-7 narrowness (every consumer counts as an
+interpreter) and turns 33 cases red; M16 reverts the round-9 redirection strip
+— **one mutation for both directions**, because the bypass and the false
+positive are one defect seen from its two sides — and turns 23 red.
 
 ### 9.2 `python3 -c "shutil.rmtree(…)"` — a REJECT reversed
 
@@ -669,3 +683,206 @@ false-positive direction), M15 (the round-5 assignment boundary). M4 and M7
 were re-anchored: both named source that this round moved, and a mutation whose
 anchor is gone reports INCONCLUSIVE rather than a false green — which is how
 the script found its own staleness on the first run.
+
+---
+
+## 10. Round 9 — the fix asked the right question with the wrong grammar
+
+Round 7 closed the `bash <<EOF` bypass by asking WHO consumes the body, and
+computed "who" as *the last `segments()` entry before the `<<`*. `segments()`
+ends a segment at `>`. **Bash does not** — a redirection is not a command
+separator, so `bash > /tmp/out <<EOF` and `bash <<EOF > /tmp/out` are the same
+command written two ways, and only the second put `bash` in the last segment.
+
+One line, failing in both directions at once.
+
+### 10.1 The bypass (round-8 blocker 1)
+
+Measured at `a22d944`, in-process and again end to end against a stub set to
+block everything: **exit 0, zero API calls, no audit line.**
+
+```
+bash > /tmp/out <<EOF        / rm -rf /opt/content-forge / EOF   -> allow  (control: exit 2)
+bash 2>&1 <<EOF             / rm -rf /opt/content-forge / EOF   -> allow
+bash >> /tmp/log.txt <<EOF  / rm -rf /opt/content-forge / EOF   -> allow
+bash -s > /tmp/out <<EOF    / rm -rf /opt/content-forge / EOF   -> allow
+bash &> /tmp/out <<EOF      / rm -rf /opt/content-forge / EOF   -> allow
+psql -U postgres 2>/dev/null <<EOF / DROP TABLE runs; / EOF     -> allow
+psql -U postgres > /tmp/out <<EOF  / DROP TABLE runs; / EOF     -> allow
+python3 - > /tmp/out <<PY   / shutil.rmtree('/opt/content-forge') / PY -> allow
+docker exec -i cf-postgres psql -U postgres 2>&1 <<EOF / DROP TABLE runs; / EOF -> allow
+```
+
+**It was never scoped to `fs.destructive`.** The same wrapper around a force
+push, around an `api.telegram.org` curl, and around `curl -X PATCH
+…/api/autonomy/rules` all allowed — the last of those defeating even
+`autonomy.self_edit`, which is decided **locally with no API round-trip**, so
+nothing outside the hook could have noticed the miss.
+
+`2>&1` is on **807 of the 2,924** commands in the 24h corpus. This is the
+fleet's ordinary suffix, merely written in the other position bash accepts.
+
+Two adjacent shapes failed on the same line and are closed with it. A
+redirection may **precede** the command word — `<<EOF bash` and `> /tmp/o bash
+<<EOF` left `upstream` empty at `pos == 0`, and the downstream scan only
+accepted a head after a **pipe**, so the command word was never read at all.
+
+Every shape above was verified to EXECUTE, not assumed:
+`bash > /tmp/r9/out1.txt <<'EOF'` / `echo REDIR-BEFORE-HEREDOC-EXECUTED` / `EOF`
+wrote that string to the file; `<<'EOF' bash` printed `HEREDOC-FIRST-EXECUTED`;
+`> /tmp/r9/out2.txt bash <<'EOF'` wrote `REDIR-FIRST-THEN-COMMAND-EXECUTED`.
+
+### 10.2 The mirror false positive (round-8 blocker 2)
+
+`cat > /tmp/node <<'EOF'` → **exit 2** at `a22d944`. `/tmp/node` became the last
+segment, its basename is `node`, `_consumer_kind` called it an interpreter, and
+a prose note was classified as a program. §9's table asserted this shape stays
+prose — true only for the spelling `cat <<'EOF' > /tmp/node`, which round 7
+tested. Blocking a builder writing a note is the failure mode design constraint
+2 exists to prevent, and it is the same line, so it is the same fix.
+
+### 10.3 The fix
+
+`heredoc_consumer` no longer asks `segments()`. `command_words(cmd, keep)`
+walks the tokens splitting **only** on control operators (`; & && || | |& ( ) {
+} \n`) and DROPS each redirection operator together with its target word —
+`REDIRECT_OPS`, which includes `<<` and `<<<`, because a heredoc introducer is
+itself a redirection. `split_operator_run` decomposes a shlex punctuation RUN
+longest-first, so `&&>` stays a control operator followed by a redirection.
+
+The fall-through is deliberately one-directional: the words **after** the
+operator are read only when the prefix yields no command word at all. While a
+command word exists to its left, everything to its right is that command's
+ARGV — otherwise the fleet's `python3 - <<'PY' <args>` idiom would read its own
+argument list as an interpreter. M18 reverts exactly that half (always union)
+and turns the argv case red.
+
+### 10.4 `bash <<< '…'` — a CATCH, decided explicitly
+
+Round 8 required this to be decided rather than left silent, and round 6's
+argument against the heredoc gap was precisely that it appeared in no
+rejected-catch row. The verdict is **catch**, on one argument:
+
+> `bash <<< 'rm -rf /opt/x'` is `bash -c 'rm -rf /opt/x'` with different
+> punctuation, and `bash -c` has blocked since round 0. An agent that meets a
+> guard blocking one spelling and allowing the other simply writes the one that
+> works — the same reasoning that reversed the `python3 -c` reject in §9.2.
+
+No walker had ever looked at `<<<`: `heredoc_marker` steps over it (correctly —
+there is no body to skip), so `heredoc_blocks` never yields it, and the quoted
+program survives tokenisation as ONE shlex word whose basename is the whole
+string, matching nothing. Measured allowed at `a22d944` and verified to
+execute (`bash <<< 'echo HERESTRING-EXECUTED'` printed it).
+
+Cost: the consumer question is answered by the **same** `heredoc_consumer`, so
+`grep -q x <<< "$s"` stays prose, `cat <<< "…" > /tmp/node` stays prose, and
+`bash <<< "$SCRIPT"` is unresolvable and allowed. Only the **first** word after
+the operator is the body — that is all bash puts on stdin. M19 removes the pass
+(8 cases red); M20 makes every consumer count (3 cases red, all MUST_PASS).
+
+**Corpus cost: zero, and honestly zero rather than vacuously so.** The 24h
+corpus contains **0** here-strings and **0** interpreter+redirection+heredoc
+commands, so neither catch fires on measured traffic — the evidence for both is
+constructed cases plus a bash execution proof, and that is stated rather than
+dressed up. What the corpus *does* prove is the price: see 10.6.
+
+### 10.5 A latency defect found while sweeping — inherited, and a fleet-wide stall
+
+Not in the round-8 feedback; found by this round's own robustness sweep, and
+the only finding here whose witness is a clock.
+
+`scan_context()`'s mktemp regex was `([A-Za-z_][A-Za-z0-9_]*)=["']?(?:\$\(\s*mktemp|…)`
+with **no left boundary**. `[A-Za-z0-9_]*` is greedy and then requires `=`, so
+on a long unbroken word it backtracks once per character, at every start
+offset: quadratic.
+
+```
+rm -rf /opt/<50k chars>    a22d944: 10.4s   HEAD before fix: 10.4s   after: 0.10s
+rm -rf /opt/<100k chars>   a22d944: 43.7s                            after: 0.19s
+rm -rf /opt/<200k chars>   both: >60s (timeout)                      after: 0.90s
+      the regex alone, 50k:  23.6s  ->  0.002s
+```
+
+**This hook runs synchronously in front of every Bash call every agent on this
+box makes**, so that is a stalled agent, not a slow report — and the 2.5s HTTP
+ceiling does not bound it, because `classify()` runs BEFORE the request. It is
+inherited (identical at `a22d944`), and it was a free lever for anyone who
+wanted the guard to stall.
+
+The fix adds the same left boundary the enumerating scan two lines below has
+always required, which is also a correctness fix: `XFOO=$(mktemp -d)` used to
+register `XFOO`, `FOO`, `OO` and `O` as self-created scratch names. Fewer
+mktemp names means fewer allowances, so this is a narrowing, not a softening.
+
+Residual, stated because it is not zero: at 1 MB in one word `classify()` still
+takes ~16s, now dominated by stdlib `shlex.read_token`. The corpus's longest
+single word is **443** bytes and its longest whole command **1,413**, so this is
+~700x outside measured traffic. Layer A2 pins 50k at a 3s ceiling; M21 reverts
+the boundary and is the only mutation the clock catches.
+
+### 10.6 What round 9 cost on the real workload
+
+Corpus re-run, `a22d944` vs this tip, 2,924 rows, `classify()` in-process:
+
+| | round 8 (`a22d944`) | round 9 |
+|---|---|---|
+| trips | 2 | **2** |
+| newly tripping | — | **0** |
+| no longer tripping | — | **0** |
+| classifier exceptions | 0 | **0** |
+
+**A measurement artefact worth recording, because it looked like a regression
+for ten minutes.** The first run showed 6 rows whose heredoc CONSUMER verdict
+changed `db` → `prose`. All six are `PGPASSWORD=<redacted> psql … <<'SQL'`. The
+corpus's own redaction marker `<redacted>` is **shell punctuation**: to bash
+that literal string is "redirect input from `redacted`, redirect output to
+`psql`", so the new walker eats `psql` as a redirection target — and it is
+right to, about that string. Re-running with the marker normalised to a word:
+**0 consumer verdicts change, trips 2 → 2.** The corpus carries 89 instances of
+`<redacted>`; any tokeniser-level measurement over it must neutralise them
+first or it is measuring the redactor.
+
+### 10.7 Suite and control
+
+| instrument | round 7 | round 8 tip | round 9 |
+|---|---|---|---|
+| `test-guard-autonomy.py` | 244/244 | 246/246 | **313/313** |
+| `prove-guard-bites.sh` | BITES, 15 | BITES, 15 | **BITES, 21** |
+| new suite cases RED at `a22d944` | — | — | **41 of 67** |
+
+The 26 new cases that are green at `a22d944` are the narrowness half — the
+false-positive assertions and the argv/prose shapes. They are green there
+because round 8 got those right; they are in the suite so the round-9 fix
+cannot buy the catch with them.
+
+New mutations, with the red count each produced against the final 313-case
+suite: M16 (redirection is a command boundary again — **one** mutation closing
+**both** round-8 blockers, 33 red), M17 (no fall-through past the operator, 4
+red), M18 (always union the words after it — the false-positive direction, 1
+red), M19 (no here-strings, 11 red), M20 (every here-string consumer is an
+interpreter — the false-positive direction, 3 red), M21 (the quadratic regex,
+2 red, and the only mutation in the file whose witness is a clock). M3 and M10 were re-anchored onto source this round moved; a stale
+anchor reports INCONCLUSIVE rather than a false green, which is how the script
+reported its own staleness on the first run.
+
+A new test LAYER, not just new cases: **Layer A2 asserts a clock.** Every other
+case in the file asserts a verdict, and the whole suite would have stayed green
+while the hook stalled the agent in front of it.
+
+### 10.8 The 41 RED cases at `a22d944`, by class
+
+| class | cases | what each proves |
+|---|---|---|
+| redirection before the `<<`, 9 shapes | 9 | the bypass, on the exact spellings round 8 measured |
+| the same wrapper on the other three rules | 3 | it was never scoped to `fs.destructive` — one of the three is the **local** `autonomy.self_edit`, with no API round-trip |
+| operator before the command word | 2 | `<<EOF bash`, `<<'EOF' psql` |
+| here-strings | 10 | shell / sh / force push / psql / python / redirected / after a pipe / before the command word / two on one command / redirection between head and `<<<` |
+| wrapper chains through a redirection | 6 | sudo, env, `VAR=` prefix, timeout, ssh, and a heredoc not on line 1 |
+| **false positives that BLOCKED at `a22d944`** | 3 | `cat > /tmp/node`, `cat >> …/bash`, `tee > /tmp/bash` — a builder writing a note |
+| the latency ceiling | 1 | 50k word: 10.4s at `a22d944`, against a 3s line |
+| Layer B, real subprocess + stub | 7 | the layer that cannot drift from `_main()` — six bypasses and the local-rule one |
+
+The 26 remaining new cases are green at `a22d944` on purpose: they are the
+narrowness half (the argv shapes, the prose orderings, the routine workload put
+through the same redirection wrapper). They are in the suite so the round-9 fix
+cannot buy its catch with them.

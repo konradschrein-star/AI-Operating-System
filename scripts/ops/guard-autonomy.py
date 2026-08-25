@@ -248,6 +248,35 @@ def heredoc_marker(line: str):
     being strict here fails toward classifying more input, which is the safe
     direction for a sanitiser sitting in front of a security classifier.
     """
+    for kind, pos, extra in input_redirections(line):
+        if kind == "heredoc":
+            return extra[0], extra[1], pos
+    return None
+
+
+def herestring_positions(line: str):
+    """Offsets of every REAL `<<<` on this line, in order.
+
+    A here-string is the third spelling of "hand this text to that command",
+    and until round 8 it was the only one no walker looked at: `heredoc_marker`
+    steps over `<<<` (correctly -- there is no body to skip), `heredoc_blocks`
+    therefore never yields it, and the quoted program survives tokenisation as
+    ONE shlex word whose basename is the whole string. `bash <<< 'rm -rf
+    /opt/content-forge'` executed and classified as nothing.
+    """
+    return [pos for kind, pos, _extra in input_redirections(line) if kind == "herestring"]
+
+
+def input_redirections(line: str):
+    """`(kind, pos, extra)` for each real `<<` / `<<<` on the line.
+
+    kind is "heredoc" (extra is `(dash, marker)`) or "herestring" (extra None).
+
+    ONE quote/arithmetic scan feeds every caller, for the same reason
+    `heredoc_blocks` feeds both the stripper and the classifier: two scanners
+    that disagree about what is quoted are a hole, and this one is the scan the
+    round-5 B4 fix turns on.
+    """
     i, n = 0, len(line)
     quote = None
     arith = 0
@@ -278,18 +307,22 @@ def heredoc_marker(line: str):
             continue
         if line.startswith("<<", i):
             if line.startswith("<<<", i):
-                i += 3          # here-string: body is on this line, nothing to skip
+                if not arith:
+                    # here-string: the body is on this line, nothing to skip
+                    yield "herestring", i, None
+                i += 3
                 continue
             if arith:
                 i += 2          # `x << n` inside $(( … ))
                 continue
             m = HEREDOC_OP_RE.match(line, i)
             if m:
-                return m.group(1), m.group(3), i
+                yield "heredoc", i, (m.group(1), m.group(3))
+                i = m.end()
+                continue
             i += 2
             continue
         i += 1
-    return None
 
 
 def strip_heredocs(cmd: str) -> str:
@@ -393,15 +426,32 @@ def heredoc_consumer(line: str, pos: int):
     Both scans are deliberately NARROW, because the loose version of each is a
     false positive on the fleet's most common heredoc by far -- a prose note:
 
-    * upstream, only the LAST segment counts. `bash deploy.sh && cat <<'EOF' >
-      note.md` has a shell on the line and prose in the body.
-    * downstream, only a head after a PIPE counts. `segments()` alone would
-      offer the redirection TARGET as a head, so `cat <<'EOF' > /tmp/node`
-      would read its own output file as an interpreter.
+    * upstream, only the LAST *bash command* counts. `bash deploy.sh && cat
+      <<'EOF' > note.md` has a shell on the line and prose in the body.
+    * downstream, only a head after a PIPE counts. A redirection TARGET is
+      never a consumer, so `cat <<'EOF' > /tmp/node` must not read its own
+      output file as an interpreter.
+
+    ROUND 8: "the last SEGMENT" was the wrong grammar for both of those, and it
+    failed in both directions at once. `segments()` ends a segment at `>`; bash
+    does not. So the upstream scan is now `command_words(..., "last")`, which
+    strips redirections and their targets -- see REDIRECT_OPS. That closes
+    `bash > /tmp/out <<EOF` (the body was dropped as prose, exit 0, no API call,
+    every wired rule unevaluated) and `cat > /tmp/node <<'EOF'` (the target was
+    read as the interpreter and a prose note blocked) with one change, because
+    they are one defect seen from its two sides.
+
+    A redirection may also PRECEDE the command word -- `<<EOF bash` and
+    `> /tmp/o bash <<EOF` are legal, and both left nothing at all before the
+    `<<`. Only when the prefix yields NO command word does the scan fall
+    through to the words after the operator; while a command word exists to its
+    left, everything to its right is an ARGUMENT of it and must not nominate
+    anything, or `python3 - <<'PY' /opt/bin/node` would read its own argv.
     """
-    upstream = [seg for seg in segments(line[:pos])]
-    if upstream:
-        words = upstream[-1][0]
+    words = command_words(line[:pos], "last")
+    if not words:
+        words = command_words(line[pos:], "first")
+    if words:
         for idx, word in enumerate(words):
             got = _consumer_kind(word)
             if got:
@@ -439,6 +489,33 @@ def heredoc_programs(cmd: str):
     for kind, consumer, body, _first, _last in heredoc_blocks(cmd):
         if kind != "prose" and body.strip():
             yield kind, consumer, body
+
+
+def herestring_programs(cmd: str):
+    """Every here-string whose consumer will EXECUTE it: (kind, words, body).
+
+    `bash <<< 'rm -rf /opt/content-forge'` is `bash -c` with different
+    punctuation, and `bash -c` has been caught since round 0 -- so allowing this
+    spelling while blocking that one is exactly the "an agent writes the one
+    that works" argument round 7 used to reverse the `python3 -c` reject.
+
+    The consumer question is decided by the SAME function the heredoc path uses,
+    so the two cannot drift: `grep -q x <<< "rm -rf /opt/x"` stays prose because
+    grep is not an interpreter, and `cat <<< "$s" > /tmp/node` stays prose
+    because a redirection target is not a consumer.
+
+    Only the FIRST word after the operator is the body -- that is all bash
+    passes on stdin; `bash <<< prog >/tmp/out` redirects, it does not extend the
+    string.
+    """
+    for line in cmd.split("\n"):
+        for pos in herestring_positions(line):
+            kind, consumer = heredoc_consumer(line, pos)
+            if kind == "prose":
+                continue
+            rest = tokenize(line[pos + 3:])
+            if rest and rest[0].strip():
+                yield kind, consumer, rest[0]
 
 
 def tokenize(cmd: str):
@@ -513,6 +590,87 @@ def is_operator(tok: str) -> bool:
     segment -- the same class of miss as dropping the newline entirely.
     """
     return bool(tok) and (tok in OPERATORS or all(c in OPERATOR_CHARS for c in tok))
+
+
+# The operators that are REDIRECTIONS rather than command separators.
+#
+# `segments()` deliberately ends a segment on every one of these: for the rules
+# it feeds, `foo > bar` and `foo; bar` are equally "two things, classify both",
+# and reading a redirection target as a command head costs nothing there.
+#
+# For the question `heredoc_consumer` asks -- WHICH command is about to read
+# this body -- that approximation is a total bypass, because BASH DOES NOT END A
+# COMMAND AT A REDIRECTION. `bash > /tmp/out <<EOF` and `bash <<EOF > /tmp/out`
+# are the same command written two ways; only the second put `bash` in the last
+# segment before the `<<`, so the first had its body dropped as prose and every
+# wired rule went unevaluated (round-8 blocker 1; `2>&1` is on 807 of the 2,924
+# commands in the 24h corpus, so this is the fleet's ordinary suffix in the
+# other position bash accepts). The mirror of the same defect is the false
+# positive in round-8 blocker 2: `cat > /tmp/node <<'EOF'` read its own output
+# FILE as the interpreter and blocked a builder writing a note.
+#
+# `<<` and `<<<` are here too: a heredoc introducer is itself a redirection, so
+# `<<EOF bash` -- legal bash, a redirection written BEFORE the command word --
+# leaves `bash` as the command once the operator and its marker are removed.
+REDIRECT_OPS = ("&>>", "&>", ">>", ">|", ">&", "<&", "<>", "<<<", "<<", ">", "<")
+
+# Longest first, so `&&>` splits into `&&` + `>` (a control operator followed by
+# a redirection) rather than being swallowed whole by either.
+_OPERATOR_PIECES = tuple(
+    sorted(set(OPERATORS) | set(REDIRECT_OPS), key=len, reverse=True)
+)
+
+
+def split_operator_run(tok: str):
+    """The individual bash operators inside one shlex punctuation RUN.
+
+    shlex emits `();<>|&\\n` characters as a single token per run, so `bash
+    2>&1 <<EOF` arrives with `>&` glued to nothing but `cmd &&> f` arrives as
+    `&&>`. Splitting greedily longest-first keeps a control operator a control
+    operator when a redirection is written immediately after it.
+    """
+    out, i = [], 0
+    while i < len(tok):
+        for op in _OPERATOR_PIECES:
+            if op and tok.startswith(op, i):
+                out.append(op)
+                i += len(op)
+                break
+        else:
+            out.append(tok[i])
+            i += 1
+    return out
+
+
+def command_words(cmd: str, keep: str):
+    """Words of the FIRST or LAST *bash* command in `cmd`, redirections removed.
+
+    "Bash command" is the whole point and the difference from `segments()`:
+    only `; & && || | |& ( ) { }` and a newline end a command here. A
+    redirection operator and the word after it -- its target -- are DROPPED,
+    because neither is part of the command being run.
+
+    `keep` is "first" or "last". Env assignments are stripped by `_segment`,
+    so `FOO=bar bash > /tmp/o` yields `["bash"]` and an assignment-only
+    statement yields `[]`.
+    """
+    segs, words, expect_target = [], [], False
+    for tok in tokenize(cmd):
+        if is_operator(tok):
+            for op in split_operator_run(tok):
+                if op in REDIRECT_OPS:
+                    expect_target = True
+                else:
+                    segs.append(words)
+                    words, expect_target = [], False
+            continue
+        if expect_target:
+            expect_target = False   # the redirection's target, not a word
+            continue
+        words.append(tok)
+    segs.append(words)
+    got = _segment(segs[0] if keep == "first" else segs[-1])
+    return list(got[0]) if got else []
 
 
 def segments(cmd: str):
@@ -641,9 +799,27 @@ def literal_value(raw: str):
 
 
 def scan_context(cmd: str) -> dict:
+    # The left boundary is not decoration and it is not only correctness.
+    #
+    # Correctness: without it `XFOO=$(mktemp -d)` also matches at `FOO`, `OO`
+    # and `O`, and every one of those names then counts as a self-created
+    # scratch variable. The enumerating scan below has always required the
+    # boundary; these two disagreed, and this was the loose one.
+    #
+    # Latency: `[A-Za-z0-9_]*` followed by a required `=` backtracks once per
+    # character, at every start offset -- quadratic in the length of any long
+    # unbroken word. THIS HOOK RUNS SYNCHRONOUSLY IN FRONT OF EVERY BASH CALL
+    # THE FLEET MAKES, so that is a stall of the agent, not a slow report, and
+    # the 2.5s HTTP ceiling does not bound it: classify() runs BEFORE the
+    # request. Measured on `rm -rf /opt/<50k chars>` (round 9, and inherited --
+    # a22d944 is identical): 23.6s for this one regex, 0.002s with the boundary,
+    # and the whole classify() 10.4s -> 0.06s. The 24h corpus's longest command
+    # word is far below that, so nothing routine was paying it; a command that
+    # pastes a large blob is not exotic, and an agent that WANTED the hook to
+    # stall had a free lever.
     mktemp_vars = set()
     for m in re.finditer(
-        r"([A-Za-z_][A-Za-z0-9_]*)=[\"']?(?:\$\(\s*mktemp|`\s*mktemp)", cmd
+        r"(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=[\"']?(?:\$\(\s*mktemp|`\s*mktemp)", cmd
     ):
         mktemp_vars.add(m.group(1))
 
@@ -787,6 +963,26 @@ DOCKER_EXEC_VALUED = {"-e", "--env", "-u", "--user", "-w", "--workdir", "-l",
                       "--label", "--env-file", "--detach-keys"}
 
 
+def interpreter_body(kind: str, consumer, body: str, cwd: str, ctx: dict, depth: int):
+    """Classify a body its consumer will EXECUTE, whatever punctuation carried it.
+
+    One dispatch for `bash <<EOF`, `psql <<EOF` and `bash <<< '…'`, so a new
+    carrier cannot arrive with a subtly different idea of what a db client body
+    is.
+    """
+    if kind == "db":
+        # The SQL has to arrive as an argument of the client command, which is
+        # where `match_db` reads it -- and it is passed as ONE word so no
+        # re-quoting can split a statement in half.
+        return classify_segment(
+            list(consumer) + [body], cwd,
+            scan_context(" ".join(consumer) + "\n" + body), depth + 1,
+        )
+    if kind == "python":
+        return python_program(body, cwd, ctx, depth + 1)
+    return classify(body, cwd, depth + 1, None)
+
+
 def classify(cmd: str, cwd: str, _depth: int = 0, _ctx=None):
     """Return (rule_id, payload, human_action) for the first rule the command
     would trip, or None. Conservative by construction: when in doubt, allow.
@@ -808,18 +1004,17 @@ def classify(cmd: str, cwd: str, _depth: int = 0, _ctx=None):
     # everything. The body of `cat <<EOF > note.md` is still prose and is still
     # dropped -- what changed is that the guard now asks WHO reads it.
     for kind, consumer, body in heredoc_programs(cmd):
-        if kind == "db":
-            # The SQL has to arrive as an argument of the client command, which
-            # is where `match_db` reads it -- and it is passed as ONE word so no
-            # re-quoting can split a statement in half.
-            hit = classify_segment(
-                consumer + [body], cwd,
-                scan_context(" ".join(consumer) + "\n" + body), _depth + 1,
-            )
-        elif kind == "python":
-            hit = python_program(body, cwd, ctx, _depth + 1)
-        else:
-            hit = classify(body, cwd, _depth + 1, None)
+        hit = interpreter_body(kind, consumer, body, cwd, ctx, _depth)
+        if hit:
+            return hit
+
+    # The third spelling of the same thing. A here-string body never reaches
+    # `strip_heredocs` -- it is on the command line, not on a following line --
+    # so until round 8 it arrived at the segment walk as one opaque shlex word
+    # and matched nothing: `bash <<< 'rm -rf /opt/content-forge'` ran and
+    # classified as NOTHING, while `bash -c 'rm -rf /opt/content-forge'` blocked.
+    for kind, consumer, body in herestring_programs(cmd):
+        hit = interpreter_body(kind, consumer, body, cwd, ctx, _depth)
         if hit:
             return hit
     cmd = cleaned

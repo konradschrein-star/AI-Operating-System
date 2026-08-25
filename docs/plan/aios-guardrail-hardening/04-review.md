@@ -956,3 +956,99 @@ the live hook at `/opt/ai-os/scripts/guard-autonomy.py`, `guardrail_trips`, and
 `db/migrations/`. Layer A is in-process and Layer B points at a stub the test
 file starts itself, so this round wrote no trip row and made no request to
 `:7700`.
+
+---
+
+# Round 9 — fix cycle 3 (builder)
+
+Feedback addressed: round 8's three blockers, in full. One further defect found
+by this round's own sweep and fixed rather than filed.
+
+## J.0 What was executed
+
+| instrument | result |
+|---|---|
+| `python3 scripts/ops/test-guard-autonomy.py` | **313/313 passed**, exit 0 |
+| the same suite against `a22d944` (`GUARD_AUTONOMY_HOOK=`) | **272/313 — 41 of the new cases RED**, which is the discrimination proof |
+| `bash scripts/checks/prove-guard-bites.sh` | **BITES — 21/21 DISCRIMINATED**, subject md5 unchanged |
+| corpus re-run, `a22d944` vs this tip, 2,924 rows | **2 → 2 trips; 0 new, 0 dropped, 0 exceptions** |
+| corpus, redaction markers normalised | **0 heredoc-consumer verdicts change** (see J.4) |
+| robustness sweep, 16 adversarial inputs | 0 raised; 15 under 0.4s; the 16th is J.3 |
+| bash execution proof, 7 shapes | every constructed MUST_BLOCK shape really runs |
+
+Nothing contacted `:7700`; nothing wrote a `guardrail_trips` row. Layer A and
+the corpus driver call `classify()` in-process (pure — no HTTP, no audit line);
+Layer B points at a stub the test file starts on an ephemeral port.
+
+## J.1 Blocker 1 — a redirection before the `<<` (and its two neighbours)
+
+Reproduced at `a22d944` first, in-process and end to end: **exit 0, zero API
+calls, no audit line** on all nine wrapper shapes, and not scoped to
+`fs.destructive` — the same wrapper defeated `git.force_push`, `comm.outbound`
+and the *local* `autonomy.self_edit`. `<<EOF bash` and `bash <<< '…'` closed
+with it. Full evidence and the fix's grammar: `02-classifier-decisions.md §10.1,
+§10.3, §10.4`. `bash <<<` was **caught**, with its reasoning in §10.4 as round 8
+required.
+
+## J.2 Blocker 2 — the mirror false positive
+
+`cat > /tmp/node <<'EOF'` blocked a prose note at `a22d944`; it passes now, with
+its own MUST_PASS cases (`/tmp/node`, `note.md`, `/opt/ai-os/notes/bash`,
+`2>/dev/null > note.md`, and the `bash deploy.sh &&` prefix). §9's narrowness
+table now carries **both orderings of every shape** — the round-8 point that a
+one-ordering table tests the spelling, not the grammar.
+
+## J.3 Found while sweeping, fixed not filed — a quadratic in front of every Bash call
+
+`scan_context()`'s mktemp regex, no left boundary, backtracking once per
+character at every offset: **10.4s at 50k, 43.7s at 100k, >60s at 200k** — and
+identical at `a22d944`, so inherited. The 2.5s HTTP ceiling does not bound it;
+`classify()` runs before the request. Now 0.10s / 0.19s / 0.90s. Full write-up
+`00-findings.md F3` and `02-classifier-decisions.md §10.5`.
+
+Two structural consequences, both shipped:
+- **Layer A2** — the suite's first assertion on a clock. 246 cases were green
+  while the hook took 43s in front of the agent, because every one of them
+  asserts a verdict.
+- **M21** — the only mutation in `prove-guard-bites.sh` whose witness is the
+  clock rather than a verdict.
+
+## J.4 A measurement artefact, recorded because it looked like a regression
+
+The first corpus run showed 6 rows changing consumer `db` → `prose`. All six are
+`PGPASSWORD=<redacted> psql … <<'SQL'`, and `<redacted>` is **shell
+punctuation** — to bash that literal is two redirections, so the new walker eats
+`psql` as a target and is right to, about that string. With the marker
+normalised: 0 verdicts change, trips 2 → 2. 89 corpus rows carry it. Written to
+fleet memory as `corpus-redaction-marker-is-shell-punctuation`.
+
+## J.5 Blocker 3 — the stale count
+
+`05-deploy.md` steps 5 and 6 now carry **no expected count at all**. Round 7
+replaced a stale number with a different stale number; the figure is deleted
+rather than corrected, which was round 8's own second option.
+
+## J.6 Write-set
+
+**Declared write-set: empty — nothing was declared for this task.** Every file
+below is therefore an undeclared write and is named here first, loudly.
+
+| file | why it had to change | blocker |
+|---|---|---|
+| `scripts/ops/guard-autonomy.py` | the redirection-aware consumer walker, here-strings, the latency fix | B1, B2, J.3 |
+| `scripts/ops/test-guard-autonomy.py` | 246 → 313 cases; the new **Layer A2** | B1, B2, J.3 |
+| `scripts/checks/prove-guard-bites.sh` | M16–M21; M3/M10 re-anchored | B1, B2, J.3 |
+| `docs/plan/aios-guardrail-hardening/05-deploy.md` | the stale count, deleted | B3 |
+| `docs/plan/aios-guardrail-hardening/02-classifier-decisions.md` | §9 table both orderings; new §10 | B1, B2, J.3 |
+| `docs/plan/aios-guardrail-hardening/00-findings.md` | the ranked round-9 findings | all |
+| `docs/plan/aios-guardrail-hardening/04-review.md` | this section | — |
+
+Same disposition as rounds 6 and 8: the empty `write_set` is the known engine
+defect (`project-reconcile.ts:515` unions the gating reviewer's set, which is
+also `[]`), not builder deviation. `prove-guard-bites.sh` again falls outside
+the project's declared union and again was ordered explicitly — by round 4's
+review, round 6's blocker 1, and round 8's blocker 1.
+
+Not touched: `/opt/forge-ai-os` (the live checkout), the live database, pm2, the
+live hook at `/opt/ai-os/scripts/guard-autonomy.py`, `guardrail_trips`,
+`db/migrations/`.

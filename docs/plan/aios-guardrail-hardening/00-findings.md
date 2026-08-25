@@ -275,3 +275,93 @@ Make it a fail-open audit line like the others.
    worktree-only policy, enforced mechanically) or only the guard's own files. Asked in the
    manager chat; default taken: own files only.
 3. Drop the eleven leftover scratch databases once the classifier stops creating more.
+
+---
+
+# Round 9 findings, ranked by severity
+
+Three carried over from round 8's review (F1, F2 confirmed and closed) and one
+found by this round's own sweep (F3). Every claim below was measured at
+`a22d944` before the fix and again after it; the exact command is in each row.
+
+## F1 · P1 — a redirection written before the `<<` reopened the total bypass of EVERY wired rule
+
+`heredoc_consumer()` took the last `segments()` entry before the `<<`, and
+`segments()` ends a segment at `>`. Bash does not. Measured against a stub
+control plane set to block everything: **exit 0, zero API calls, no audit
+line** — not "asked and allowed", *never asked*.
+
+```
+bash > /tmp/out <<EOF ⏎ rm -rf /opt/content-forge ⏎ EOF        -> allow  (control: bash <<EOF -> exit 2)
+bash 2>&1 <<EOF       ⏎ rm -rf /opt/content-forge ⏎ EOF        -> allow
+psql -U postgres 2>/dev/null <<EOF ⏎ DROP TABLE runs; ⏎ EOF    -> allow
+python3 - > /tmp/out <<PY ⏎ shutil.rmtree('/opt/content-forge') ⏎ PY -> allow
+<<EOF bash            ⏎ rm -rf /opt/content-forge ⏎ EOF        -> allow
+bash <<< 'rm -rf /opt/content-forge'                           -> allow
+```
+
+Severity is P1 and not P2 for three reasons: it is **not scoped to
+`fs.destructive`** (force push, `api.telegram.org`, and `curl -X PATCH
+…/api/autonomy/rules` all allowed through the same wrapper — the last defeating
+the *local* `autonomy.self_edit` rule, which has no API round-trip, so nothing
+outside the hook could observe the miss); `2>&1` is on **807 of 2,924** real
+fleet commands, so this is the ordinary spelling in a position bash also
+accepts; and every shape was verified to **execute**, not assumed.
+
+Closed: `command_words()` strips redirection operators *and their targets*
+before taking the last command, and falls through past the operator only when
+nothing precedes it. `bash <<<` is caught for the reason `bash -c` is
+(02-classifier-decisions §10.4). 41 new suite cases are RED at `a22d944`;
+mutations M16–M20.
+
+## F2 · P2 — the mirror false positive: the guard blocked a builder writing a note
+
+`cat > /tmp/node <<'EOF'` → **exit 2** at `a22d944`. The redirection TARGET
+became the last segment, its basename is `node`, and prose was classified as a
+program. Same line, same fix. This is the failure mode design constraint 2
+exists to prevent — a guard that blocks ordinary work gets switched off and
+then guards nothing.
+
+The generalisable half: a narrowness table that lists **one ordering** of each
+shape is testing the spelling, not the grammar. §9's table asserted this shape
+stays prose and was true only of the spelling round 7 happened to test. The
+table now carries both orderings of every shape.
+
+## F3 · P2 — a quadratic in the classifier stalls the agent in front of every Bash call (INHERITED, not from round 8's blockers)
+
+Found by this round's robustness sweep, not by the review. `scan_context()`'s
+mktemp regex had no left boundary, so `[A-Za-z0-9_]*` + a required `=`
+backtracked once per character at every start offset.
+
+```
+rm -rf /opt/<50k chars>     a22d944: 10.4s      after: 0.10s
+rm -rf /opt/<100k chars>    a22d944: 43.7s      after: 0.19s
+rm -rf /opt/<200k chars>    a22d944: >60s       after: 0.90s
+```
+
+**The 2.5s HTTP ceiling does not bound this** — `classify()` runs before the
+request. Every agent on this box waits on it synchronously, and an agent that
+*wanted* the guard to stall had a free lever. Identical at `a22d944`, so it is
+inherited rather than introduced here.
+
+Closed by adding the same left boundary the enumerating scan two lines below
+has always required — which also stops `XFOO=$(mktemp -d)` registering `FOO`,
+`OO` and `O` as scratch names. Fewer allowances: a narrowing, not a softening.
+Residual: ~16s at 1 MB in one word, now stdlib `shlex`; the corpus's longest
+real word is 443 bytes. Pinned by **Layer A2**, the suite's first assertion on
+a clock, and by mutation M21 — the only mutation whose witness is the clock.
+
+## F4 · informational — the 24h corpus's own redaction marker is shell punctuation
+
+`<redacted>` (89 occurrences) parses as two redirections, so any
+tokeniser-level measurement over the corpus must neutralise it first. The first
+round-9 corpus run showed 6 rows changing consumer `db` → `prose` and it was
+entirely this; with the marker normalised, **0 verdicts change, trips 2 → 2**.
+Recorded because the next worker to measure over this corpus will hit it.
+
+## Round-8 blocker 3 — closed
+
+`05-deploy.md` no longer carries any expected case count. Round 7 replaced a
+stale number with a different stale number ("244/244" against a 246-case
+suite); the figure is now deleted rather than corrected, and the exit code plus
+the `N/N` equality are the whole assertion.
