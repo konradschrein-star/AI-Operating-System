@@ -1,14 +1,63 @@
-/* VaultFileList — hover rules only. All other colors are set via tokens.*
-   in the component. NEVER add hardcoded hex/rgb/hsl here. */
+/* VaultFileList — row background states + the reveal flash. All other colors
+   are set via tokens.* in the component. NEVER add hardcoded hex/rgb/hsl here;
+   `rgba(var(--fg-*-rgb), a)` is the sanctioned way to get a translucent brand
+   colour and follows both themes (see scripts/checks/no-raw-colours.cjs).
+
+   THE ROW BACKGROUND IS OWNED HERE, NOT INLINE. The component used to set
+   `background: "transparent"` inline, which every rule below had to beat with
+   `!important`. A CSS animation loses to an `!important` declaration, so the
+   reveal flash below would never have painted on a selected row. The inline
+   value is gone and the `!important`s went with it. */
+
+.vfl-row {
+  background: transparent;
+}
 
 .vfl-row--file:hover,
 .vfl-row--dir:hover {
-  background: var(--fg-rowHover) !important;
+  background: var(--fg-rowHover);
 }
 
+/* Listed after the hover rules and with a `:hover` twin, so a selected row
+   stays selected-coloured under the cursor. */
 .vfl-row--selected,
 .vfl-row--selected:hover {
-  background: var(--fg-rowSelected) !important;
+  background: var(--fg-rowSelected);
+  /* D4: --fg-rowSelected is 10–12% accent — real, but easy to miss in a list
+     of 40 rows. The inset bar is the unambiguous part of "this is the file you
+     opened". `inset` so it costs no layout inside the absolutely positioned
+     virtualized row. */
+  box-shadow: inset 2px 0 0 var(--fg-accent);
+}
+
+/* Applied for FLASH_MS (VaultFileList.tsx) after a programmatic open, on top
+   of whichever state above the row is already in. Ends at the selected tint so
+   it settles into the resting style instead of snapping. */
+.vfl-row--revealed,
+.vfl-row--revealed:hover {
+  animation: vfl-reveal-flash 1.2s ease-out;
+}
+
+@keyframes vfl-reveal-flash {
+  0% {
+    background: rgba(var(--fg-accent-rgb), 0.42);
+  }
+  60% {
+    background: rgba(var(--fg-accent-rgb), 0.42);
+  }
+  100% {
+    background: rgba(var(--fg-accent-rgb), 0.12);
+  }
+}
+
+/* A flash is decoration; the scroll-into-view is the information. Honour the
+   OS setting and keep the row tinted for the same window without pulsing. */
+@media (prefers-reduced-motion: reduce) {
+  .vfl-row--revealed,
+  .vfl-row--revealed:hover {
+    animation: none;
+    background: rgba(var(--fg-accent-rgb), 0.24);
+  }
 }
 
 .vfl-breadcrumb-btn:hover {
