@@ -419,24 +419,53 @@ export function resolveStreamWarning(
 
 /**
  * Build the authenticated loopback noVNC proxy URL for a run directory.
- * Security boundary: validates dirId against DIR_ID_RE before constructing.
+ * Security boundary: validates dirId against DIR_ID_RE before constructing,
+ * AND now requires a minted ticket — `ticket` is optional only so existing
+ * callers that predate the ticket (BrowserStreamViewer.tsx:264, the unused
+ * import in BrowserShots.tsx) keep compiling; omitting it returns `null`
+ * rather than a URL pointing at a socket nothing will authenticate, so a
+ * caller that has not been wired up to mint one yet renders nothing instead
+ * of a broken canvas.
  *
  * Appends a `path=` query param noVNC's own UI/vnc_lite.js read via
  * `WebUtil.getConfigVar('path', 'websockify')` (see /usr/share/novnc/app/ui.js
  * and vnc_lite.html) to pick the WebSocket URL it opens for the RFB canvas.
  * Left at its default, that setting builds `ws://<host>/websockify` — the
- * BARE root path on this origin, which never touches `/api/proxy/...` and so
- * never reaches this proxy at all. Overriding it to the SAME nested path this
- * vnc.html document was itself loaded from (with `vnc.html`/`vnc_lite.html`
- * swapped for `websockify`) is what makes the canvas's WebSocket route back
- * through the Next.js rewrite and forge-control's upgrade proxy instead of
- * connecting to nothing at the origin root.
+ * BARE root path on this origin, which never touches this proxy at all.
+ * Overridden here to `api/browser-takeover/ws/<ticket>` (no leading slash —
+ * noVNC does `url += '/' + path`, ui.js:1019-1025): the dedicated nginx
+ * location that bypasses the Next Route Handler's upgrade bailout entirely,
+ * carrying the ticket as its only credential.
+ *
+ * `reconnect=0` is mandatory, not cosmetic: noVNC rebuilds the socket URL
+ * from the `path` setting frozen at page load (ui.js:1062-1070 -> connect()
+ * -> core/rfb.js:83), so an auto-reconnect after the 120s ticket TTL replays
+ * an EXPIRED ticket and shows an opaque failure instead of asking the caller
+ * to re-mint.
  */
-export function vncProxyUrl(dirId: string, subpath = "vnc.html?autoconnect=1&resize=scale"): string | null {
+export function vncProxyUrl(
+  dirId: string,
+  ticket?: string | null,
+  subpath = "vnc.html?autoconnect=1&resize=scale",
+): string | null {
   if (!DIR_ID_RE.test(dirId)) return null;
+  if (!ticket) return null;
   const cleanSub = subpath.replace(/^\/+/, "");
-  const wsPath = `${PROXY_ROOT.slice(1)}/uploads/${dirId}/vnc/websockify`;
+  const wsPath = `api/browser-takeover/ws/${ticket}`;
   const sep = cleanSub.includes("?") ? "&" : "?";
-  return `${PROXY_ROOT}/uploads/${dirId}/vnc/${cleanSub}${sep}path=${wsPath}`;
+  return `${PROXY_ROOT}/uploads/${dirId}/vnc/${cleanSub}${sep}path=${wsPath}&reconnect=0`;
+}
+
+/**
+ * The authenticated mint path for a run's takeover ticket — behind
+ * `/api/proxy`, so it carries Konrad's session cookie same-origin, unlike the
+ * websocket hop it feeds which cannot go through NextAuth middleware at all.
+ * Forge-control mints a fresh 120s ticket bound to this run's resolved
+ * profile+port on every GET (forge-control/src/routes/uploads.ts, `GET
+ * /:id/vnc/ticket`) — there is nothing to cache client-side.
+ */
+export function takeoverTicketUrl(dirId: string): string | null {
+  if (!DIR_ID_RE.test(dirId)) return null;
+  return `${PROXY_ROOT}/uploads/${dirId}/vnc/ticket`;
 }
 

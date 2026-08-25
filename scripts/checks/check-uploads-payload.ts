@@ -136,19 +136,16 @@ function makeMockRunDirectory(
     needs_human: needsHuman,
     needs_login: needsHuman && signal === "login_required",
     signal,
-    reason: needsHuman ? "Login wall encountered on target provider" : null,
     service: needsHuman ? "perplexity" : null,
-    port: isLive ? 9222 : null,
+    decision: needsHuman ? "login_required" : isLive ? "live" : null,
+    reason: needsHuman ? "Login wall encountered on target provider" : null,
+    reasons: needsHuman ? ["Authentication Required"] : [],
     novnc_port: isLive ? 6080 : null,
+    novnc_url: isLive ? `/api/proxy/uploads/browser/${dirId}/vnc/vnc.html` : null,
     takeover_up: isLive,
-    vnc_url: isLive ? `/api/proxy/uploads/browser/${dirId}/vnc/vnc.html` : null,
-    status: needsHuman ? "needs_human" : isLive ? "live" : "idle",
-    exit_code: needsHuman ? 4 : 0,
-    active_profile: isLive ? dirId : null,
-    last_action: isLive ? "page.screenshot" : "session.settled",
-    last_action_ts: latestTs,
-    stuck_ts: needsHuman ? latestTs : null,
-    warning: needsHuman ? "Authentication Required" : null,
+    profile: isLive ? dirId : null,
+    stuck_signal: needsHuman ? "heartbeat_stale" : null,
+    checked_at: latestTs,
   };
 
   // Legacy representation (unpruned: every row carried full browser_state & flags)
@@ -491,8 +488,10 @@ console.log("\n── 5. Client Integration, Component States & Token Purity ─
 const idleRef: BrowserShotRef = {
   dirId: "123456abcdef",
   name: "20260824T080000Z-idle-overview.png",
+  url: "/api/uploads/123456abcdef/20260824T080000Z-idle-overview.png",
   label: "idle-overview",
   ts: "20260824T080000Z",
+  source: "bash",
 };
 const idleMode = resolveStreamMode(null, [idleRef]);
 check("pruned idle run resolves to mode === 'idle'", idleMode, "idle");
@@ -513,8 +512,10 @@ checkTrue("idle BrowserShots does not render NEEDS KONRAD badge", !idleHtml.incl
 const liveRef: BrowserShotRef = {
   dirId: "123456abcdef",
   name: "20260824T080100Z-live-stream.png",
+  url: "/api/uploads/123456abcdef/20260824T080100Z-live-stream.png",
   label: "live-stream",
   ts: "20260824T080100Z",
+  source: "bash",
 };
 const liveState: BrowserStateSummary = { is_live: true, needs_human: false, signal: null };
 const liveMode = resolveStreamMode(liveState, [liveRef]);
@@ -535,8 +536,10 @@ checkTrue("live BrowserShots renders ● LIVE badge", liveHtml.includes("LIVE"))
 const redRef: BrowserShotRef = {
   dirId: "123456abcdef",
   name: "20260824T080200Z-perplexity-login-wall.png",
+  url: "/api/uploads/123456abcdef/20260824T080200Z-perplexity-login-wall.png",
   label: "perplexity-login-wall",
   ts: "20260824T080200Z",
+  source: "bash",
 };
 const redState: BrowserStateSummary = {
   is_live: false,

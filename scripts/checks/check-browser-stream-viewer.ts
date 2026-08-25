@@ -45,6 +45,7 @@ import {
   stampToIso,
   uploadsDirId,
   vncProxyUrl,
+  takeoverTicketUrl,
   type BrowserShotRef,
   type BrowserStateSummary,
   type StreamMode,
@@ -231,23 +232,44 @@ check("live stream with no blocked signal returns null warning", liveNoWarning, 
 
 console.log("\n── 3. vncProxyUrl: authenticated loopback proxy URL construction ───");
 
+const TEST_TICKET = "tkt-abc123";
+
 check(
-  "constructs default loopback vnc.html proxy URL",
-  vncProxyUrl(TEST_DIR_ID),
-  `/api/proxy/uploads/${TEST_DIR_ID}/vnc/vnc.html?autoconnect=1&resize=scale&path=api/proxy/uploads/${TEST_DIR_ID}/vnc/websockify`,
+  "constructs default loopback vnc.html proxy URL when a ticket is present",
+  vncProxyUrl(TEST_DIR_ID, TEST_TICKET),
+  `/api/proxy/uploads/${TEST_DIR_ID}/vnc/vnc.html?autoconnect=1&resize=scale&path=api/browser-takeover/ws/${TEST_TICKET}&reconnect=0`,
 );
 check(
   "constructs custom subpath vnc proxy URL",
-  vncProxyUrl(TEST_DIR_ID, "vnc_lite.html"),
-  `/api/proxy/uploads/${TEST_DIR_ID}/vnc/vnc_lite.html?path=api/proxy/uploads/${TEST_DIR_ID}/vnc/websockify`,
+  vncProxyUrl(TEST_DIR_ID, TEST_TICKET, "vnc_lite.html"),
+  `/api/proxy/uploads/${TEST_DIR_ID}/vnc/vnc_lite.html?path=api/browser-takeover/ws/${TEST_TICKET}&reconnect=0`,
 );
 check(
-  "path= query param routes the WebSocket canvas back through this proxy, not the origin root",
-  vncProxyUrl(TEST_DIR_ID)?.includes(`path=api/proxy/uploads/${TEST_DIR_ID}/vnc/websockify`),
+  "path= query param routes the WebSocket canvas through the dedicated ticketed nginx location, not the origin root",
+  vncProxyUrl(TEST_DIR_ID, TEST_TICKET)?.includes(`path=api/browser-takeover/ws/${TEST_TICKET}`),
   true,
 );
-check("rejects invalid non-12-hex dirId (security boundary)", vncProxyUrl("short"), null);
-check("rejects traversal dirId (security boundary)", vncProxyUrl("../../../etc"), null);
+check(
+  "reconnect=0 is present so an expired ticket cannot be silently replayed by noVNC's auto-reconnect",
+  vncProxyUrl(TEST_DIR_ID, TEST_TICKET)?.includes("reconnect=0"),
+  true,
+);
+check(
+  "missing ticket yields null — renders nothing rather than a broken socket",
+  vncProxyUrl(TEST_DIR_ID),
+  null,
+);
+check("rejects invalid non-12-hex dirId (security boundary)", vncProxyUrl("short", TEST_TICKET), null);
+check("rejects traversal dirId (security boundary)", vncProxyUrl("../../../etc", TEST_TICKET), null);
+
+console.log("\n── 3b. takeoverTicketUrl: authenticated mint path ───");
+check(
+  "constructs the mint path behind /api/proxy",
+  takeoverTicketUrl(TEST_DIR_ID),
+  `/api/proxy/uploads/${TEST_DIR_ID}/vnc/ticket`,
+);
+check("rejects invalid non-12-hex dirId (security boundary)", takeoverTicketUrl("short"), null);
+check("rejects traversal dirId (security boundary)", takeoverTicketUrl("../../../etc"), null);
 
 /* ════════════════════════════════════════════════════════════════════════════
  * SECTION 2: CSS Animation Styles & Reduced Motion Support
