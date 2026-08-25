@@ -151,6 +151,23 @@ run_check 1 "dollar-sweep" \
   "remove the currency-shaped literal from forge-control-web/app (Konrad runs on subscription, not API billing — a rendered \$/€ number is a defect, not a style nit); if it is a real, reviewed exception, add a scoped line to scripts/checks/dollar-allowlist.txt" \
   "bash scripts/checks/dollar-sweep.sh"
 
+# The EXECUTION REGISTRY. Its twin, check-instrument-typecheck.sh, globs every
+# instrument under scripts/checks/ and COMPILES it; nothing asked which of them
+# RUN, and on 2026-08-25 the answer was 41 of 74 by nothing — including
+# check-secret-scan.ts, sitting over a real committed credential while the
+# suite reported RED: 0. This closes that axis: glob + open ledger, exactly the
+# design instrument-manifest.txt already argues through.
+#
+# IT IS HERE, IN PHASE 1, AND NOT IN gates-808.sh, for three design reasons:
+# it is a static rule with no runtime (it reads files, starts nothing), it
+# costs milliseconds, and phase 1 runs in --fast — which is what `pnpm guard`
+# actually invokes (package.json:7). gates-808.sh is skip_check'ed in --fast
+# (line 232 below), so a gate placed there is invisible to the default guard,
+# which is the same class of not-really-running this check exists to close.
+run_check 1 "instrument-execution" \
+  "this artefact is executed by nothing: wire it into a runner, or ledger it in scripts/checks/execution-manifest.txt with a reason and an owner. Read that file's header first — a LIVE-ORPHAN (a live gate nothing runs) may NOT be ledgered; it goes in KNOWN_OPEN_FINDINGS in check-instrument-execution.ts and it is a conversation with Konrad. Full report: forge-control/node_modules/.bin/tsx scripts/checks/check-instrument-execution.ts" \
+  "forge-control/node_modules/.bin/tsx scripts/checks/check-instrument-execution.ts"
+
 # Unowned/forbidden-file diff guard. Tonight's house rules name a fixed set
 # of shared files no lane may touch without an explicit brief: the desktop
 # shell, the nav registry, the shared token/theme CSS, and the engine core.

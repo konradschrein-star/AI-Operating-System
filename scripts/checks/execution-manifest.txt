@@ -1,0 +1,184 @@
+# execution-manifest.txt — THE OPEN LEDGER of the EXECUTION REGISTRY
+# (`scripts/checks/check-instrument-execution.ts`, wired into `guard.sh` phase 1).
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS FILE IS. It is the twin of `instrument-manifest.txt` one axis over.
+# That file is the waiver ledger of the COMPILE registry, which globs every
+# `.ts`/`.tsx` under `scripts/checks/` and type-checks it. This one is the
+# ledger of the EXECUTION registry, which globs every `.ts/.tsx/.sh/.cjs/.mjs/
+# .py` under `scripts/checks/` plus every tracked `*.test.ts(x)` in the repo,
+# and asks the question nothing in this repo asked until 2026-08-25: does
+# ANYTHING RUN IT?
+#
+# The answer that day was no, 41 times, and one of the 41 was
+# `check-secret-scan.ts`, sitting over a real committed credential while the
+# suite reported `RED: 0` (`docs/plan/artifacts/verification-that-bites/
+# D1-execution-audit.md`). Compiling is not running. A green tick for
+# compiling, printed next to a gate name in a list, is what made that
+# invisible for four months.
+#
+# ADDING A PATH HERE DOES NOT OBTAIN COVERAGE — IT EXCUSES A FAILURE. There is
+# no way to "get a file executed" by writing it down. Every artefact under
+# `scripts/checks/`, and every tracked test file, is a subject of the check the
+# moment it exists, including one written by someone who never read this file.
+# A line here changes exactly one thing: an observed "executed by nothing" is
+# reclassified as an excused exclusion, and it is printed, in full, with its
+# four fields, in EVERY transcript until someone removes it.
+#
+# A LIVE-ORPHAN MAY NOT BE LEDGERED, AND THIS FILE CANNOT EXPRESS ONE. The
+# `bucket` field takes three values and only three:
+#
+#   SPENT             a one-shot verification of a round that has settled. Its
+#                     subject question was answered; nothing is protected by
+#                     running it again.
+#   NOT-A-CHECK       a harness, a server, a fixture, a tool. It has no verdict
+#                     of its own to lose.
+#   PROCEDURE-INVOKED a CURRENT doc still instructs a human to run it, going
+#                     forward — cited by file:line. Materially weaker than a
+#                     wired gate (a runner fires unconditionally; a doc fires
+#                     only if someone reads it) and materially stronger than
+#                     nothing. A historical evidence report narrating a run
+#                     that already happened DOES NOT COUNT.
+#
+# Anything else — including the words LIVE-ORPHAN — is a LEDGER ERROR that
+# fails the run by name. A live gate that nothing executes is not excusable in
+# a file: it is an OPEN FINDING, it lives in `KNOWN_OPEN_FINDINGS` in
+# `check-instrument-execution.ts` where it is printed as debt on every run, and
+# getting it off that list is a conversation with Konrad, not an edit here.
+# `check-secret-scan.ts` is the worked example: it is an open finding, it is
+# deliberately NOT in this file, and it will not be wired in until the order
+# redact -> rotate -> remove the literal -> wire in has been walked.
+#
+# ---------------------------------------------------------------------------
+# THE FORMAT — FOUR REQUIRED FIELDS PER ENTRY.
+#
+# The example below is INDENTED BY FOUR EXTRA SPACES so that the check does not
+# read it as a live record. A field line is recognised as `# ` followed
+# IMMEDIATELY by the field name — which is exactly what a real entry looks
+# like, and exactly what an example in a header must not be. This is not
+# hypothetical: `instrument-manifest.txt` had to solve the same problem and
+# the AI OS memory note `header-example-is-live-syntax` records the run where
+# a gate read its own documentation as a waiver.
+#
+#     path    : scripts/checks/check-example.ts
+#     bucket  : SPENT
+#     reason  : <why nothing needs to run it — a fact, not a preference>
+#     owner   : <the person, project or round answerable for that claim>
+#     scripts/checks/check-example.ts
+#
+# A real entry is those same five lines with the four field lines beginning at
+# column 1 as `# path    : …` and the fifth being the bare path, neither
+# indented nor commented. All four fields are REQUIRED and none may be empty:
+# the check fails, naming the path AND the missing field(s). A field block with
+# no bare path after it fails the same way — a justification that excuses
+# nothing is a note, and notes belong in prose, not in a ledger.
+#
+# ---------------------------------------------------------------------------
+# THE PROPERTIES THAT MAKE A LEDGER SAFER THAN AN `--exclude` FLAG. All are
+# implemented in the check, and each landed in the same commit as this text.
+#
+#   1. EVERY ENTRY IS PRINTED ON EVERY RUN, in the LEDGER block above the
+#      verdict, with all four fields. An exclusion nobody sees is an
+#      `--exclude` flag with extra steps. With zero entries the block still
+#      prints — "ok: 0 entries — the ledger is empty" — because a block that
+#      vanishes when it is empty is a block nobody notices has stopped running.
+#   2. A LEDGERED PATH THAT IS ACTUALLY INVOKED IS A FAILURE. The check says
+#      "ledgered but INVOKED" and names the runner and line. This is how an
+#      exclusion list outlives its reason: someone wires the check in, nobody
+#      deletes the excuse, and the next reader believes the artefact is dead.
+#   3. A LEDGERED PATH THAT IS NOT ON DISK, OR THAT IS NOT A SUBJECT OF THIS
+#      CHECK, IS A FAILURE. An entry must name something the registry actually
+#      reads, or it is excusing nothing and hiding that it does.
+#   4. ONE SUBJECT, ONE ENTRY. A path written here twice is a ledger error and
+#      the check names both line numbers.
+#   5. THE LEDGER NEVER REMOVES A FILE FROM THE SUBJECT SET. Every subject is
+#      resolved against the runners on every run, ledgered or not; the entry
+#      acts on the VERDICT, never on the subject list. There is no `--exclude`
+#      path in the check and this file must not grow one.
+#
+# ---------------------------------------------------------------------------
+# ENTRIES BELOW THIS LINE. Seeded 2026-08-25 from `execution-audit.tsv`, the
+# validated output of D1's audit, so that this check is GREEN AT MAIN ON THE
+# DAY IT LANDS and goes red on the NEXT orphan rather than on the current 41.
+# A gate that lands red turns main red for every lane at once and is disabled
+# within a day; that is not a stricter gate, it is no gate.
+#
+# 13 entries: 5 SPENT, 5 NOT-A-CHECK, 3 PROCEDURE-INVOKED.
+
+# path    : scripts/checks/check-r1871-chat.ts
+# bucket  : SPENT
+# reason  : round-numbered one-shot verification of round 1870's findings; that round is settled and its subject questions are answered (execution-audit.tsv:20)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/check-r1871-chat.ts
+
+# path    : scripts/checks/check-r1873-fixes.ts
+# bucket  : SPENT
+# reason  : round-numbered one-shot verification of round 1872's six findings; settled (execution-audit.tsv:21)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/check-r1873-fixes.ts
+
+# path    : scripts/checks/check-r1875-fixes.ts
+# bucket  : SPENT
+# reason  : same contract as check-r1873-fixes.ts one round later, per its own header; settled (execution-audit.tsv:22)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/check-r1875-fixes.ts
+
+# path    : scripts/checks/check-r20-census.py
+# bucket  : SPENT
+# reason  : round-numbered one-shot census; the reviewer gate it fed has already been discharged (execution-audit.tsv:23)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/check-r20-census.py
+
+# path    : scripts/checks/check-r69-straddle.sh
+# bucket  : SPENT
+# reason  : self-declares 'REOPENED AND CLOSED IN ROUND 242' in its own header; decision R71 shipped (execution-audit.tsv:24)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/check-r69-straddle.sh
+
+# path    : scripts/checks/serve-agents-7798.ts
+# bucket  : NOT-A-CHECK
+# reason  : HTTP harness server that other checks and browser probes point at; it has no pass/fail verdict of its own to lose (execution-audit.tsv:25)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/serve-agents-7798.ts
+
+# path    : scripts/checks/serve-quota-7799.ts
+# bucket  : NOT-A-CHECK
+# reason  : HTTP harness server that other checks and browser probes point at; no verdict of its own (execution-audit.tsv:26)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/serve-quota-7799.ts
+
+# path    : scripts/checks/serve-sse-808.ts
+# bucket  : NOT-A-CHECK
+# reason  : HTTP harness server that other checks and browser probes point at; no verdict of its own (execution-audit.tsv:27)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/serve-sse-808.ts
+
+# path    : scripts/checks/serve-v3-7798.ts
+# bucket  : NOT-A-CHECK
+# reason  : HTTP harness server that other checks and browser probes point at; no verdict of its own (execution-audit.tsv:28)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/serve-v3-7798.ts
+
+# path    : scripts/checks/fixtures/preflight-c1-fixture.sh
+# bucket  : NOT-A-CHECK
+# reason  : forced-failure FIXTURE for preflight-deploy.sh's check_c1, per its own header line 3; preflight-deploy.sh:144 names it in a COMMENT only, which is not an invocation and is this registry's own worked example of prose-versus-command
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/fixtures/preflight-c1-fixture.sh
+
+# path    : scripts/checks/verify-control-plane.sh
+# bucket  : PROCEDURE-INVOKED
+# reason  : docs/tools/run-control.md:756-761, the CURRENT tool doc's 'How to verify' section, names it verbatim as the one command to run (execution-audit.tsv:19)
+# owner   : project aios-verification-that-bites, round 3 (D1 triage)
+scripts/checks/verify-control-plane.sh
+
+# path    : scripts/checks/check-browser-takeover-ticket.ts
+# bucket  : PROCEDURE-INVOKED
+# reason  : docs/plan/aios-browser-takeover-live/deploy.md:41 invokes it and :51 cross-references the secret-scan half; that runbook is NOT YET EXECUTED (deploy.md:4). It gates the one route in this repo reachable without a NextAuth session, so this is the weakest entry in this file and the first that should become a wired gate (execution-audit.tsv:32)
+# owner   : project aios-browser-takeover-live (deploy phase)
+scripts/checks/check-browser-takeover-ticket.ts
+
+# path    : scripts/checks/prove-it-bites.sh
+# bucket  : PROCEDURE-INVOKED
+# reason  : docs/plan/03-quality.md:381-385 is a live standing rule instructing every task that ships a check to run it and paste the transcript; it is a mutation harness, so a runner executing it on a schedule would be meaningless
+# owner   : project aios-verification-that-bites (D3, mutation workstream)
+scripts/checks/prove-it-bites.sh
