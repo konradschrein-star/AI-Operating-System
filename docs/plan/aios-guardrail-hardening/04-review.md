@@ -1,0 +1,627 @@
+# aios-guardrail-hardening — round 4 review
+
+**Tip reviewed: `d907389b1391601eb73359d7967e612ffce4fa53`** (`project/b167b94e`),
+re-read immediately before each blocker below was written and still `d907389`.
+Merge-base with `main` is `c03d9aa`; `main` is at `992c3ae`.
+
+**VERDICT: NEEDS_FIXES** — 4 blockers, 7 further findings. The classifier work is
+good and the evidence behind it reproduces; what fails is (1) a migration number
+that collides with `main`, (2) a gate suite that exits nonzero, and (3) two of the
+three headline hardening claims having no test that fails when they are reverted.
+
+Quality document used: **`docs/plan/03-quality.md`** — there is no
+`docs/plan/aios-guardrail-hardening/03-quality.md`; this project's corpus predates
+the per-project layout. (`03-hygiene.md` in the project directory is the
+observability write-up, not a quality document.)
+
+---
+
+## 0. What was executed
+
+| instrument | invocation | result |
+|---|---|---|
+| gates-808 | `bash scripts/checks/gates-808.sh --strict` | **exit 1** — 31 gates, **29 EXECUTED**, 2 SKIPPED-by-design (browser, 29/30), **RED 1** (gate 26) |
+| autonomy hook suite | `python3 scripts/ops/test-guard-autonomy.py` | 140/140, exit 0 |
+| service-restart suite | `python3 scripts/ops/test-guard-service-restart.py` | 19 cases, 0 failing, exit 0 |
+| protected-paths suite | `python3 scripts/ops/test-guard-protected-paths.py` | 28 cases, 0 failing, exit 0 |
+| forge-control units | `cd forge-control && pnpm test` | `# tests 2224 / # pass 2224 / # fail 0` |
+| secret scan | `tsx ../scripts/checks/check-secret-scan.ts` | exit 1 — **attributed to `main`** (§F6) |
+| ops inventory | `scripts/checks/check-ops-scripts.sh` | exit 1 (§B2) |
+| migration numbers | `validateMigrationFiles` over the **merge-tree** | exit 1 (§B1) |
+| corpus re-run | `rerun-corpus.py <live> <repo> commands-24h.jsonl` | reproduces exactly (§C1) |
+| mutation control, hook | 3 reverts × 140-case suite | **2 of 3 stay green** (§B3) |
+| mutation control, engine | default-branch revert × engine tests | bites: 3 failures (§C2) |
+| trip-row isolation | count before / after all three suites | 53 → 53, newest timestamp unchanged (§C3) |
+| live checkout | `git -C /opt/forge-ai-os status --porcelain` | 6 paths, all accounted (§D) |
+
+Dependencies installed first, as the brief requires:
+`cd forge-control && pnpm install --frozen-lockfile --prod=false` → "Already up to date".
+
+---
+
+## A. What is right, and verified rather than assumed
+
+Stated up front because the list below is long and the work is mostly good.
+
+1. **The block text carries no override recipe.** `grep -n FORGE_GUARD_ACK
+   scripts/ops/guard-autonomy.py` returns lines 1004 and 1008 only — both in
+   `_main()`'s ACK check, neither in `BLOCK` or `BLOCK_SELF_EDIT`. The Haiku
+   self-grant of 23:36 cannot be repeated by reading the refusal.
+2. **`autonomy.self_edit` blocks locally and cannot be ACKed.** Proven by running
+   the repo hook as a subprocess with `FORGE_API` pointed at a **dead port**
+   (47199) — if it made an HTTP call it would fail open with exit 0:
+
+   ```
+   plain                      exit=2  BLOCKED locally: an agent may not change the autonomy rules.
+   env ACK                    exit=2  BLOCKED locally: …
+   prefix ACK                 exit=2  BLOCKED locally: …
+   prefix ACK fs.destructive  exit=2  BLOCKED locally: …
+   trip resolve               exit=2  BLOCKED locally: …
+   ```
+
+   and an audit line `{"kind": "blocked-local", "rule_id": "autonomy.self_edit"}`
+   for each. Script: `/tmp/r4-selfedit-proof.py`.
+3. **No test or check reaches the live API or DB.** `guardrail_trips` counted
+   before and after all three suites via forge-control's own `DATABASE_URL`
+   (read from `pm2 jlist`): `{"n":53,"newest":"2026-08-25 13:23:59.867351+00"}`
+   both times. The `:7700` strings in `test-guard-autonomy.py` (lines 169–175,
+   296, 317) are **classifier fixtures** consumed in-process by Layer A, not
+   requests; Layer B points `FORGE_API` at a stub it starts itself.
+4. **The engine change is additive on the wire.** `AutonomyResponse` gains
+   `rule_changes: GuardrailRuleChange[] | null`; nothing is removed.
+   `AutonomySurface.tsx` reads `trips`, `categories`, `gemini_daily`, `fleet` —
+   all still present, none renamed. `listRuleChanges` is wrapped in `.catch(() =>
+   null)` so a database without migration 0047 still serves the pause switch.
+5. **`evaluateRule`'s default branch blocks with a non-empty config**, and the
+   rule set it is applied to is filtered `WHERE enabled = true`
+   (`db/autonomy.ts:806`) — so dropping the `rule.enabled` term from the branch
+   does not make disabled rules block. That is the load-bearing detail behind
+   the change and it holds.
+6. **`POST /rules/:id` and `/trips/:id/resolve` both notify then audit**
+   (`routes/autonomy.ts:78-89`, `:130-140`), in that order, with the reason
+   written down: `queueNotification` never throws, `recordRuleChange` does.
+7. **`updateRule`'s unreachable second `fleet_state` sync is gone** and the
+   `runtime.pause_all` branch does return before the old site
+   (`db/autonomy.ts:266-292`).
+8. **`install-hooks.sh` is non-destructive and idempotent** — measured against a
+   `/tmp` copy of the real `/root/.claude/settings.json`:
+   `--check` on a hookless dir → 3 MISSING entries, **exit 1**; install → 3
+   entries added + backup written; second run → `ok (already installed)`,
+   **exit 0**; `--check` after → PASS. Merging into a copy of the real file added
+   only the `Write|Edit|MultiEdit` group and left every other key byte-identical
+   (`diff` of the two parsed-and-sorted JSON documents shows the addition and
+   nothing else). `permissions`, `theme`, `cleanupPeriodDays` all survived on the
+   synthetic case.
+9. **It has never been run against the live host on this branch.**
+   `/opt/ai-os/backups/settings/` does not exist.
+10. **Routine-path rules do not over-reach.** In-process against the repo hook,
+    cwd `/opt/forge-ai-os`:
+
+    | command | verdict |
+    |---|---|
+    | worktree ROOT `…/projects/b167b94e-…` | `fs.destructive` ✅ |
+    | `/opt/ai-os/uploads/x` | `fs.destructive` ✅ |
+    | `/opt/content-forge` | `fs.destructive` ✅ |
+    | `/` | `fs.destructive` ✅ |
+    | `"$X"` with no mktemp | `fs.destructive` ✅ |
+    | `node_modules`, `.next` (+`2>&1`), `dist`, `/tmp/x` | allow ✅ |
+    | `git push origin project/b167b94e` | allow ✅ |
+    | `pnpm install`, `pnpm build` | allow ✅ |
+11. **The 2,924-command corpus re-run reproduces** (§C1), and the three new unit
+    test files really execute — they are in `src/lib/`, which is what
+    `"test": "tsx --test src/lib/*.test.ts"` globs.
+
+---
+
+## B. BLOCKERS
+
+### B1 · `db/migrations/0047_guardrail_rule_changes.sql` collides with `main`
+
+**File:** `db/migrations/0047_guardrail_rule_changes.sql:1`
+
+`main` already carries `0047_day_tasks_gtask.sql`, `0048_glucose_readings.sql`
+and `0049_importance_six_levels.sql`, all added by `b41e824` (2026-08-25). This
+branch forked at `c03d9aa`, before them, so its worktree shows `0047` free and
+the in-lane gate agrees. Git will not conflict on this: the filenames differ.
+
+Proven with the repo's own gate rather than by eye — `validateMigrationFiles`
+from `scripts/checks/check-migration-numbers.ts`, fed the **merged** file set:
+
+```
+$ MT=$(git merge-tree --write-tree main HEAD | head -1)
+$ git ls-tree -r --name-only "$MT" db/migrations   # 31 files
+files: 31 ok: false exit: 1
+  ERR: COLLISION   0047: 0047_day_tasks_gtask.sql  ↔  0047_guardrail_rule_changes.sql
+  ERR: FAIL — 1 collision(s), … Renumber to the next free integer.
+
+$ # the same gate, in-lane, over HEAD's own directory:
+files: 28 ok: true exit: 0
+  log: PASS — 28 migration(s), every number unique, highest 0047.
+```
+
+Gate 8 of this branch's own `gates-808.sh` run is green for exactly this reason:
+`check-migration-numbers.ts` reads `db/migrations/` relative to itself, so it can
+only ever see one `0047` (memory: `migration-number-collides-through-a-merge`).
+
+**Fix:** `git mv db/migrations/0047_guardrail_rule_changes.sql
+db/migrations/0051_guardrail_rule_changes.sql`; update the number in its own
+header comment and in `01-engine.md`, `02-classifier-decisions.md` and any task
+report that names it as a path (not sentences quoting a past command). **0050 is
+NOT free** — `0050_day_tasks_goal.sql` is already committed on another lane, so
+0051 is the next free integer across `main` and every branch. `sha256sum` before
+and after the `git mv` to show no bytes moved.
+
+### B2 · `gates-808.sh --strict` exits 1 — and this branch is what made gate 26 run
+
+**File:** `scripts/checks/gates-808.sh:275-277`
+
+```
+ 26 1      check-ops-scripts.sh — scripts/ops/ inventory, modes, hook registration
+ RED: 1
+$ scripts/checks/check-ops-scripts.sh
+-- presence + permissions
+FAIL: check-vps2-backup.sh mode is 755, expected 750
+```
+
+`02-classifier-decisions.md` §7 attributes this honestly — the assertion is at
+`scripts/checks/check-ops-scripts.sh:56` **on `main`**, git stores the file as
+`100755` (`git ls-tree -r HEAD` confirms), the tighter mode is restored by
+`install-symlinks.sh` at install time, and it is red in every fresh worktree.
+All true.
+
+What §7 does not say is the part that makes it a blocker: **`main`'s
+`gates-808.sh` never ran that check** (`git show main:scripts/checks/gates-808.sh
+| grep -c check-ops-scripts` → `0`). This branch is the first to wire it in. So
+the diff does not inherit a red gate — it converts a latent, never-executed
+assertion into a **permanently red gate in the suite every other project on this
+box runs**, and every one of those projects will now report `RED: 1` forever for
+a reason that has nothing to do with their work. "Left red on purpose" is a
+defensible call for a check nobody runs; it is not one for a gate you are adding
+to the shared suite.
+
+**Fix (do not soften the assertion — memory: `do-not-soften-check-secret-scan`):**
+make the mode assertion location-aware in `check-ops-scripts.sh` — assert `750`
+on the **installed** copy under `$TARGET_DIR` and skip it (loudly, as SKIPPED)
+for a git checkout, since git cannot represent the mode. Or leave the check
+un-wired until that distinction exists. Either way `--strict` must exit 0 before
+a PASS.
+
+### B3 · The suite stays GREEN under two of the three hardening claims being reverted
+
+**Files:** `scripts/ops/test-guard-autonomy.py` (no case), `scripts/ops/guard-autonomy.py:280-290` and `:653`
+
+Mutation control, run against `/tmp` copies with `GUARD_AUTONOMY_HOOK` pointing at
+the copy; the repo file was never opened for writing and its md5 is unchanged
+(`f9e81e4550bb2b2356459aa597257dd5` before and after):
+
+| mutation | 140-case suite |
+|---|---|
+| **M1** drop the `head in SHELLS` recursion (`bash -c` transparent again) | exit 1, **138/140** — bites ✅ |
+| **M2** `punctuation_chars="();<>\|&"` — remove the newline | exit 0, **140/140** — **does not bite** ❌ |
+| **M3** `if recursive:` → `if recursive and force:` | exit 0, **140/140** — **does not bite** ❌ |
+
+Both are real behaviour reverts, not no-op edits. In-process, cwd
+`/opt/forge-ai-os`:
+
+```
+                                            PRISTINE          M3 MUTANT
+rm -r /opt/forge-ai-os                   -> fs.destructive    None
+rm -r /opt/content-forge/src             -> fs.destructive    None
+rm --recursive /opt/content-forge        -> fs.destructive    None
+
+                                            PRISTINE          M2 MUTANT
+"ls -la\nrm -rf /opt/content-forge"      -> fs.destructive    None
+"echo hi\ngit push --force origin main"  -> git.force_push    None
+"pwd\n\nrm -rf /opt/content-forge"       -> fs.destructive    None
+```
+
+M3 is the entire subject of commit `e6901a8` — *"recursion alone triggers
+fs.destructive — the force conjunction was a bug"* — the commit whose message
+cites a lane deleting all 48 tracked files of `forge-control/src/routes`. **The
+fix that incident produced has no test that fails when it is undone.** M2 is the
+change the hook's own docstring calls "load-bearing and measured the hard way"
+(lines 280-289: "of six newline-separated destructive commands, the version
+without this line caught one").
+
+`02-classifier-decisions.md` §8.1 already names the newline gap as "the
+highest-value follow-up in this document" and declines it on write-set grounds.
+That is the right instinct recorded in the wrong place: a follow-up note does not
+protect the code, and §8 does not mention the `recursive`/`force` gap at all —
+which is the newer of the two and the one with a real incident behind it.
+
+**Fix:** add to `MUST_BLOCK` in `scripts/ops/test-guard-autonomy.py`, at minimum:
+`("rm -r without -f", "rm -r /opt/content-forge", "fs.destructive", None)`,
+`("rm --recursive without -f", "rm --recursive /opt/content-forge", "fs.destructive", None)`,
+`("newline-separated delete", "ls -la\nrm -rf /opt/content-forge", "fs.destructive", None)`,
+`("newline-separated force push", "echo hi\ngit push --force origin main", "git.force_push", None)`,
+plus the `2>&1` fd-prefix and `cd`-tracking cases §8.1 lists. Then re-run M2 and
+M3 and show them red.
+
+### B4 · A `<<` the shell does not treat as a heredoc deletes the rest of the command
+
+**File:** `scripts/ops/guard-autonomy.py:225-242` (`strip_heredocs`)
+
+`strip_heredocs` matches `<<\s*['"]?IDENT` anywhere on a line — including inside
+a quoted string and inside an arithmetic shift — and then consumes every
+following line until a line exactly equals the marker. When no such line exists,
+**it consumes the rest of the command and returns only the lines before it**.
+Those lines are never classified.
+
+```
+$ python3 /tmp/r4-evade.py scripts/ops/guard-autonomy.py
+heredoc marker inside a QUOTED string, delete on the next line -> None
+same, force push on the next line                              -> None
+<< in an arithmetic/shift expression, delete after             -> None
+```
+
+The commands, verbatim (harmless stand-in `echo SECOND-LINE-RAN` in place of the
+verb for the shell run):
+
+```
+echo "see << NOTE"
+rm -rf /opt/content-forge
+```
+
+```
+echo $((1 << 3))
+git push --force origin main
+```
+
+Bash runs **both** lines in each case — there is no heredoc there at all:
+
+```
+$ bash /tmp/r4-bash-divergence.sh
+=== case 1: << inside double quotes ===
+see << NOTE
+SECOND-LINE-RAN
+=== case 2: << as a shift operator ===
+8
+SECOND-LINE-RAN
+```
+
+So the guard exits 0, writes no audit line, and the fleet's own log records
+nothing — the silent-fallback shape the brief forbids, reached with a two-line
+command and no knowledge of the hook beyond "it strips heredocs".
+
+**Attribution, honestly:** the shape is inherited — `/opt/ai-os/scripts/guard-autonomy.py`
+(md5 `4689f012…`) behaves identically on all four probes. It is not a regression
+introduced here. It is in scope because A1 is this project's remit and because
+the round-1 change to `strip_heredocs` (exact-marker matching, lines 233-239)
+*widened* the window: an indented `  EOF` in the swallowed region used to end the
+body early and now does not.
+
+**Fix:** two cheap halves, neither of which needs a shell parser.
+(a) Only treat `<<` as a heredoc when it is not inside a quoted region on that
+line and is not part of `<<<` or `$((… << …))`; a single left-to-right quote
+scan of the line is enough. (b) When the marker line is never found, **do not
+drop the remainder** — classify it. Falling back to "classify everything" is the
+conservative direction; the current fallback is "classify nothing".
+
+---
+
+## C. Verifications that came out clean, with the numbers
+
+### C1 · Corpus re-run reproduces
+
+```
+$ python3 /opt/ai-os/scratch/guardrail-a2/rerun-corpus.py \
+    /tmp/r4-guard-live.py scripts/ops/guard-autonomy.py \
+    /opt/ai-os/scratch/guardrail-a2/commands-24h.jsonl
+corpus rows: 2924
+OLD (live /opt/ai-os/scripts) trips: 10
+NEW (repo worktree)          trips: 2
+classifier exceptions: 0
+```
+
+Rows actually listed: **8** no-longer-tripping, **0** newly-tripping, **2** still
+tripping (`138d023e` uploads, `f79c2434` browser profile) — matching §5 of
+`02-classifier-decisions.md` exactly. Two caveats for whoever re-runs it (§F7).
+
+### C2 · The engine tests DO bite
+
+Reverting `evaluateRule`'s default branch to the old empty-config-only form, on a
+`git archive` export in `/tmp` (the worktree file's md5 is identical before and
+after):
+
+```
+== running the two engine test files against the MUTATED copy ==
+not ok 1 - evaluateRule — the catch-all branch
+# tests 36
+# pass 33
+# fail 3
+```
+
+### C3 · Nothing this review ran wrote a trip row
+
+53 before the three suites, 53 after, same newest timestamp. The count is 54 now
+— see F1: the **live** hook tripped on a command of my own, which is a finding,
+not test pollution.
+
+---
+
+## D. Live-checkout cleanliness check (mandatory)
+
+```
+$ git -C /opt/forge-ai-os status --porcelain
+ M forge-control-web/app/desktop/ChatSurface.tsx
+ M forge-control-web/app/desktop/chat/FileExplorerPanel.tsx
+ M forge-control-web/app/desktop/chat/MessageMarkdown.tsx
+ M forge-control/src/routes/files.ts
+?? forge-control-web/app/desktop/chat/code-path-link.ts
+?? forge-control-web/app/desktop/chat/open-file-bus.ts
+```
+
+**Not empty — reported here in full, as required.** It is **not this project's
+work**, and it is not new: these are six of the seven paths of the 2026-08-25
+dirt, re-measured today at live HEAD `992c3ae` rather than inherited from an
+earlier round's summary.
+
+| path | working blob | reachable in ODB | carrier | refs containing it |
+|---|---|---|---|---|
+| `ChatSurface.tsx` | `65f9c67c` | 0 | none | 0 |
+| `chat/FileExplorerPanel.tsx` | `7b30d52b` | 1 | `56031db` | 5 |
+| `chat/MessageMarkdown.tsx` | `e8476df4` | 1 | `5067233` | 4 |
+| `routes/files.ts` | `2bd2ef3a` | 1 | `2db8998` | 4 |
+| `chat/code-path-link.ts` | `cc95791d` | 1 | `8c101dd` | 5 |
+| `chat/open-file-bus.ts` | `c766f6c7` | 1 | `56031db` | 5 |
+
+Five are byte-identical to committed blobs on the `project/ecacba29*`
+(`aios-chat-reference-navigation`) lane. `ChatSurface.tsx` reports as a whole-file
+sole copy and carries **zero unowned content**: its diff against live HEAD is 16
+insertions, all the `subscribeOpenFile` wiring, and that wiring is present on
+`project/ecacba29`, `project/ecacba29-detect` and `project/ecacba29-markdown`
+(2 occurrences each). The seventh path of the original set, `auth.ts`, landed as
+`b267b41` and is gone from the list.
+
+**I am not requiring a revert, and I am saying so rather than staying quiet about
+the deviation.** Konrad's standing ruling (vault, *Operator Decisions* §"When the
+live checkout goes dirty", and the 2026-08-19 correction to it) is: preserve and
+escalate, never revert; and "prescribing revert-and-redo in a worktree" was
+explicitly overruled after three reviewers recommended it against what turned out
+to be a live feature. These six paths arrive on `main` with the
+`aios-chat-reference-navigation` merge; committing or reverting them here only
+manufactures a conflict. **None of this changes the verdict, which is already
+NEEDS_FIXES on B1–B4.** Escalated to the manager chat.
+
+---
+
+## E. Write-set audit
+
+`git log --name-only` per task's commits vs the `write_set` declared on the task
+row (`project_tasks`, read live).
+
+| task | role | commits | undeclared writes |
+|---|---|---|---|
+| `218a8d17` | architect | `1956117` | `PLAN.md`, `docs/plan/aios-guardrail-hardening/00-findings.md` — declared `[]` |
+| `127bf403` | researcher | `c80dadc` | none |
+| `925aa51d` | builder | `615f241` | none |
+| `87c01d40` | engine builder | `5acfb73` | **2 path mismatches** (below) |
+| `f46a70e4` | builder | `db61247`, `307b4fa`, `e6901a8` | **`.gitignore`** |
+| `fbc48f4a` | builder | `cd80b57` | **`forge-control/src/lib/secret-scan-redaction.test.ts`** |
+| `3a63b84c` | builder | `7bcae97` | none |
+| `161e2155` | integrator | `d907389` (merge) | none |
+
+Three undeclared writes, none of them alarming, all of them findings rather than
+footnotes:
+
+* **`87c01d40`** declared `forge-control/src/db/autonomy-blanket.test.ts` and
+  `forge-control/src/routes/autonomy-changes.test.ts`; it wrote
+  `forge-control/src/lib/autonomy-blanket.test.ts` and
+  `forge-control/src/lib/autonomy-changes.test.ts`. The move is **correct** —
+  `"test": "tsx --test src/lib/*.test.ts"` means a test outside `src/lib/` is
+  executed by nothing, and this worker wrote the fleet memory note
+  `tests-outside-src-lib-never-run` establishing that. The declaration was simply
+  never restated. Both files do run (`# tests 2224 / # pass 2224`).
+* **`.gitignore`** (`__pycache__` entries) is what keeps gate 31
+  (reproduce-cleanliness) green now that the suites `importlib` the hooks — a
+  necessary write, undeclared.
+* **`secret-scan-redaction.test.ts`** is the test for the declared file; same
+  shape as the first row.
+
+The architect row's empty `write_set` is a seeding convention rather than a
+worker deviation and is listed for completeness.
+
+---
+
+## F. Further findings (not blockers)
+
+### F1 · The classifier blocks a resolvable literal `VAR=` scratch path — measured on this review's own command
+
+**File:** `scripts/ops/guard-autonomy.py:383-404` (`_var_name` / `is_routine_path`)
+
+The live hook blocked a command of mine during this review, writing trip
+`5c9fc766-5da9-48c5-9347-cc396e664371`:
+
+```
+attempted: rm -rf $SC 2>/dev/null      (SC=/tmp/r4-settings-scratch, assigned in the same command)
+```
+
+Reporting it, not working around it. The repo hook at tip does the same:
+
+```
+literal VAR under /tmp, deleted in the SAME command     -> fs.destructive
+literal VAR under /tmp, no quotes                       -> fs.destructive
+literal VAR naming node_modules                         -> fs.destructive
+literal VAR under a project worktree subdir             -> fs.destructive
+mktemp VAR (the shape that IS handled)                  -> None
+```
+
+`scan_context()` learns `VAR=$(mktemp -d)` and nothing else, so
+`is_routine_path("$SC")` falls to rule 5 — "any other `$VAR` stays blocked,
+the hook cannot see the value". For this shape **the hook can see the value**: it
+is a literal assignment in the same command string. `00-findings.md` P2-2 rule 5
+justifies the block on an unresolvability that does not hold here.
+
+**Fix:** extend `scan_context()` with `VAR=<literal>` assignments (a plain
+`([A-Za-z_]\w*)=(["']?)(/[^\s"';|&]*)\2` scan) and resolve `$VAR` targets through
+that map before falling to rule 5. Unresolvable values keep the current
+behaviour. This is squarely the A2 risk the brief ranks highest: a builder
+scripting `D=/tmp/…; rm -rf "$D"` is ordinary work, and it is blocked today.
+
+### F2 · `bash -cx` (any combined flag where `c` is not last) walks straight past
+
+**File:** `scripts/ops/guard-autonomy.py:586-591` (`_shell_c_argument`)
+
+`re.match(r"^-[a-zA-Z]*c$", tok)` requires `c` to be the **last** letter, so
+`-lc` and `-xc` match but `-cx` does not:
+
+```
+bash -cx "rm -rf /opt/content-forge"   -> None
+bash --login -c "…"                    -> fs.destructive
+sudo bash -c "…"                       -> fs.destructive
+```
+
+`bash -cx 'echo COMBINED-FLAGS-RAN'` runs fine (verified). This defeats the
+single most valuable CATCH in §2 of `02-classifier-decisions.md` with one
+transposed letter.
+
+**Fix:** accept any short-option cluster containing `c` and take the next token:
+`re.match(r"^-[a-zA-Z]*c[a-zA-Z]*$", tok)`. Add a `bash -cx` case to `MUST_BLOCK`.
+
+### F3 · The audit log's `source` column can never say "console"
+
+**Files:** `forge-control-web/app/desktop/AutonomySurface.tsx:273`, `forge-control-web/app/api.ts:1562-1578`, `db/migrations/0047_…sql:31-36`
+
+Neither the trip-resolve `fetch` nor `updateRule` sends an `x-forge-source`
+header, so `normalizeChangeSource` records **`api`** for every console click.
+The migration documents the column as "console | api | deploy"; in practice it
+will hold one value, and the log cannot distinguish Konrad toggling a rule in his
+browser from an agent's curl — which is the distinction the log exists to make.
+
+The routes' own header is right that a header cannot be trusted from an agent.
+The consequence is that this column is decorative rather than deceptive, but it
+should not be presented as attribution.
+
+**Fix (recommend, do not build):** either have the console send the header and
+document the field as *self-declared, unverified*, or attribute on something the
+caller cannot choose (remote address, or the presence of a browser session
+cookie) and keep the header as a hint. Ask Konrad which he wants before building.
+
+### F4 · A trip resolve that succeeds can be reported to the console as a failure
+
+**File:** `forge-control/src/routes/autonomy.ts:130-140`
+
+`deps.resolveTrip(id)` commits `resolved = true`, then `queueNotification` fires,
+then `recordRuleChange` **throws by design** on any database error. The handler
+has no try/catch, so the response is a 500 while the trip is already resolved and
+the Telegram line has already been sent. `AutonomySurface.tsx:276` turns that into
+`throw new Error("Failed to resolve trip")` and skips `invalidateQueries`, so the
+console keeps showing the trip as unresolved — DB and UI disagree, and a retry
+produces a second notification and a second audit row.
+
+This is not hypothetical at deploy time: `guardrail_rule_changes` **does not exist
+in the live database** right now (`select to_regclass('public.guardrail_rule_changes')`
+→ `null`). If the code is restarted before migration 0047 (0051, after B1) is
+applied, **every rule toggle and every trip resolve 500s while still taking
+effect**.
+
+**Fix:** two things. (a) The deploy task must apply the migration **before**
+restarting forge-control, and say so in `05-deploy.md`. (b) Either move
+`recordRuleChange` into the same transaction as the mutation, or catch its
+failure, log it loudly, and return 200 with an `audit: "failed"` field — a
+success reported as a failure is its own kind of drift.
+
+### F5 · Nine of the 24 unresolved trips are invisible to everything that reads them
+
+**File:** `scripts/ops/fleet-pulse.sh:127-129`, `forge-control/src/db/autonomy.ts:118-125`
+
+Measured live: **54 trips, 24 unresolved, 15 of those inside the newest-30 window**
+that `getAutonomy()` returns. The pulse's stale-trip finding reads
+`GET /api/autonomy`, so nine unresolved rows — including the oldest, which are
+exactly the ones a "nothing prunes or surfaces them" finding is about — are
+invisible to both the console and the new pulse section. The pulse comments the
+ceiling honestly ("a real ceiling, not a bug this section can fix"), so this is a
+scope statement rather than a concealment; but A7 asked for the log to become
+readable and it is 15/24 readable.
+
+Related, latent rather than live: the trips query is an **inner** join on
+`guardrail_rules`, so a trip whose rule is later deleted vanishes from the feed
+entirely. Zero such rows today (measured), but `spend.per_run_cap` was deleted on
+2026-08-25 and the same thing will happen to the next deleted rule. Migration
+0047 explicitly avoids an FK on `guardrail_rule_changes` for this reason; the
+trips feed did not get the same treatment. A `LEFT JOIN` with
+`coalesce(g.label, t.rule_id)` costs nothing.
+
+### F6 · check-secret-scan is red, and it is `main`'s
+
+```
+FAIL  forge-control/src/routes/pipeline.ts
+        line 12  DSN password  postgresql://postgres:***@
+1 FILE(S) FAILED — live-looking DB credential committed
+```
+
+`forge-control/src/routes/pipeline.ts` is **not in this diff**
+(`git diff main...HEAD --name-only | grep -c pipeline.ts` → 0) and the string is
+present at `main`. The redaction this branch added (`cd80b57`) works — the match
+prints as `postgresql://postgres:***@`, not the value — which was this project's
+share of the fixed order (redact → rotate → remove → wire). Rotation is Konrad's
+call; the check remains correctly un-wired from `gates-808.sh`.
+
+### F7 · Two small fidelity gaps in the corpus evidence
+
+**File:** `docs/plan/aios-guardrail-hardening/02-classifier-decisions.md:292-298`
+
+The quoted block contains two lines the named driver does not print —
+`NEWLY tripping under the hardened classifier: 0` and `no longer tripping: 8`.
+The first four lines match verbatim; those two do not appear in
+`rerun-corpus.py`'s output at all. Worse for a reproducer, the driver's own
+section headers print `len(entries)` rather than the filtered count, so it
+announces `NO LONGER TRIPS … (10)` above 8 rows and `NEWLY TRIPS … (2)` above
+**zero**. A reader reproducing §5 sees "2 newly trip" and a blank section.
+
+Both numbers in the prose are **right** — I counted the rows: 8 and 0. Fix the
+quoted block to be verbatim driver output, or state that the two summary lines
+are hand-derived.
+
+Second gap: the driver calls `classify(cmd, cwd)` **without** `strip_heredocs`,
+while the hook calls `strip_heredocs` first. The corpus numbers are therefore an
+upper bound on real trips (heredoc prose can trip in the re-run and not in
+production) — conservative, but worth one sentence in §5 so the next re-runner
+does not chase a discrepancy.
+
+### F8 · Two smaller things, recorded without ceremony
+
+* **`install-symlinks.sh` has no worktree refusal.** `REPO_ROOT` comes from the
+  script's own location (`scripts/ops/install-symlinks.sh:22`), and this diff
+  adds all three guard hooks plus `hooks.settings.json` to its `FILES` list. Run
+  from a worktree, it points `/opt/ai-os/scripts/guard-*.py` into
+  `/opt/ai-os/workspace/projects/<uuid>/…` — and `hooks.settings.json`'s own
+  header says why that is fatal: "a worktree is deleted when its project finishes
+  and the hook would then silently vanish from every turn on the box." One `case
+  "$REPO_ROOT" in /opt/ai-os/workspace/projects/*) refuse;; esac` closes it.
+* **`guard-protected-paths.py` writes no audit line.** Every block it makes is
+  invisible to `/var/log/forge-guard-autonomy.log` and therefore to the new
+  fleet-pulse section, which counts `blocked-local` from that file. Its sibling
+  `guard-autonomy.py` audits; this one only prints to stderr. Also, its
+  `PROTECTED_GLOBS` covers `/opt/forge-ai-os/scripts/ops/guard-*.py` only, so a
+  direct write to the live checkout's `hooks.settings.json` or `install-hooks.sh`
+  — the canonical registration and its installer — is allowed. (Writes through
+  the `/opt/ai-os/scripts/` symlink are blocked by the prefix rule.)
+* **An ACK whose reminder POST fails is silent to Konrad.** `notify_konrad`
+  (`guard-autonomy.py:891-899`) swallows every exception and does not check the
+  response status, and an ACK writes **no** trip row. The only remaining trace is
+  the local audit line — which the new fleet-pulse section does surface as a
+  `LOUD` finding, so this is mitigated rather than open. Worth one line in
+  `03-hygiene.md`.
+
+---
+
+## G. What must happen before a PASS
+
+1. **B1** renumber the migration to `0051` (not 0050 — taken on another lane) and
+   re-run `check-migration-numbers.ts` against the merge-tree.
+2. **B2** make gate 26 green from a clean checkout without weakening the `750`
+   assertion, or un-wire it; `gates-808.sh --strict` must exit 0.
+3. **B3** add the `rm -r`-without-`-f` and newline-separated cases to
+   `test-guard-autonomy.py` and show M2 and M3 red.
+4. **B4** stop `strip_heredocs` swallowing a command's remainder on a `<<` that
+   is quoted, arithmetic, or unterminated.
+
+F1 and F2 are cheap and belong in the same pass — F2 in particular is a
+one-character regex fix to the headline CATCH.
+
+---
+
+*Reviewed at `d907389b1391601eb73359d7967e612ffce4fa53`. Every command in this
+document was executed; probe scripts are in `/tmp/r4-*.py`, `/tmp/r4-*.sh` and
+`/tmp/r4-gates.txt`, none of them committed.*
