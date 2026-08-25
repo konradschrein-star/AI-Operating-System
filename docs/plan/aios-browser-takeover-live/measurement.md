@@ -506,6 +506,14 @@ and forge-control's own log line for that socket:
 | `/opt/ai-os/uploads/683d2fd6cccc/20260825T020631Z-takeover-e2e-canvas.png` | 166389 | **the goal**: manual pane, header `r5proof · ticket expires 4:08:19 AM`, noVNC canvas showing a real Chrome at Google's sign-in wall |
 | `/opt/ai-os/uploads/683d2fd6cccc/20260825T015046Z-r5-proof-google-wall.png` | 43166 | the driver's own exit-4 login-wall shot that seeded the run |
 
+The harness was then re-run after `WS_PREFIX` was refactored to import
+`TAKEOVER_UPGRADE_PREFIX` (see R5.10), and reproduced ALL PASS with a second,
+independent set of shots — `…20260825T052149Z-takeover-e2e-desktop.png`,
+`…052206Z-…-live-surface.png`, `…052209Z-…-indicator-open.png`,
+`…052222Z-…-canvas.png` — and a second accepted socket
+(`jti=adc8c53a3e31d25113cafebd9fb53066`). Both sets are on disk; neither
+overwrote the other.
+
 The fix itself: the mint moved out of `TakeoverClient.tsx` into
 `browser-shots.ts` as `mintTakeoverTicket()` — one mint, two callers, because
 having two copies is why they drifted. `BrowserStreamViewer` mints on entering
@@ -633,3 +641,44 @@ Escalated to the manager chat instead.
   read or modified.
 - `ss -ltn` shows nothing bound to `0.0.0.0` in 5990-6049 or 6900-6959.
 - Every port the harness used was ephemeral and is closed.
+
+## R5.10 The new gate caught the new file — and the fix was not to widen it
+
+Wiring `check-browser-takeover-ticket.ts` into `gates-808.sh` had an immediate
+effect: gate 20 went RED on the very next run, on
+`scripts/checks/check-takeover-e2e-browser.ts`. The harness's front proxy needs
+to know which paths carry an upgrade, so it had spelled the public prefix out —
+and §6.1's allowlist treats a new file naming that literal as a new public route
+until proven otherwise.
+
+The tempting fix is an eighth allowlist entry. That is the fix that makes the
+gate mean less, and `45983e4` had already written down the principle: **an
+exemption should buy something.** A test harness that can IMPORT the answer is
+not buying anything.
+
+So `browser-takeover.ts` now exports `TAKEOVER_UPGRADE_PREFIX`, the harness
+imports it for both its routing decision and its assertion on the iframe's
+`path=` query param, and the allowlist is unchanged at seven files. The prefix
+now also has exactly one definition, so a change to it moves the harness's hop
+with it instead of silently routing the socket into the Next handler's 502.
+
+Gate 20 back to `ALL PASS`, exit 0. `browser-takeover.test.ts` still 53/53, and
+the harness re-run reproduced ALL PASS end to end.
+
+One harness bug was fixed in the same pass: the front proxy piped both halves of
+an upgraded socket without an `error` listener, so when the browser closed, the
+in-flight write on the other half raised `EPIPE`, Node promoted it to an
+uncaught exception, and the process died **after every check had already
+passed** — a green run reported as a crash. Both halves now destroy their peer
+on error. A dead peer is the normal end of a takeover, not a failure.
+
+## R5.11 Final gate run
+
+`bash scripts/checks/gates-808.sh --strict`, 28 gates, `DATABASE_URL` set:
+
+- **RED: 1** — gate 5, `no-raw-colours.cjs`, inherited from `main` (§R5.8).
+- Everything else 0, including gate 3 (`NODE_ENV=production pnpm build`),
+  gate 20 (this project's own gate, newly wired in), gate 23 (`pnpm test`) and
+  gate 28 (reproduce-cleanliness — running the checks leaves the tree unchanged).
+- Gates 26 and 27 SKIPPED by design (browser harness not requested via
+  `--browser`), labelled SKIPPED rather than silently omitted.
