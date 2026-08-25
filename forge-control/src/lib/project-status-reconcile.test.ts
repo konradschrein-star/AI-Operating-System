@@ -271,6 +271,7 @@ describe("project status reconciliation — source invariants and routing", () =
  * ========================================================================== */
 describe("queue truth — cancelled is terminal, and terminality is written once", () => {
   const PROJECTS_DB_SRC = readSource("../db/projects.ts");
+  const TASK_GRAPH_SRC = readSource("./task-graph.ts");
   const MIGRATION_SRC = readSource("../../../db/migrations/0046_task_status_cancelled.sql");
 
   test("0046 widens the CHECK constraint to admit 'cancelled'", () => {
@@ -289,10 +290,58 @@ describe("queue truth — cancelled is terminal, and terminality is written once
   });
 
   test("TERMINAL_TASK_STATUSES is the single definition and holds both statuses", () => {
+    // MOVED 2026-08-25, and this test moved with it. The constant was defined in
+    // db/projects.ts while graphReady() — the pure rule that statement is
+    // declared to mirror — still compared against the bare string "done", so the
+    // promoter and its oracle disagreed about a cancelled dependency. Ownership
+    // inverted to the pure leaf because the edge can only run that way:
+    // lib/task-graph.ts may not value-import db/* (NF3), and db/projects.ts
+    // already value-imports it over a module-scope `new Pool`.
+    //
+    // The property under test is UNCHANGED — exactly one definition, holding
+    // both statuses — so it is asserted in three parts: the definition is in
+    // task-graph.ts, db/projects.ts re-exports rather than restates it, and
+    // db/projects.ts carries NO second definition of its own.
+    assert.match(
+      TASK_GRAPH_SRC,
+      /export const TERMINAL_TASK_STATUSES: readonly TaskStatus\[\] = \["done", "cancelled"\]/,
+      "TERMINAL_TASK_STATUSES must be DEFINED in lib/task-graph.ts with exactly done + cancelled",
+    );
     assert.match(
       PROJECTS_DB_SRC,
-      /export const TERMINAL_TASK_STATUSES: readonly TaskStatus\[\] = \["done", "cancelled"\]/,
-      "TERMINAL_TASK_STATUSES must be exported with exactly done + cancelled",
+      /export \{ TERMINAL_TASK_STATUSES \} from "\.\.\/lib\/task-graph\.ts";/,
+      "db/projects.ts must RE-EXPORT TERMINAL_TASK_STATUSES from lib/task-graph.ts so its importers keep working",
+    );
+    const restated = PROJECTS_DB_SRC.match(/export const TERMINAL_TASK_STATUSES\b/g) ?? [];
+    assert.deepEqual(
+      restated,
+      [],
+      "db/projects.ts must not define TERMINAL_TASK_STATUSES a second time — one definition, or the pair drifts again",
+    );
+  });
+
+  test("graphReady() reads the constant rather than the bare string 'done'", () => {
+    // The defect this move exists to close. Both short-circuits inside
+    // graphReady() — R11's dependency loop and R69's straddle term — must test
+    // membership of the terminal set; either one left as `"done"` puts the
+    // oracle back out of step with promoteReadyTasks()'s stillOpen().
+    const body = TASK_GRAPH_SRC.slice(
+      TASK_GRAPH_SRC.indexOf("export function graphReady"),
+      TASK_GRAPH_SRC.indexOf("export function readyRule"),
+    );
+    assert.ok(body.length > 0, "graphReady() body not found in lib/task-graph.ts");
+    const stale = body
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//") && /["']done["']/.test(line));
+    assert.deepEqual(
+      stale,
+      [],
+      `graphReady() still compares against the literal 'done': ${stale.join(" | ")}`,
+    );
+    assert.equal(
+      (body.match(/TERMINAL_TASK_STATUSES\.includes\(/g) ?? []).length,
+      2,
+      "graphReady() must read TERMINAL_TASK_STATUSES at BOTH sites — R11's dep loop and R69's straddle term",
     );
   });
 
