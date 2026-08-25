@@ -917,20 +917,84 @@ export interface RunDetail extends RunSummary {
   total?: number;
 }
 
+export interface ChatListResponse {
+  count: number;
+  runs: RunSummary[];
+  counts: Record<RunStatus, number>;
+  hasMore: boolean;
+}
+
+interface ChatListCacheEntry {
+  etag: string;
+  data: ChatListResponse;
+}
+
+const chatListCache = new Map<string, ChatListCacheEntry>();
+
+export function clearChatListCache(path?: string): void {
+  if (path) {
+    chatListCache.delete(path);
+  } else {
+    chatListCache.clear();
+  }
+}
+
+function isValidChatListResponse(data: unknown): data is ChatListResponse {
+  if (!data || typeof data !== "object") return false;
+  const d = data as Partial<ChatListResponse>;
+  return (
+    typeof d.count === "number" &&
+    Array.isArray(d.runs) &&
+    typeof d.counts === "object" &&
+    d.counts !== null &&
+    typeof d.hasMore === "boolean"
+  );
+}
+
 export const fetchChatList = async (
   opts: { limit?: number; offset?: number } = {},
-) => {
+): Promise<ChatListResponse> => {
   const params = new URLSearchParams();
   if (opts.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts.offset !== undefined) params.set("offset", String(opts.offset));
   const qs = params.toString();
-  const r = await getJson<{
-    count: number;
-    runs: RunSummary[];
-    counts: Record<RunStatus, number>;
-    hasMore: boolean;
-  }>(`/chat${qs ? `?${qs}` : ""}`);
-  return r;
+  const path = `/chat${qs ? `?${qs}` : ""}`;
+  const url = `${ROOT}${path}`;
+
+  const headers: Record<string, string> = { accept: "application/json" };
+  const cached = chatListCache.get(path);
+  if (cached?.etag) {
+    headers["if-none-match"] = cached.etag;
+  }
+
+  const res = await fetch(url, { headers });
+
+  if (res.status === 304) {
+    if (cached) {
+      return cached.data;
+    }
+    throw new Error(`304 Not Modified received on ${path} without cached data`);
+  }
+
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText} on ${path}`);
+  }
+
+  const data = (await res.json()) as unknown;
+  if (!isValidChatListResponse(data)) {
+    throw new Error(
+      `GET ${path}: expected {count: number, runs: RunSummary[], counts: Record<string, number>, hasMore: boolean}, got invalid payload`,
+    );
+  }
+
+  const etag = res.headers.get("etag");
+  if (etag) {
+    chatListCache.set(path, { etag, data });
+  } else {
+    chatListCache.delete(path);
+  }
+
+  return data;
 };
 
 /** Search past chats — title + prompt + every message in the thread.

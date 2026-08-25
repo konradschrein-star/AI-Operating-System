@@ -43,6 +43,7 @@ import {
 } from "../db/runs.ts";
 import { sanitizeEffort } from "../lib/cc-runner.ts";
 import { clearSessionUsageSnapshot } from "../lib/gemini-runner.ts";
+import { computeChatEtag, matchesIfNoneMatch } from "../lib/chat-etag.ts";
 /* phase 300g (U2/U3) — chat↔project linkage. All SQL lives in chat-linkage.ts;
  * this file only calls it. See that module for the scan bounds and the
  * backfill's idempotence guarantee. */
@@ -126,7 +127,18 @@ r.get("/", async (c) => {
     const link = links.get(run.id);
     return link ? { ...run, ...link } : run;
   });
-  return c.json({ count: shaped.length, runs: shaped, counts, hasMore });
+  const body = { count: shaped.length, runs: shaped, counts, hasMore };
+  const tag = computeChatEtag(body);
+  const ifNoneMatch = c.req.header("if-none-match");
+  if (matchesIfNoneMatch(ifNoneMatch, tag)) {
+    return c.body(null, 304, {
+      ETag: tag,
+      "Cache-Control": "no-cache",
+    });
+  }
+  c.header("ETag", tag);
+  c.header("Cache-Control", "no-cache");
+  return c.json(body);
 });
 
 /* ─── phase 300g (U2): linkage resolution for ONE chat ──────────────────────

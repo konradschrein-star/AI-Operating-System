@@ -1,0 +1,54 @@
+{
+  "measuredAt": "2026-08-25T05:17:47.819Z",
+  "environment": "Real headless Chrome / Playwright. Part A: direct fetch() against the in-process worktree probe. Part B: real forge-control-web /desktop app (next dev) driven end-to-end, network captured via page.on('response').",
+  "verdict": "PASS",
+  "failures": 0,
+  "partA": {
+    "coldStatus": 200,
+    "coldBytes": 16450,
+    "coldETag": "\"c3e0b42e49bd58ac0564e34720c2a1a42d929c2d\"",
+    "strong304Status": 304,
+    "strong304Bytes": 0,
+    "weak304Status": 304,
+    "weak304Bytes": 0,
+    "mismatchStatus": 200,
+    "mismatchBytes": 16450
+  },
+  "partB": {
+    "landedUrl": "http://127.0.0.1:34859/desktop",
+    "initialFetch": {
+      "url": "http://127.0.0.1:34859/api/proxy/chat?limit=30",
+      "status": 200,
+      "etag": "\"c3e0b42e49bd58ac0564e34720c2a1a42d929c2d\"",
+      "cacheControl": "no-cache",
+      "decodedBytes": 16479,
+      "runCount": 23,
+      "tSinceStartMs": 6391
+    },
+    "steadyPollsCount": 2,
+    "steadyPolls": [
+      {
+        "url": "http://127.0.0.1:34859/api/proxy/chat?limit=30",
+        "status": 304,
+        "etag": "\"c3e0b42e49bd58ac0564e34720c2a1a42d929c2d\"",
+        "cacheControl": "no-cache",
+        "decodedBytes": 0,
+        "runCount": null,
+        "tSinceStartMs": 16653
+      },
+      {
+        "url": "http://127.0.0.1:34859/api/proxy/chat?limit=30",
+        "status": 304,
+        "etag": "\"c3e0b42e49bd58ac0564e34720c2a1a42d929c2d\"",
+        "cacheControl": "no-cache",
+        "decodedBytes": 0,
+        "runCount": null,
+        "tSinceStartMs": 26895
+      }
+    ],
+    "steadyBytesTotal": 0,
+    "observedRestRateBpm": 0,
+    "screenshotPath": "/opt/ai-os/uploads/fcf735533131/20260825T051747Z-chat-list-etag.png",
+    "screenshotUrl": "/api/uploads/fcf735533131/20260825T051747Z-chat-list-etag.png"
+  }
+}
