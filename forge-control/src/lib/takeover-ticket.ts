@@ -109,9 +109,23 @@ function signPayload(payloadB64: string, secret: string): string {
   return createHmac("sha256", secret).update(payloadB64).digest("base64url");
 }
 
-/** The inclusive loopback port range a takeover socket may ever target. */
-const MIN_TICKET_PORT = NOVNC_PORT_BASE;
-const MAX_TICKET_PORT = NOVNC_PORT_BASE + DISPLAY_SPAN - 1;
+/**
+ * The inclusive loopback port range a takeover socket may ever target.
+ *
+ * Read inside functions, NEVER captured at module scope. browser-takeover.ts
+ * now imports `verifyTakeoverTicket` from this file while this file imports its
+ * port constants back, so the two modules form an ES module cycle. A top-level
+ * `const MIN_TICKET_PORT = NOVNC_PORT_BASE` throws `Cannot access
+ * 'NOVNC_PORT_BASE' before initialization` whenever browser-takeover.ts is the
+ * first of the pair to be evaluated — which is exactly what index.ts does, so
+ * it crashed forge-control at boot. Measured, not theorised.
+ */
+function minTicketPort(): number {
+  return NOVNC_PORT_BASE;
+}
+function maxTicketPort(): number {
+  return NOVNC_PORT_BASE + DISPLAY_SPAN - 1;
+}
 
 /**
  * Mints a signed, expiring ticket for one takeover socket.
@@ -132,9 +146,9 @@ export function mintTakeoverTicket(options: MintTakeoverTicketOptions): string {
       `mintTakeoverTicket: profile ${JSON.stringify(profile)} does not match ${PROFILE_RE}`,
     );
   }
-  if (!Number.isInteger(port) || port < MIN_TICKET_PORT || port > MAX_TICKET_PORT) {
+  if (!Number.isInteger(port) || port < minTicketPort() || port > maxTicketPort()) {
     throw new Error(
-      `mintTakeoverTicket: port ${port} is outside the allowed loopback range ${MIN_TICKET_PORT}-${MAX_TICKET_PORT}`,
+      `mintTakeoverTicket: port ${port} is outside the allowed loopback range ${minTicketPort()}-${maxTicketPort()}`,
     );
   }
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
@@ -214,7 +228,12 @@ export function verifyTakeoverTicket(ticket: unknown): VerifyTakeoverTicketResul
     return { error: "ticket_bad_profile" };
   }
 
-  if (typeof port !== "number" || !Number.isInteger(port) || port < MIN_TICKET_PORT || port > MAX_TICKET_PORT) {
+  if (
+    typeof port !== "number" ||
+    !Number.isInteger(port) ||
+    port < minTicketPort() ||
+    port > maxTicketPort()
+  ) {
     return { error: "ticket_port_out_of_range" };
   }
 
