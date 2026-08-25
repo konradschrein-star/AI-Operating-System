@@ -30,12 +30,14 @@
  *   GET    /api/daily/glucose?view=day|week&day=…   blood glucose for the grid overlay
  *
  *   GET    /api/daily/stats?days=90
+ *   GET    /api/daily/stats/calendar?weeks=2   hours booked vs hours worked, per week
  *   GET    /api/daily/habits
  *   POST   /api/daily/habits
  *   PATCH  /api/daily/habits/:id
  *
- * ROUTE ORDER IS LOAD-BEARING. The static paths (/tasks, /goals, /calendar, /habits, /stats)
- * are registered BEFORE the /:day/* family so that static names are never matched as day params.
+ * ROUTE ORDER IS LOAD-BEARING. The static paths (/tasks, /goals, /calendar, /habits, /stats,
+ * /stats/calendar) are registered BEFORE the /:day/* family so that static names are never
+ * matched as day params.
  */
 
 import { Hono } from "hono";
@@ -87,6 +89,11 @@ import {
   dayWindow,
   weekWindow,
 } from "../lib/calendar.ts";
+import {
+  calendarStats,
+  CALENDAR_STATS_DEFAULT_WEEKS,
+  CALENDAR_STATS_MAX_WEEKS,
+} from "../lib/calendar-stats.ts";
 import { syncCalendarWindow, berlinDayOfInstant } from "../lib/calendar-sync.ts";
 import { syncGoogleTasks } from "../lib/gtasks-sync.ts";
 import { parseTodo, parseAppointment } from "../lib/quick-parse.ts";
@@ -672,7 +679,23 @@ function validateTaskFields(body: Body): string | null {
       return "start_time must be a valid ISO timestamp or null";
     }
   }
+  if (has(body, "goal_id") && body.goal_id !== null) {
+    if (typeof body.goal_id !== "string" || !UUID_RE.test(body.goal_id)) {
+      return `goal_id must be a life goal uuid or null, got ${JSON.stringify(body.goal_id)}`;
+    }
+  }
   return null;
+}
+
+/**
+ * The goal named by `goal_id` must exist — a 400 now beats a foreign-key
+ * violation surfacing as a 500 later, and beats silently dropping the link.
+ * Null is legal and means "unlink"; an absent key changes nothing.
+ */
+async function goalLinkError(body: Body): Promise<string | null> {
+  if (!has(body, "goal_id") || body.goal_id === null) return null;
+  const goal = await getLifeGoal(body.goal_id as string);
+  return goal ? null : `life goal ${body.goal_id as string} not found`;
 }
 
 r.post("/tasks", async (c) => {
@@ -680,6 +703,8 @@ r.post("/tasks", async (c) => {
   if (!has(body, "title")) return c.json({ error: "title is required" }, 400);
   const bad = validateTaskFields(body);
   if (bad) return c.json({ error: bad }, 400);
+  const badGoal = await goalLinkError(body);
+  if (badGoal) return c.json({ error: badGoal }, 400);
   const task = await createTask({
     title: (body.title as string).trim(),
     area: (body.area as string | null | undefined) ?? null,
@@ -692,6 +717,7 @@ r.post("/tasks", async (c) => {
     start_time: (body.start_time as string | null | undefined) ?? null,
     duration_min: (body.duration_min as number | null | undefined) ?? null,
     gcal_event_id: (body.gcal_event_id as string | null | undefined) ?? null,
+    goal_id: (body.goal_id as string | null | undefined) ?? null,
   });
   return c.json({ ok: true, task: decorate(task) }, 201);
 });
@@ -702,6 +728,8 @@ r.patch("/tasks/:id", async (c) => {
   const body = await readBody(c);
   const bad = validateTaskFields(body);
   if (bad) return c.json({ error: bad }, 400);
+  const badGoal = await goalLinkError(body);
+  if (badGoal) return c.json({ error: badGoal }, 400);
 
   const patch: Parameters<typeof updateTask>[1] = {};
   if (has(body, "title")) patch.title = (body.title as string).trim();
@@ -723,6 +751,7 @@ r.patch("/tasks/:id", async (c) => {
   if (has(body, "start_time")) patch.start_time = body.start_time as string | null;
   if (has(body, "duration_min")) patch.duration_min = body.duration_min as number | null;
   if (has(body, "gcal_event_id")) patch.gcal_event_id = body.gcal_event_id as string | null;
+  if (has(body, "goal_id")) patch.goal_id = body.goal_id as string | null;
 
   const task = await updateTask(id, patch);
   if (!task) return c.json({ error: `task ${id} not found` }, 404);
@@ -860,6 +889,36 @@ r.get("/stats", async (c) => {
     days = n;
   }
   return c.json(await dailyStats(days, berlinDay()));
+});
+
+/**
+ * GET /api/daily/stats/calendar?weeks=2 — hours booked against hours worked.
+ *
+ * Registered here, in the static block, for the reason in the header note: it
+ * must be matched before /:day/*, or "stats" becomes a day parameter.
+ *
+ * Its own endpoint rather than a field on /stats deliberately. This one talks to
+ * Google, and folding it into the main stats call would let one 502 from a
+ * Python subprocess blank the score trend, the heatmap and the habit table with
+ * it. A per-week `error` field carries the failure instead.
+ */
+r.get("/stats/calendar", async (c) => {
+  const raw = c.req.query("weeks");
+  let weeks = CALENDAR_STATS_DEFAULT_WEEKS;
+  if (raw !== undefined) {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > CALENDAR_STATS_MAX_WEEKS) {
+      return c.json(
+        {
+          error: `weeks must be an integer between 1 and ${CALENDAR_STATS_MAX_WEEKS}, got "${raw}"`,
+        },
+        400,
+      );
+    }
+    weeks = n;
+  }
+  const stats = await calendarStats({ weeks, today: berlinDay() });
+  return c.json(stats);
 });
 
 // ===========================================================================
