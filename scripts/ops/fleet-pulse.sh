@@ -27,6 +27,15 @@
 #      the stamp is the only thing that tells them apart. If the stamp is stale
 #      the watchdog's cron entry has gone missing again — which is the exact
 #      regression this script was written after.
+#   3. guardrails — the autonomy hook (scripts/ops/guard-autonomy.py) and its
+#      control plane both write append-only records and nothing ever read
+#      them: unresolved guardrail_trips rows older than 24h (via the console's
+#      own GET /api/autonomy), acknowledged/blocked-local lines in the hook's
+#      audit log (an ACK is loud on purpose, but only until the Telegram line
+#      scrolls away), a run of fail-opens that would mean the control plane is
+#      unreachable, and whether install-hooks.sh still thinks every enabled
+#      account carries the hook entries. A daily blocked/fail-open/acknowledged
+#      count is always logged, alert or not, so the log carries a baseline.
 #
 # DEDUP. Alert when the normalised finding set CHANGES, or when it is still
 # non-empty 6h after the last alert. Ages ("45h since last change") are
@@ -107,6 +116,130 @@ else
   findings="${findings:+$findings$'\n'}WATCHDOG SILENT :: no $WATCHDOG_STAMP — fleet-watchdog.sh has not run since liveness stamping was added"
 fi
 
+# ── 3. guardrails ────────────────────────────────────────────────────────────
+# Read-only against everything: GET /api/autonomy (the console's own feed,
+# already this pulse's API base) and the hook's own append-only audit log.
+# This section never resolves a trip and never edits a rule — it only makes
+# what is already written down visible.
+GUARD_AUDIT_LOG="${FORGE_GUARD_AUDIT_LOG:-/var/log/forge-guard-autonomy.log}"
+guard_findings=""
+
+# 3a. unresolved trips older than 24h. GET /api/autonomy caps at the newest 30
+# rows (db/autonomy.ts LIMIT 30) — a real ceiling, not a bug this section can
+# fix; it is read-only by contract with the console.
+trips_json="$(curl -s --max-time 10 "$API/autonomy" 2>/dev/null)"
+trip_finding="$(printf '%s' "$trips_json" | python3 -c '
+import json, sys, datetime
+from collections import Counter
+now = datetime.datetime.fromtimestamp(int(sys.argv[1]), tz=datetime.timezone.utc)
+cutoff = now - datetime.timedelta(hours=24)
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+trips = data.get("trips") if isinstance(data, dict) else None
+if not isinstance(trips, list):
+    sys.exit(0)
+stale = []
+for t in trips:
+    if not isinstance(t, dict) or t.get("resolved"):
+        continue
+    ts = t.get("ts")
+    if not ts:
+        continue
+    try:
+        tt = datetime.datetime.fromisoformat(str(ts).replace(" ", "T", 1))
+    except Exception:
+        continue
+    if tt.tzinfo is None:
+        tt = tt.replace(tzinfo=datetime.timezone.utc)
+    if tt < cutoff:
+        stale.append(t.get("rule_id") or "?")
+if stale:
+    c = Counter(stale)
+    parts = ", ".join(f"{k} ×{v}" for k, v in c.most_common())
+    print(f"guardrails: {len(stale)} unresolved trips >24h ({parts})")
+' "$now" 2>/dev/null)"
+[ -n "$trip_finding" ] && guard_findings="${guard_findings:+$guard_findings$'\n'}$trip_finding"
+
+# 3b/3c/daily-baseline: the hook's own audit log. One pass produces the
+# always-logged daily count and the two alertable conditions, so a malformed
+# log is parsed once instead of three times.
+audit_out="$(python3 -c '
+import json, sys, datetime
+path, now_s = sys.argv[1], sys.argv[2]
+now = datetime.datetime.fromtimestamp(int(now_s), tz=datetime.timezone.utc)
+cutoff = now - datetime.timedelta(hours=24)
+counts = {"blocked": 0, "fail-open": 0, "acknowledged": 0}
+loud = []
+try:
+    fh = open(path)
+except OSError:
+    fh = None
+if fh is not None:
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            ts = rec.get("ts")
+            if not ts:
+                continue
+            try:
+                t = datetime.datetime.fromisoformat(str(ts).replace(" ", "T", 1))
+            except Exception:
+                continue
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=datetime.timezone.utc)
+            if t < cutoff:
+                continue
+            kind = rec.get("kind")
+            if kind in counts:
+                counts[kind] += 1
+            if kind in ("acknowledged", "blocked-local"):
+                loud.append("{} {} run={}".format(kind, rec.get("rule_id"), rec.get("run_id")))
+print("DAILY blocked={} fail-open={} acknowledged={}".format(
+    counts["blocked"], counts["fail-open"], counts["acknowledged"]))
+for l in loud:
+    print("LOUD " + l)
+' "$GUARD_AUDIT_LOG" "$now")"
+
+daily_line="$(printf '%s\n' "$audit_out" | sed -n 's/^DAILY //p')"
+[ -n "$daily_line" ] || daily_line="blocked=0 fail-open=0 acknowledged=0"
+log "guardrails: 24h counts — $daily_line (audit log: $GUARD_AUDIT_LOG)"
+
+loud_lines="$(printf '%s\n' "$audit_out" | sed -n 's/^LOUD //p')"
+if [ -n "$loud_lines" ]; then
+  loud_count="$(printf '%s\n' "$loud_lines" | grep -c .)"
+  loud_summary="$(printf '%s\n' "$loud_lines" | head -3 | paste -sd';' - | tr ';' ',')"
+  guard_findings="${guard_findings:+$guard_findings$'\n'}guardrails: $loud_count ack/local-block line(s) in 24h ($loud_summary)"
+fi
+
+fail_open_count="$(printf '%s\n' "$daily_line" | grep -oE 'fail-open=[0-9]+' | cut -d= -f2)"
+[ -n "$fail_open_count" ] || fail_open_count=0
+if [ "$fail_open_count" -ge 3 ]; then
+  guard_findings="${guard_findings:+$guard_findings$'\n'}guardrails: $fail_open_count fail-open in 24h (control plane unreachable from the hook)"
+fi
+
+# 3d. every enabled account still carries the hook entries. Read-only: --check
+# never writes, per install-hooks.sh's own contract.
+install_check_out="$("$REPO_SCRIPTS/install-hooks.sh" --check 2>&1)"
+install_check_rc=$?
+if [ "$install_check_rc" -ne 0 ]; then
+  install_summary="$(printf '%s' "$install_check_out" | tr '\n' ' ' | cut -c1-220)"
+  guard_findings="${guard_findings:+$guard_findings$'\n'}guardrails: install-hooks.sh --check failed — $install_summary"
+fi
+
+# Guardrail findings go FIRST, not appended: the alert body below previews
+# only the first 4 lines of $findings (the 500-char reminder cap), and a busy
+# stall report would otherwise push a live ACK or fail-open storm out of the
+# Telegram preview entirely — the opposite of what this section exists for.
+[ -n "$guard_findings" ] && findings="$guard_findings${findings:+$'\n'$findings}"
+
 log "pulse: stalled-projects rc=$stall_rc, findings=$(printf '%s' "$findings" | grep -c . || true)"
 printf '%s\n' "$report" >>"$LOG"
 
@@ -150,7 +283,7 @@ count="$(printf '%s\n' "$findings" | grep -c .)"
 # 500 chars is the reminders API's hard cap; over it the POST 400s and the
 # alarm is silently lost, which would reproduce the bug this script fixes.
 body="$(printf '%s\n' "$findings" | head -4 | cut -c1-110)"
-text="$(printf '🩺 Fleet pulse: %s stall finding(s).\n%s\n\nFull report: /opt/ai-os/scripts/stalled-projects.sh' "$count" "$body" | cut -c1-490)"
+text="$(printf '🩺 Fleet pulse: %s finding(s).\n%s\n\nStalls: /opt/ai-os/scripts/stalled-projects.sh · Guardrails: %s' "$count" "$body" "$LOG" | cut -c1-490)"
 
 if [ "$DRY_RUN" = 1 ]; then
   echo "--- would POST (${reason}) ---"

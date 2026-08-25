@@ -1,0 +1,20 @@
+# forge-guard-autonomy — logrotate for the PreToolUse(Bash) guard's own audit
+# log (/var/log/forge-guard-autonomy.log, written by scripts/ops/guard-autonomy.py
+# audit()). Never installed by a build task: the deploy task copies this file
+# to /etc/logrotate.d/forge-guard-autonomy.
+#
+# copytruncate, not create+reopen: guard-autonomy.py opens the log in append
+# mode PER CALL (`with open(AUDIT_LOG, "a") as f: ...`) rather than holding a
+# long-lived file handle, so there is no daemon to HUP or signal after a
+# rename — a plain rotate would leave every subsequent append going to the
+# renamed (about to be compressed) file instead of the new one. copytruncate
+# avoids that: the log is copied out, then truncated in place, so the same
+# inode stays open for the next append.
+/var/log/forge-guard-autonomy.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
