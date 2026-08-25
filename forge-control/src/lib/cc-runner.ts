@@ -29,7 +29,6 @@
 import { spawn } from "node:child_process";
 
 import { isGeminiModel, runGemini } from "./gemini-runner.ts";
-import { layout } from "./vault-layout.ts";
 import { createInterface } from "node:readline";
 
 const CC_BIN = process.env.CC_BIN ?? "claude";
@@ -150,31 +149,6 @@ export function uploadsRunId(runId: string): string {
   return hex.slice(0, 12);
 }
 
-/** The vault bullet of the system prompt, DERIVED from lib/vault-layout.ts
- *  rather than written out twice (PLAN.md §3.5). Every run of this fleet reads
- *  this sentence and then writes where it says, so a prompt that names `Daily/`
- *  while the resolvers write `Forge/Daily/` does not produce an error — it
- *  produces agents hunting for a folder that moved, and hand-written notes in
- *  the wrong root.
- *
- *  Under `legacy` the string is byte-identical to the one that shipped before
- *  the flag existed: the resolvers return `Daily` and `Inbox`, and the
- *  two-roots sentence is empty. Under `split` it names BOTH roots and which
- *  one is off limits, because "write only under Forge/" is useless to an agent
- *  that was never told Konrad's side exists. */
-function vaultParagraph(): string {
-  const active = layout();
-  const roots =
-    active.name === "split"
-      ? ` The vault is SPLIT into two roots: ${active.roots.human} is Konrad's own writing and is READ-ONLY for you — never create or edit a note under it; ${active.roots.agent} is the fleet's, and every note you write goes there.`
-      : "";
-  return (
-    `- Obsidian vault (Konrad's second brain): ${VAULT_DIR} — read AND write markdown. ` +
-    `Daily notes: ${active.dailyDir()}/YYYY-MM-DD.md (sections: ## Tasks, ## Notes, ## Journal). ` +
-    `Quick captures: ${active.inboxDir()}/.${roots} Never delete or truncate notes; append or create.\n`
-  );
-}
-
 /** v2.5: the system prompt is built per-run instead of a single static
  *  const — most of it is unconditional, but the vault/knowledge block only
  *  applies when this run actually has vault access (--add-dir + Read/Grep
@@ -226,7 +200,7 @@ export function buildSystemPrompt(vaultAccess: boolean): string {
   return `You are the executor of Konrad's Personal AI OS (forge-control), running headless on his Hetzner VPS. You are not a chatbot — you are an operator with real tools. Do the work; don't describe hypothetical work.
 
 Environment you control:
-${vaultAccess ? vaultParagraph() : ""}- Content Forge (video automation monorepo): /opt/content-forge — PostgreSQL 'content_forge' (psql -U postgres), pm2-managed workers, Redis/BullMQ queues.
+${vaultAccess ? `- Obsidian vault (Konrad's second brain): ${VAULT_DIR} — read AND write markdown. Daily notes: Daily/YYYY-MM-DD.md (sections: ## Tasks, ## Notes, ## Journal). Quick captures: Inbox/. Never delete or truncate notes; append or create.\n` : ""}- Content Forge (video automation monorepo): /opt/content-forge — PostgreSQL 'content_forge' (psql -U postgres), pm2-managed workers, Redis/BullMQ queues.
 - VPS2 (167.233.145.218, Hetzner, hostname ubuntu-16gb-nbg1-3-SK): second server Konrad is migrating projects onto — reach it via \`ssh -i /root/.ssh/vps2_mgmt root@167.233.145.218\`. Dedicated key, added 2026-08-02; not the content-forge-key or any VPS1 identity.
 - forge-control API: http://127.0.0.1:7700/api/* (today, inbox, memory search, reminders, vault, spend, pipeline, projects — POST /api/projects to kick off a coding project, seeds an architect task automatically; optional "architect_tier": "fast"|"standard"|"flagship" picks its model). When the project comes out of a chat you are having with Konrad, pass your own run id — the \`$FORGE_RUN_UUID\` environment variable, exported into every run — as "origin_chat_id" in the POST body, so the project's workers can report findings back into that chat.
 - Reminders: POST http://127.0.0.1:7700/api/reminders {"text","when"} — when accepts "in 2h", "tomorrow 9:00", "daily 08:30". Max 500 chars; longer text is rejected with 400, split it into several reminders.

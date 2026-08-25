@@ -23,7 +23,6 @@ import {
   VAULT_LAYOUT_NAMES,
   type VaultLayoutName,
 } from "./vault-layout.ts";
-import { buildSystemPrompt } from "./cc-runner.ts";
 
 /** The module reads the env on every call, so a test sets it and puts it back.
  *  `delete` (not `= undefined`) — an env var set to the string "undefined" is
@@ -288,56 +287,9 @@ describe("thoughtsRoots() — the shape B3's lib/thoughts.ts exposes", () => {
   });
 });
 
-describe("cc-runner's vault paragraph is DERIVED from these resolvers", () => {
-  /** The one bullet under test, isolated so an assertion cannot accidentally
-   *  match a different line of an 8 kB prompt. */
-  function vaultBullet(): string {
-    const line = buildSystemPrompt(true)
-      .split("\n")
-      .find((l) => l.startsWith("- Obsidian vault"));
-    assert.ok(line, "buildSystemPrompt(true) no longer carries a vault bullet at all");
-    return line;
-  }
-
-  test("legacy: byte-identical to the paragraph that shipped before the flag", () => {
-    withEnv(
-      { VAULT_LAYOUT: undefined, VAULT_DAILY_DIR: undefined, VAULT_INBOX_DIR: undefined },
-      () => {
-        assert.equal(
-          vaultBullet(),
-          "- Obsidian vault (Konrad's second brain): /opt/obsidian-vault — read AND write " +
-            "markdown. Daily notes: Daily/YYYY-MM-DD.md (sections: ## Tasks, ## Notes, " +
-            "## Journal). Quick captures: Inbox/. Never delete or truncate notes; append or create.",
-        );
-      },
-    );
-  });
-
-  test("split: the paragraph names both roots and the moved folders", () => {
-    withEnv(
-      { VAULT_LAYOUT: "split", VAULT_DAILY_DIR: undefined, VAULT_INBOX_DIR: undefined },
-      () => {
-        const bullet = vaultBullet();
-        const l = layout();
-        assert.ok(bullet.includes(`${l.dailyDir()}/YYYY-MM-DD.md`), bullet);
-        assert.ok(bullet.includes(`${l.inboxDir()}/`), bullet);
-        assert.ok(bullet.includes(l.roots.human), "the prompt must name Konrad's root");
-        assert.ok(bullet.includes(l.roots.agent), "the prompt must name the agent root");
-        assert.match(bullet, /READ-ONLY/);
-        // Flip: the legacy path is NOT what a split run is told.
-        assert.ok(!bullet.includes("Daily notes: Daily/"), bullet);
-      },
-    );
-  });
-
-  test("a resolver override reaches the prompt — proving one source, not two copies", () => {
-    // The property §3.5 asks for: the paragraph is BUILT from the resolvers. A
-    // hardcoded second copy passes both tests above and fails this one.
-    withEnv({ VAULT_LAYOUT: "split", VAULT_DAILY_DIR: "Logbook" }, () => {
-      assert.ok(vaultBullet().includes("Forge/Logbook/YYYY-MM-DD.md"), vaultBullet());
-    });
-    withEnv({ VAULT_LAYOUT: "legacy", VAULT_INBOX_DIR: "Capture" }, () => {
-      assert.ok(vaultBullet().includes("Quick captures: Capture/"), vaultBullet());
-    });
-  });
-});
+// cc-runner.ts prompt-wiring (the "cc-runner's vault paragraph is DERIVED
+// from these resolvers" block) was reverted in the round-6 fix cycle: Gate 6
+// forbids any project from editing cc-runner.ts — it is every fleet run's
+// system prompt — without a dated OPERATOR WAIVER in gates-808.sh, and none
+// was obtained before this landed. The resolvers/guard above are unaffected;
+// only the prompt integration is deferred pending Konrad's go-ahead.
