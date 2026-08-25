@@ -22,7 +22,9 @@
  *     - File additions and mtime updates invalidate ETag immediately.
  *  4. Next.js Route Handler Transparent Proxying (app/api/proxy/[...path]/route.ts):
  *     - Verbatim forwards HTTP status, ETag, Cache-Control, and If-None-Match headers.
- *     - Bails out on WebSocket Upgrade and /vnc/ paths with HTTP 502 and x-proxy-bailout: upgrade.
+ *     - Bails out on a WebSocket Upgrade with HTTP 502 and x-proxy-bailout: upgrade.
+ *     - Does NOT bail on a plain HTTP GET under /vnc/ — noVNC's shell is ordinary
+ *       HTTP and must be proxied (8bcb473); only the upgrade bails.
  *  5. Client State Integration & Token Purity (BrowserShots.tsx):
  *     - Handles pruned idle run objects without error (mode: "idle", camera icon, no badges).
  *     - Renders live blue flowing outline (fg-stream-live, "● LIVE" badge) for active streaming.
@@ -65,6 +67,7 @@ import { handleProxy } from "../../forge-control-web/app/api/proxy/[...path]/pro
 import { tokens } from "../../forge-control-web/app/tokens.ts";
 import { Providers } from "../../forge-control-web/app/Providers.tsx";
 import {
+  parseShotName,
   resolveStreamMode,
   resolveStreamWarning,
   type BrowserShotRef,
@@ -131,20 +134,40 @@ function makeMockRunDirectory(
   const fileCount = imageCount + artifactCount;
   const latestTs = new Date(1724457600000 - index * 120_000).toISOString();
 
+  // RECONCILED 2026-08-25 against the live `BrowserState` in
+  // forge-control/src/lib/browser-takeover.ts. The fixture had drifted badly:
+  // it carried nine fields the interface no longer declares (`port`,
+  // `vnc_url`, `status`, `exit_code`, `active_profile`, `last_action`,
+  // `last_action_ts`, `stuck_ts`, `warning`) and was missing six it now
+  // requires (`decision`, `reasons`, `novnc_url`, `profile`, `stuck_signal`,
+  // `checked_at`). tsc reports excess properties one at a time, so the whole
+  // divergence surfaced as one confusing error about `port` — and
+  // `instrument-typecheck` sat RED on it, which is a gate every lane shares.
+  //
+  // This is a MEASUREMENT fixture: its byte counts mean nothing unless the
+  // object is the size of the object the route really ships. So every field
+  // takes the value `resolveBrowserState()` would actually produce for this
+  // scenario rather than a placeholder of convenient length:
+  //   service    — falls back to the profile name when no probe named one
+  //   decision   — "login_required" comes from the auth probe, else null
+  //   reasons    — the probe's list; `reason` is its first element
+  //   novnc_url  — novncUrl(port): the real 127.0.0.1 form, not a proxy path
+  //   stuck_signal — set only for the non-login stuck signals
+  //   checked_at — the probe's timestamp
   const fullBrowserState: BrowserState = {
     is_live: isLive,
     needs_human: needsHuman,
     needs_login: needsHuman && signal === "login_required",
     signal,
-    service: needsHuman ? "perplexity" : null,
-    decision: needsHuman ? "login_required" : isLive ? "live" : null,
+    service: needsHuman ? "perplexity" : isLive ? dirId : null,
+    decision: needsHuman && signal === "login_required" ? "login_required" : null,
     reason: needsHuman ? "Login wall encountered on target provider" : null,
-    reasons: needsHuman ? ["Authentication Required"] : [],
+    reasons: needsHuman ? ["Login wall encountered on target provider"] : [],
     novnc_port: isLive ? 6080 : null,
-    novnc_url: isLive ? `/api/proxy/uploads/browser/${dirId}/vnc/vnc.html` : null,
+    novnc_url: isLive ? "http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=scale" : null,
     takeover_up: isLive,
     profile: isLive ? dirId : null,
-    stuck_signal: needsHuman ? "heartbeat_stale" : null,
+    stuck_signal: needsHuman && signal !== "login_required" ? signal : null,
     checked_at: latestTs,
   };
 
@@ -457,15 +480,38 @@ async function runRouteHandlerChecks(): Promise<number> {
     check("WebSocket upgrade request returns 502 bailout", upgradeRes.status, 502);
     check("Upgrade bailout carries x-proxy-bailout: upgrade header", upgradeRes.headers.get("x-proxy-bailout"), "upgrade");
 
-    // Test 4: /vnc/ path bailout -> 502 with x-proxy-bailout: upgrade
-    const vncPathReq = new Request("http://localhost:7701/api/proxy/uploads/run-abc/vnc/websockify", {
+    // Test 4: a plain HTTP GET under /vnc/ is PROXIED, not bailed out.
+    //
+    // RECONCILED 2026-08-25. This used to assert the opposite, and it was
+    // pinning behaviour Konrad deliberately removed in 8bcb473 ("bail on the
+    // upgrade, not on every path containing 'vnc'"). noVNC's SHELL — vnc.html
+    // and its assets — is ordinary HTTP; only the websockify socket needs a
+    // transport a Route Handler cannot provide. Bailing on the whole subtree
+    // left the viewer unable to render even the page that would explain the
+    // failure: shell 502 AND socket 502, strictly worse than the one broken
+    // hop it replaced. That lane updated proxy-route.test.ts and did not know
+    // this second instrument pinned the same rule, so guard.sh has been RED on
+    // the file ever since.
+    //
+    // The upgrade case is Test 3 above and still bails; a real websockify
+    // request always carries `Connection: Upgrade`. Here the two assertions
+    // together prove the request went through the PROXY: no `x-proxy-bailout`
+    // header (the distinction that matters, since both paths can end in 502),
+    // and a status that came from the stub upstream — 404, because the stub
+    // serves /uploads/index and nothing else. A bailout would have answered
+    // 502 without ever reaching it.
+    const vncPathReq = new Request("http://localhost:7701/api/proxy/uploads/run-abc/vnc/vnc.html", {
       method: "GET",
     });
     const vncPathRes = await GET(vncPathReq, {
-      params: Promise.resolve({ path: ["uploads", "run-abc", "vnc", "websockify"] }),
+      params: Promise.resolve({ path: ["uploads", "run-abc", "vnc", "vnc.html"] }),
     });
-    check("VNC path request returns 502 bailout", vncPathRes.status, 502);
-    check("VNC path bailout carries x-proxy-bailout: upgrade header", vncPathRes.headers.get("x-proxy-bailout"), "upgrade");
+    check(
+      "plain GET under /vnc/ is NOT bailed out — no x-proxy-bailout header",
+      vncPathRes.headers.get("x-proxy-bailout"),
+      null,
+    );
+    check("…and its status is the stub upstream's, proving it was forwarded", vncPathRes.status, 404);
 
     return measuredNotModifiedHeaderBytes;
   } finally {
@@ -478,6 +524,30 @@ async function runRouteHandlerChecks(): Promise<number> {
   }
 }
 
+/**
+ * Build a `BrowserShotRef` the way the module's own private `makeRef()` does.
+ *
+ * RECONCILED 2026-08-25, and derived rather than hand-written on purpose. The
+ * three refs below used to be object literals, and they had drifted: they were
+ * missing `url` and `source` (added when the strip learned where a shot came
+ * from), and their `ts` carried the COMPACT filename stamp where the real ref
+ * carries what `parseShotName()` returns — the ISO-8601 form. A literal cannot
+ * notice either change; this helper inherits the first from the type and the
+ * second from the exported parser, so only `url` is still stated here, in the
+ * one shape `makeRef` writes it.
+ */
+function makeShotRef(dirId: string, name: string, source: "bash" | "read"): BrowserShotRef {
+  const { label, ts } = parseShotName(name);
+  return {
+    dirId,
+    name,
+    url: `/api/uploads/${dirId}/${encodeURIComponent(name)}`,
+    label,
+    ts,
+    source,
+  };
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  * SECTION 5: Client Integration, Component States & Token Purity
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -485,14 +555,7 @@ async function runRouteHandlerChecks(): Promise<number> {
 console.log("\n── 5. Client Integration, Component States & Token Purity ────────────");
 
 // 1. Idle mode resolution & rendering
-const idleRef: BrowserShotRef = {
-  dirId: "123456abcdef",
-  name: "20260824T080000Z-idle-overview.png",
-  url: "/api/uploads/123456abcdef/20260824T080000Z-idle-overview.png",
-  label: "idle-overview",
-  ts: "20260824T080000Z",
-  source: "bash",
-};
+const idleRef = makeShotRef("123456abcdef", "20260824T080000Z-idle-overview.png", "bash");
 const idleMode = resolveStreamMode(null, [idleRef]);
 check("pruned idle run resolves to mode === 'idle'", idleMode, "idle");
 
@@ -509,14 +572,7 @@ checkTrue("idle BrowserShots does not render LIVE badge", !idleHtml.includes("LI
 checkTrue("idle BrowserShots does not render NEEDS KONRAD badge", !idleHtml.includes("NEEDS KONRAD"));
 
 // 2. Live Blue Flowing Mode resolution & rendering
-const liveRef: BrowserShotRef = {
-  dirId: "123456abcdef",
-  name: "20260824T080100Z-live-stream.png",
-  url: "/api/uploads/123456abcdef/20260824T080100Z-live-stream.png",
-  label: "live-stream",
-  ts: "20260824T080100Z",
-  source: "bash",
-};
+const liveRef = makeShotRef("123456abcdef", "20260824T080100Z-live-stream.png", "bash");
 const liveState: BrowserStateSummary = { is_live: true, needs_human: false, signal: null };
 const liveMode = resolveStreamMode(liveState, [liveRef]);
 check("live active state resolves to mode === 'live'", liveMode, "live");
@@ -533,14 +589,7 @@ checkTrue("live BrowserShots applies fg-stream-live class", liveHtml.includes("f
 checkTrue("live BrowserShots renders ● LIVE badge", liveHtml.includes("LIVE"));
 
 // 3. Red Mode (Needs Human) resolution & rendering
-const redRef: BrowserShotRef = {
-  dirId: "123456abcdef",
-  name: "20260824T080200Z-perplexity-login-wall.png",
-  url: "/api/uploads/123456abcdef/20260824T080200Z-perplexity-login-wall.png",
-  label: "perplexity-login-wall",
-  ts: "20260824T080200Z",
-  source: "bash",
-};
+const redRef = makeShotRef("123456abcdef", "20260824T080200Z-perplexity-login-wall.png", "read");
 const redState: BrowserStateSummary = {
   is_live: false,
   needs_human: true,
