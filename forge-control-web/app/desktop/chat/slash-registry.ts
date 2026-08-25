@@ -12,6 +12,7 @@
  * Tab / Enter / click.
  */
 
+import { quickCapture, fetchDayTasks } from "../../api";
 import type {
   RunStatus,
   VaultSection,
@@ -336,19 +337,109 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     },
   },
   {
+    /*
+     * Was: a "- [ ]" line appended to today's Obsidian note.
+     *
+     * That is where it went for months, and it is why the board stayed empty
+     * while the daily notes filled up — a markdown checkbox is not a task, it
+     * reaches no board, no Google Tasks, and no phone. It now creates a real
+     * row, which the 5-minute tick pushes to Google Tasks.
+     */
     name: "todo",
-    help: "add a task to today's daily note · /todo pay invoice",
+    help: "add a task · /todo buy proxies @business !high ~90m due:friday",
     handler: async (ctx, args) => {
       if (!args) {
-        ctx.sys("usage: /todo <text> — lands as - [ ] under ## Tasks");
+        ctx.sys(
+          "usage: /todo <text> [@area] [!ultra|!high|!important|!normal|!low] [~90m] [due:friday]",
+        );
         return { kind: "noop" };
       }
-      const r = await ctx.vaultAppend({
-        section: "Tasks",
-        text: args,
-        prefix: "- [ ] ",
-      });
-      ctx.sys(`todo added → ${r.path}`);
+      try {
+        const r = await quickCapture("todo", args);
+        const t = r.task;
+        const bits = [
+          t?.area ? `@${t.area}` : null,
+          t?.planned_day ? `planned ${t.planned_day}` : null,
+          t?.due_day ? `due ${t.due_day}` : null,
+          t?.est_min ? `~${t.est_min}m` : null,
+        ].filter(Boolean);
+        ctx.sys(
+          `task added: "${t?.title ?? args}"${bits.length ? ` · ${bits.join(" · ")}` : ""} · syncs to Google Tasks within 5 min`,
+        );
+      } catch (e) {
+        ctx.sys(`could not add task: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "appointment",
+    help: "book on Google Calendar · /appointment dentist tomorrow 14:00 90m",
+    handler: async (ctx, args) => {
+      if (!args) {
+        ctx.sys(
+          'usage: /appointment <what> <when> [duration] — "dentist tomorrow 14:00 90m", "call Sem in 2h", "gym friday 7:00 45m"',
+        );
+        return { kind: "noop" };
+      }
+      try {
+        const r = await quickCapture("appointment", args);
+        const when = r.start
+          ? new Date(r.start).toLocaleString("de-DE", {
+              weekday: "short",
+              day: "2-digit",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "";
+        ctx.sys(
+          `booked: "${r.event?.summary ?? args}" · ${when} · ${r.duration_min ?? 60} min · on Google Calendar`,
+        );
+      } catch (e) {
+        ctx.sys(`could not book: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "appt",
+    help: "alias for /appointment",
+    handler: async (ctx, args) => {
+      const cmd = SLASH_COMMANDS.find((x) => x.name === "appointment");
+      return cmd ? cmd.handler(ctx, args) : { kind: "noop" };
+    },
+  },
+  {
+    name: "tasks",
+    help: "what is open right now · /tasks",
+    handler: async (ctx) => {
+      try {
+        const tasks = await fetchDayTasks({ view: "today" });
+        const open = tasks.filter((t) => t.status !== "done" && t.status !== "parked");
+        if (open.length === 0) {
+          ctx.sys("nothing open today.");
+          return { kind: "noop" };
+        }
+        // Most pressing first: importance, then how long it has been carried.
+        open.sort((a, b) => b.importance - a.importance || b.carried - a.carried);
+        const lines = open
+          .slice(0, 12)
+          .map((t) => {
+            const marks = [
+              t.area ? `@${t.area}` : null,
+              t.due_day ? `due ${t.due_day}` : null,
+              t.carried >= 3 ? `carried ${t.carried}x` : null,
+            ].filter(Boolean);
+            return `· ${t.title}${marks.length ? `  (${marks.join(", ")})` : ""}`;
+          })
+          .join("\n");
+        ctx.sys(
+          `${open.length} open today:\n${lines}${open.length > 12 ? `\n… and ${open.length - 12} more` : ""}`,
+        );
+      } catch (e) {
+        ctx.sys(`could not list tasks: ${e instanceof Error ? e.message : String(e)}`);
+      }
       return { kind: "noop" };
     },
   },

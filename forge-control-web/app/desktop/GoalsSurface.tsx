@@ -1,572 +1,363 @@
 "use client";
 
 /**
- * GOALS / TASKS / DAY PLANNER — Daily executive command center, habit tracking,
- * task management, Google Calendar schedule, and strategic life goals.
+ * GOALS / TASKS — the week board.
  *
- * Provides:
- * - 4 core views: DAY PLAN | TASKS | LIFE GOALS | HABITS & STATS.
- * - Live Google Calendar status indicator.
- * - Fluid inline editing for daily intent and Big 3 focus outcomes.
- * - Responsive 390px mobile to 1680px desktop design.
+ * ── What this replaces, and why ───────────────────────────────────────────
+ * The previous surface was four tabs (DAY PLAN | TASKS | LIFE GOALS | HABITS &
+ * STATS) opening on three empty "Outcome 1/2/3" cards above a COMMIT FOCUS
+ * TARGETS button. It was measured before being rewritten:
+ *
+ *   GET /api/daily/stats?days=30  →  score 0 on all 30 days,
+ *                                    habit_pct 0 on all 30,
+ *                                    goal_pct and task_pct null throughout.
+ *   18 habits defined, never ticked once. `committed_at` null every single day.
+ *
+ * The same habit list in Notion, over the ten days Konrad screenshotted, was
+ * also entirely unticked. Two independent systems, one outcome — so the failure
+ * is structural, not cosmetic. The old page demanded input before it returned
+ * anything, and a page like that gets abandoned.
+ *
+ * ── The rule this one is built on ─────────────────────────────────────────
+ * The board must be FULL before he touches it. Everything on screen is derived:
+ * events from Google Calendar, tasks from the board (which Google Tasks and the
+ * calendar both feed), habits from the schema, the score computed. The only
+ * things he supplies are a tick, a drag, and one number out of ten.
+ *
+ * There is no commit gate. Nothing is locked behind a ritual he skipped four
+ * days running.
+ *
+ * ── Layout ───────────────────────────────────────────────────────────────
+ *   ┌ habit strip: block-of-the-hour, weighted score, felt-rating 1–10 ┐
+ *   ├───────────────┬──────────────────────────────────────────────────┤
+ *   │ NEXT (one     │  Mon–Sun, 06:00–24:00                            │
+ *   │ task)         │  Google Calendar events + scheduled tasks        │
+ *   │ quick add     │  drag from the rail onto an hour to schedule     │
+ *   │ pressure list │                                                  │
+ *   └───────────────┴──────────────────────────────────────────────────┘
  */
 
-import { useMemo, useState } from "react";
-import {
-  keepPreviousData,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMemo, useState, type CSSProperties } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens } from "../tokens";
 import {
-  commitDay,
-  createDayTask,
-  deleteDayTask,
-  fetchCalendarEvents,
+  createCalendarEvent,
+  updateCalendarEvent,
+  fetchCalendarView,
   fetchDailyDay,
-  fetchDayStats,
   fetchDayTasks,
+  quickCapture,
   reflectDay,
-  rolloverDayTasks,
-  saveDayPlan,
-  setDayGoalStatus,
   setDayHabit,
   updateDayTask,
+  type CalendarEvent,
   type DailyDayResponse,
-  type DayGoal,
-  type DayGoalStatus,
-  type DayHabit,
   type DayTask,
-  type DayTaskInput,
-  type DayTaskStatus,
-  type DayTaskView,
 } from "../api";
-import { useNarrowViewport, usePersistentState } from "./_ui/ResizableSplit";
-import { ErrorPanel, errorDetail } from "./_ui/SurfaceErrorBoundary";
-import { toastError } from "./_ui/Toasts";
-import { TodayTab, type TodayActions } from "./goals/TodayTab";
-import { TasksTab, type TaskActions } from "./goals/TasksTab";
-import { GoalsTab } from "./goals/GoalsTab";
-import { StatsTab } from "./goals/StatsTab";
-import { addDays, toDayKey } from "./goals/quick-add";
-import { TAP, formatDay, ghostButton } from "./goals/ui";
-
-type Tab = "today" | "tasks" | "goals" | "stats";
-const TABS: { key: Tab; label: string; icon: string }[] = [
-  { key: "today", label: "DAY PLAN", icon: "calendar_today" },
-  { key: "tasks", label: "TASKS", icon: "task_alt" },
-  { key: "goals", label: "LIFE GOALS", icon: "flag" },
-  { key: "stats", label: "HABITS & STATS", icon: "insights" },
-];
-const isTab = (v: unknown): v is Tab =>
-  v === "today" || v === "tasks" || v === "goals" || v === "stats";
+import { WeekGrid } from "./goals/WeekGrid";
+import { TaskRail } from "./goals/TaskRail";
+import { HabitStrip } from "./goals/HabitStrip";
+import { TaskDetail } from "./goals/TaskDetail";
+import { localDayKey, weekDays } from "./goals/pressure";
 
 export function GoalsSurface() {
   const qc = useQueryClient();
-  const narrow = useNarrowViewport();
-  const [tab, setTab] = usePersistentState<Tab>("forge.goals.tab", "today", isTab);
-  const [day, setDay] = useState<string>(() => toDayKey(new Date()));
-  const [view, setView] = useState<DayTaskView>("today");
-  const [area, setArea] = useState<string | null>(null);
-  const [status, setStatus] = useState<DayTaskStatus | null>(null);
-  const [windowDays, setWindowDays] = useState(90);
+  const todayKey = localDayKey(new Date());
+  const [anchor, setAnchor] = useState<string>(todayKey);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [banner, setBanner] = useState<string | null>(null);
 
-  const dayKey = useMemo(() => ["daily", "day", day] as const, [day]);
-  const tasksKey = useMemo(
-    () => ["daily", "tasks", view, area, status] as const,
-    [view, area, status],
-  );
+  const days = useMemo(() => weekDays(anchor), [anchor]);
+  const weekStart = days[0];
+  const weekEnd = days[6];
 
-  const dayQ = useQuery({
-    queryKey: dayKey,
-    queryFn: () => fetchDailyDay(day),
-    placeholderData: keepPreviousData,
-    refetchInterval: 60_000,
-  });
+  /* ── data ──────────────────────────────────────────────────────────── */
 
-  const statsQ = useQuery({
-    queryKey: ["daily-stats", windowDays],
-    queryFn: () => fetchDayStats(windowDays),
-    enabled: tab === "stats",
-    placeholderData: keepPreviousData,
-  });
-
+  // Every open task, not just this week's: the rail IS the backlog, and a
+  // `view=week` filter would hide exactly the aged work that most needs doing.
   const tasksQ = useQuery({
-    queryKey: tasksKey,
-    queryFn: () =>
-      fetchDayTasks({
-        view,
-        ...(area ? { area } : {}),
-        ...(status ? { status } : {}),
-      }),
-    enabled: tab === "tasks",
+    queryKey: ["daily", "tasks", "all"],
+    queryFn: () => fetchDayTasks({ view: "all" }),
     placeholderData: keepPreviousData,
+    refetchInterval: 120_000,
   });
 
-  const calendarQ = useQuery({
-    queryKey: ["daily-calendar-status"],
-    queryFn: () => fetchCalendarEvents(),
-    staleTime: 60_000,
+  const eventsQ = useQuery({
+    queryKey: ["daily", "calendar", "week", weekStart],
+    queryFn: () => fetchCalendarView("week", anchor),
+    placeholderData: keepPreviousData,
+    refetchInterval: 120_000,
     retry: 1,
   });
 
-  const invalidate = () => {
+  const dayQ = useQuery({
+    queryKey: ["daily", "day", todayKey],
+    queryFn: () => fetchDailyDay(todayKey),
+    placeholderData: keepPreviousData,
+    refetchInterval: 120_000,
+  });
+
+  const tasks: DayTask[] = tasksQ.data ?? [];
+  const events: CalendarEvent[] = eventsQ.data ?? [];
+
+  const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ["daily"] });
-    void qc.invalidateQueries({ queryKey: ["daily-stats"] });
-    void qc.invalidateQueries({ queryKey: ["life-goals"] });
   };
 
-  /* ── optimistic plumbing ────────────────────────────────────────────────
-     One snapshot type for every write that touches a task, because a task can
-     be on screen twice — TODAY's list and the TASKS list — and both copies
-     must flip together or the surface contradicts itself. */
-  interface TaskSnapshot {
-    prevDay: DailyDayResponse | undefined;
-    prevTasks: DayTask[] | undefined;
-  }
+  const flash = (msg: string): void => {
+    setBanner(msg);
+    window.setTimeout(() => setBanner((b) => (b === msg ? null : b)), 4000);
+  };
 
-  const patchTask = (id: string, patch: Partial<DayTask>): TaskSnapshot => {
-    const prevDay = qc.getQueryData<DailyDayResponse>(dayKey);
-    const prevTasks = qc.getQueryData<DayTask[]>(tasksKey);
-    if (prevDay) {
-      qc.setQueryData<DailyDayResponse>(dayKey, {
-        ...prevDay,
-        tasks: prevDay.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+  /* ── writes ────────────────────────────────────────────────────────── */
+
+  const scheduleM = useMutation({
+    mutationFn: async ({ taskId, startIso }: { taskId: string; startIso: string }) => {
+      const task = tasks.find((t) => t.id === taskId);
+      const mins = task?.duration_min || task?.est_min || 30;
+      await updateDayTask(taskId, {
+        start_time: startIso,
+        planned_day: startIso.slice(0, 10),
+        duration_min: mins,
       });
-    }
-    if (prevTasks) {
-      qc.setQueryData<DayTask[]>(
-        tasksKey,
-        prevTasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-      );
-    }
-    return { prevDay, prevTasks };
-  };
+      // Push it to Google so the phone agrees. A task the board thinks is at
+      // 14:00 that the calendar has never heard of is the exact failure this
+      // surface exists to end, so a calendar error is surfaced, not swallowed.
+      const end = new Date(new Date(startIso).getTime() + mins * 60_000).toISOString();
+      if (task?.gcal_event_id) {
+        // Already on the calendar — this drag is a MOVE. Creating a second
+        // event would leave the old one sitting at the old hour on his phone.
+        await updateCalendarEvent(task.gcal_event_id, {
+          start: startIso,
+          end,
+          task_id: taskId,
+        });
+      } else if (task) {
+        await createCalendarEvent({
+          summary: task.title,
+          start: startIso,
+          end,
+          task_id: taskId,
+        });
+      }
+    },
+    onSuccess: () => {
+      invalidate();
+      flash("scheduled · pushed to Google Calendar");
+    },
+    onError: (e: unknown) =>
+      flash(`could not schedule: ${e instanceof Error ? e.message : String(e)}`),
+  });
 
-  const dropTask = (id: string): TaskSnapshot => {
-    const prevDay = qc.getQueryData<DailyDayResponse>(dayKey);
-    const prevTasks = qc.getQueryData<DayTask[]>(tasksKey);
-    if (prevDay) {
-      qc.setQueryData<DailyDayResponse>(dayKey, {
-        ...prevDay,
-        tasks: prevDay.tasks.filter((t) => t.id !== id),
-      });
-    }
-    if (prevTasks) {
-      qc.setQueryData<DayTask[]>(
-        tasksKey,
-        prevTasks.filter((t) => t.id !== id),
-      );
-    }
-    return { prevDay, prevTasks };
-  };
+  const toggleM = useMutation({
+    mutationFn: ({ taskId, done }: { taskId: string; done: boolean }) =>
+      updateDayTask(taskId, { status: done ? "done" : "todo" }),
+    onSuccess: invalidate,
+  });
 
-  const restore = (snap: TaskSnapshot | undefined) => {
-    if (!snap) return;
-    if (snap.prevDay) qc.setQueryData(dayKey, snap.prevDay);
-    if (snap.prevTasks) qc.setQueryData(tasksKey, snap.prevTasks);
-  };
+  const startM = useMutation({
+    mutationFn: (taskId: string) => updateDayTask(taskId, { status: "doing" }),
+    onSuccess: invalidate,
+  });
 
-  const patchPlan = (
-    mutate: (plan: NonNullable<DailyDayResponse["plan"]>) => DailyDayResponse["plan"],
-  ): DailyDayResponse | undefined => {
-    const prev = qc.getQueryData<DailyDayResponse>(dayKey);
-    if (prev?.plan) {
-      qc.setQueryData<DailyDayResponse>(dayKey, { ...prev, plan: mutate(prev.plan) });
-    }
-    return prev;
-  };
-
-  /* ── mutations ─────────────────────────────────────────────────────────── */
+  const quickM = useMutation({
+    mutationFn: (text: string) => quickCapture("todo", text),
+    onSuccess: (r) => {
+      invalidate();
+      flash(`added: ${r.task?.title ?? ""}`);
+    },
+    onError: (e: unknown) => flash(`could not add: ${e instanceof Error ? e.message : String(e)}`),
+  });
 
   const habitM = useMutation({
-    mutationFn: (v: { habit: DayHabit; next: boolean }) =>
-      setDayHabit(day, v.habit.id, v.next),
-    onMutate: async (v) => {
-      await qc.cancelQueries({ queryKey: dayKey });
-      const prev = qc.getQueryData<DailyDayResponse>(dayKey);
+    mutationFn: ({ habitId, done }: { habitId: string; done: boolean }) =>
+      setDayHabit(todayKey, habitId, done),
+    // Optimistic. A tick that waits on a round trip is a tick that stops
+    // happening, and this is the single most important interaction on the page.
+    onMutate: async ({ habitId, done }) => {
+      await qc.cancelQueries({ queryKey: ["daily", "day", todayKey] });
+      const prev = qc.getQueryData<DailyDayResponse>(["daily", "day", todayKey]);
       if (prev) {
-        const without = prev.ticks.filter((t) => t.habit_id !== v.habit.id);
-        qc.setQueryData<DailyDayResponse>(dayKey, {
-          ...prev,
-          ticks: v.next
-            ? [
-                ...without,
-                { day, habit_id: v.habit.id, done: true, ts: new Date().toISOString() },
-              ]
-            : without,
-        });
+        const ticks = prev.ticks.filter((t) => t.habit_id !== habitId);
+        if (done) {
+          ticks.push({ day: todayKey, habit_id: habitId, done: true, ts: new Date().toISOString() });
+        }
+        qc.setQueryData(["daily", "day", todayKey], { ...prev, ticks });
       }
       return { prev };
     },
-    onError: (e, v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(dayKey, ctx.prev);
-      toastError(`"${v.habit.label}" didn't save — the tick was rolled back.`, e);
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["daily", "day", todayKey], ctx.prev);
     },
     onSettled: invalidate,
   });
 
-  const goalM = useMutation({
-    mutationFn: (v: { goalId: string; status: DayGoalStatus; reason?: string }) =>
-      setDayGoalStatus(day, v.goalId, {
-        status: v.status,
-        ...(v.reason ? { reason: v.reason } : {}),
-      }),
-    onMutate: async (v) => {
-      await qc.cancelQueries({ queryKey: dayKey });
-      const prev = patchPlan((plan) => ({
-        ...plan,
-        big3: plan.big3.map((g) =>
-          g.id === v.goalId
-            ? {
-                ...g,
-                status: v.status,
-                reason: v.status === "abandoned" ? (v.reason ?? g.reason) : null,
-                done_at: v.status === "done" ? new Date().toISOString() : null,
-              }
-            : g,
-        ),
-      }));
-      return { prev };
-    },
-    onError: (e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(dayKey, ctx.prev);
-      toastError("That goal didn't save — it's back as it was.", e);
-    },
-    onSettled: invalidate,
+  const subjectiveM = useMutation({
+    mutationFn: (value: number) => reflectDay(todayKey, { subjective: value }),
+    onSuccess: invalidate,
   });
 
-  const planM = useMutation({
-    mutationFn: (v: { intent: string | null; big3: DayGoal[] }) => saveDayPlan(day, v),
-    onError: (e) =>
-      toastError("The plan draft didn't save.", e),
-    onSettled: invalidate,
-  });
+  /* ── header ────────────────────────────────────────────────────────── */
 
-  const commitM = useMutation({
-    mutationFn: async (v: { intent: string | null; big3: DayGoal[] }) => {
-      await saveDayPlan(day, v);
-      return commitDay(day);
-    },
-    onError: (e) => toastError("Commit failed — day is still in draft.", e),
-    onSettled: invalidate,
-  });
-
-  const reflectM = useMutation({
-    mutationFn: (v: { subjective?: number; reflection?: string }) => reflectDay(day, v),
-    onMutate: async (v) => {
-      await qc.cancelQueries({ queryKey: dayKey });
-      const prev = patchPlan((plan) => ({
-        ...plan,
-        subjective: v.subjective ?? plan.subjective,
-        reflection: v.reflection ?? plan.reflection,
-      }));
-      return { prev };
-    },
-    onError: (e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(dayKey, ctx.prev);
-      toastError("That rating didn't save.", e);
-    },
-    onSettled: invalidate,
-  });
-
-  const taskPatchM = useMutation({
-    mutationFn: (v: {
-      id: string;
-      patch: Partial<DayTaskInput> & { status?: DayTaskStatus; carried?: number };
-    }) => updateDayTask(v.id, v.patch),
-    onMutate: async (v) => {
-      await qc.cancelQueries({ queryKey: ["daily"] });
-      return patchTask(v.id, v.patch as Partial<DayTask>);
-    },
-    onError: (e, _v, ctx) => {
-      restore(ctx);
-      toastError("That task didn't save — the row was put back.", e);
-    },
-    onSettled: invalidate,
-  });
-
-  const taskDeleteM = useMutation({
-    mutationFn: (v: { id: string }) => deleteDayTask(v.id),
-    onMutate: async (v) => {
-      await qc.cancelQueries({ queryKey: ["daily"] });
-      return dropTask(v.id);
-    },
-    onError: (e, _v, ctx) => {
-      restore(ctx);
-      toastError("Couldn't delete that task — it's still there.", e);
-    },
-    onSettled: invalidate,
-  });
-
-  const taskAddM = useMutation({
-    mutationFn: (input: DayTaskInput) => createDayTask(input),
-    onError: (e) => toastError("That task didn't get added.", e),
-    onSettled: invalidate,
-  });
-
-  const rolloverM = useMutation({
-    mutationFn: () => rolloverDayTasks(day),
-    onError: (e) => toastError("Rollover failed — nothing was moved.", e),
-    onSettled: invalidate,
-  });
-
-  const taskActions: TaskActions = {
-    onToggleDone: (task, done) =>
-      taskPatchM.mutate({ id: task.id, patch: { status: done ? "done" : "todo" } }),
-    onSetStatus: (task, next) =>
-      taskPatchM.mutate({ id: task.id, patch: { status: next } }),
-    onDelete: (task) => taskDeleteM.mutate({ id: task.id }),
-    onAdd: (input) => taskAddM.mutate(input),
-    onUpdate: (id, patch) => taskPatchM.mutate({ id, patch }),
+  const shift = (n: number): void => {
+    const d = new Date(`${anchor}T12:00:00`);
+    d.setDate(d.getDate() + n * 7);
+    setAnchor(localDayKey(d));
   };
 
-  const todayActions: TodayActions = {
-    onSavePlan: (v) => planM.mutate(v),
-    onCommit: (v) => commitM.mutate(v),
-    onGoalStatus: (goalId, next, reason) =>
-      goalM.mutate({ goalId, status: next, ...(reason ? { reason } : {}) }),
-    onHabit: (habit, next) => habitM.mutate({ habit, next }),
-    onReflect: (v) => reflectM.mutate(v),
-    onPinTask: (task) =>
-      taskPatchM.mutate({ id: task.id, patch: { planned_day: day, carried: 0 } }),
-    tasks: taskActions,
-  };
+  const fmt = (key: string): string =>
+    new Date(`${key}T12:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const rangeLabel = `${fmt(weekStart)} – ${fmt(weekEnd)}`;
 
-  const today = toDayKey(new Date());
+  const openTask = openTaskId ? (tasks.find((t) => t.id === openTaskId) ?? null) : null;
 
   return (
     <div
-      className="slidein"
       style={{
-        padding: narrow ? "12px 12px 72px" : "16px 22px 48px",
-        maxWidth: 1240,
-        margin: "0 auto",
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        padding: 14,
+        gap: 10,
+        background: tokens.bgBody,
       }}
     >
-      {/* Top Header: Title & Google Calendar Status */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 10,
-          marginBottom: 12,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 16, fontWeight: 600, color: tokens.textHi }}>
-            Goals & Day Command
-          </span>
-          <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
-            intent · execution · habits · momentum
-          </span>
-        </div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: tokens.textHi }}>Week</span>
+        <span className="mono" style={{ fontSize: 12, color: tokens.textSoft }}>
+          {rangeLabel}
+        </span>
+        <button onClick={() => shift(-1)} style={navBtn()} title="previous week">
+          ‹
+        </button>
+        <button onClick={() => setAnchor(todayKey)} style={navBtn()} title="this week">
+          today
+        </button>
+        <button onClick={() => shift(1)} style={navBtn()} title="next week">
+          ›
+        </button>
 
-        {/* Google Calendar Sync Status Badge */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "3px 8px",
-            borderRadius: 6,
-            background: tokens.bgCard,
-            border: `1px solid ${tokens.borderDivider}`,
-          }}
-          title={calendarQ.isError ? "Calendar offline (check OAuth / google_api.py)" : "Google Calendar: konrad.schrein@gmail.com connected"}
-        >
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              backgroundColor: calendarQ.isError ? tokens.warn : tokens.ok,
-              boxShadow: calendarQ.isError ? `0 0 5px ${tokens.warn}` : `0 0 5px ${tokens.ok}`,
-              display: "inline-block",
-            }}
-          />
-          <span className="mono" style={{ fontSize: 10, color: calendarQ.isError ? tokens.warn : tokens.textSoft }}>
-            {calendarQ.isError ? "GCal Offline" : "Google Calendar Synced"}
-          </span>
-        </div>
-      </div>
-
-      {/* Modern View Switcher Tabs */}
-      <div style={{ display: "flex", gap: 6, margin: "0 0 12px", overflowX: "auto" }}>
-        {TABS.map((t) => {
-          const on = tab === t.key;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              data-goals-tab={t.key}
-              aria-current={on ? "page" : undefined}
-              onClick={() => setTab(t.key)}
-              className="mono"
-              style={{
-                flex: 1,
-                minHeight: 44,
-                borderRadius: 9,
-                border: `1px solid ${on ? tokens.accent : tokens.border}`,
-                background: on ? tokens.selectedBg : tokens.toolBg,
-                color: on ? tokens.accent : tokens.textMuted,
-                fontSize: 11,
-                fontWeight: on ? 600 : 400,
-                letterSpacing: "0.08em",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-                padding: "0 8px",
-                whiteSpace: "nowrap",
-                transition: "border-color 0.12s, background 0.12s, color 0.12s",
-              }}
-            >
-              <span className="ms" style={{ fontSize: 16 }}>
-                {t.icon}
-              </span>
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Day Step navigation when on Day Plan */}
-      {tab === "today" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 0 12px" }}>
-          <DayStep
-            icon="chevron_left"
-            label="Previous day"
-            onClick={() => setDay(addDays(day, -1))}
-          />
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+          {banner && (
+            <span className="mono" style={{ fontSize: 10, color: tokens.accent }}>
+              {banner}
+            </span>
+          )}
           <span
             className="mono"
-            style={{ flex: 1, textAlign: "center", fontSize: 12, fontWeight: 500, color: tokens.textMuted }}
+            style={{
+              fontSize: 10,
+              color: eventsQ.isError ? tokens.textGhost : tokens.ok,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+            title={
+              eventsQ.isError
+                ? "Google Calendar unreachable"
+                : "Google Calendar and Google Tasks both sync every 5 minutes"
+            }
           >
-            {formatDay(day)}
-            {dayQ.isFetching && <span style={{ color: tokens.textGhost }}> · syncing</span>}
-          </span>
-          <DayStep
-            icon="chevron_right"
-            label="Next day"
-            onClick={() => setDay(addDays(day, 1))}
-          />
-          {day !== today && (
-            <button type="button" style={ghostButton()} onClick={() => setDay(today)}>
-              today
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Surface Content */}
-      <div>
-        {tab === "today" &&
-          (dayQ.isError ? (
-            <ErrorPanel
-              title="The day didn't load — this is NOT an empty day."
-              detail={errorDetail(dayQ.error)}
-              onRetry={() => void dayQ.refetch()}
-            />
-          ) : (
-            <TodayTab
-              day={day}
-              data={dayQ.data}
-              loading={dayQ.isLoading}
-              actions={todayActions}
-              narrow={narrow}
-            />
-          ))}
-
-        {tab === "tasks" &&
-          (tasksQ.isError ? (
-            <ErrorPanel
-              title="Tasks didn't load — this is NOT an empty list."
-              detail={errorDetail(tasksQ.error)}
-              onRetry={() => void tasksQ.refetch()}
-            />
-          ) : (
-            <TasksTab
-              tasks={tasksQ.data ?? []}
-              view={view}
-              onView={setView}
-              area={area}
-              onArea={setArea}
-              status={status}
-              onStatus={setStatus}
-              actions={taskActions}
-              loading={tasksQ.isLoading || tasksQ.isFetching}
-              narrow={narrow}
-              onRollover={() => rolloverM.mutate()}
-              rollingOver={rolloverM.isPending}
-              day={day}
-            />
-          ))}
-
-        {tab === "goals" && (
-          <GoalsTab narrow={narrow} />
-        )}
-
-        {tab === "stats" &&
-          (statsQ.isError ? (
-            <ErrorPanel
-              title="Stats didn't load."
-              detail={errorDetail(statsQ.error)}
-              onRetry={() => void statsQ.refetch()}
-            />
-          ) : (
-            <StatsTab
-              stats={statsQ.data}
-              loading={statsQ.isLoading}
-              windowDays={windowDays}
-              narrow={narrow}
-              onWindow={setWindowDays}
-              onOpenDay={(d) => {
-                setDay(d);
-                setTab("today");
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: eventsQ.isError ? tokens.textGhost : tokens.ok,
               }}
             />
-          ))}
+            {eventsQ.isError ? "GCal offline" : `Google synced · ${events.length} events`}
+          </span>
+        </div>
       </div>
+
+      {/* Habits + the day's two numbers */}
+      <div style={{ flexShrink: 0 }}>
+        <HabitStrip
+          habits={dayQ.data?.habits ?? []}
+          ticks={dayQ.data?.ticks ?? []}
+          subjective={dayQ.data?.plan?.subjective ?? null}
+          onTick={(habitId, done) => habitM.mutate({ habitId, done })}
+          onSubjective={(v) => subjectiveM.mutate(v)}
+        />
+      </div>
+
+      {/* Rail + grid */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "grid",
+          gridTemplateColumns: "minmax(230px, 290px) 1fr",
+          gap: 10,
+        }}
+      >
+        <TaskRail
+          tasks={tasks}
+          today={todayKey}
+          onQuickAdd={(text) => quickM.mutate(text)}
+          onToggle={(taskId, done) => toggleM.mutate({ taskId, done })}
+          onOpen={setOpenTaskId}
+          onStart={(taskId) => startM.mutate(taskId)}
+          busy={toggleM.isPending || startM.isPending}
+        />
+
+        <WeekGrid
+          day={anchor}
+          tasks={tasks}
+          events={events}
+          onSchedule={(taskId, startIso) => scheduleM.mutate({ taskId, startIso })}
+          onToggleTask={(taskId, done) => toggleM.mutate({ taskId, done })}
+          onOpenTask={setOpenTaskId}
+          onEmptySlot={(startIso) => {
+            const when = new Date(startIso).toLocaleString("en-GB", {
+              weekday: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+            const title = window.prompt(`New event at ${when}`);
+            if (!title?.trim()) return;
+            void createCalendarEvent({
+              summary: title.trim(),
+              start: startIso,
+              end: new Date(new Date(startIso).getTime() + 60 * 60_000).toISOString(),
+            })
+              .then(() => {
+                invalidate();
+                flash("added to Google Calendar");
+              })
+              .catch((e: unknown) =>
+                flash(`could not add: ${e instanceof Error ? e.message : String(e)}`),
+              );
+          }}
+        />
+      </div>
+
+      {openTask && (
+        <TaskDetail
+          task={openTask}
+          onClose={() => setOpenTaskId(null)}
+          onSaved={() => {
+            invalidate();
+            setOpenTaskId(null);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function DayStep({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: string;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      style={{
-        width: TAP,
-        height: TAP,
-        flex: "none",
-        borderRadius: 8,
-        border: `1px solid ${tokens.border}`,
-        background: tokens.toolBg,
-        color: tokens.textMuted,
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <span className="ms" style={{ fontSize: 18 }}>
-        {icon}
-      </span>
-    </button>
-  );
+function navBtn(): CSSProperties {
+  return {
+    padding: "3px 9px",
+    borderRadius: 6,
+    border: `1px solid ${tokens.border}`,
+    background: "transparent",
+    color: tokens.textSoft,
+    fontSize: 11,
+    cursor: "pointer",
+    lineHeight: 1.6,
+  };
 }

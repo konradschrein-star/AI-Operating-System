@@ -112,6 +112,11 @@ export interface DayTask {
   start_time: string | null;
   duration_min: number | null;
   gcal_event_id: string | null;
+  /** Bound Google Tasks entry, for day-precision work (0047). */
+  gtask_id: string | null;
+  /** Google's own last-modified stamp as we last saw it — the guard against
+   *  echoing our own write back as if it were his edit. */
+  gtask_updated: string | null;
   created_at: string;
   updated_at: string;
   /** Calendar days since creation, in Berlin terms. > 14 is bad news (§6). */
@@ -155,6 +160,7 @@ const HABIT_COLS = `id::text, key, label, icon, grp, polarity, weight, sort,
 const TASK_COLS = `id::text, title, area, importance, status, planned_day::text,
                    due_day::text, est_min, carried, notes, done_at::text,
                    start_time::text, duration_min, gcal_event_id,
+                   gtask_id, gtask_updated::text,
                    created_at::text, updated_at::text,
                    ((now() AT TIME ZONE 'Europe/Berlin')::date
                     - (created_at AT TIME ZONE 'Europe/Berlin')::date)::int
@@ -474,13 +480,17 @@ export async function createTask(input: {
   start_time?: string | null;
   duration_min?: number | null;
   gcal_event_id?: string | null;
+  gtask_id?: string | null;
+  gtask_updated?: string | null;
 }): Promise<DayTask> {
   const r = await pool.query<DayTask>(
     `INSERT INTO day_tasks (title, area, importance, status, planned_day, due_day,
-                            est_min, notes, start_time, duration_min, gcal_event_id, done_at)
+                            est_min, notes, start_time, duration_min, gcal_event_id,
+                            gtask_id, gtask_updated, done_at)
      VALUES ($1, $2::text, COALESCE($3::smallint, 2), COALESCE($4::text, 'todo'),
              $5::date, $6::date, $7::smallint, $8::text,
              $9::timestamptz, COALESCE($10::smallint, 30), $11::text,
+             $12::text, $13::timestamptz,
              CASE WHEN $4::text = 'done' THEN now() ELSE NULL END)
      RETURNING ${TASK_COLS}`,
     [
@@ -495,6 +505,8 @@ export async function createTask(input: {
       input.start_time ?? null,
       input.duration_min ?? null,
       input.gcal_event_id ?? null,
+      input.gtask_id ?? null,
+      input.gtask_updated ?? null,
     ],
   );
   const row = r.rows[0];
@@ -517,6 +529,8 @@ export async function updateTask(
     start_time?: string | null;
     duration_min?: number | null;
     gcal_event_id?: string | null;
+    gtask_id?: string | null;
+    gtask_updated?: string | null;
   },
 ): Promise<DayTask | null> {
   const sets: string[] = [];
@@ -536,6 +550,9 @@ export async function updateTask(
   if (patch.start_time !== undefined) put("start_time", patch.start_time, "::timestamptz");
   if (patch.duration_min !== undefined) put("duration_min", patch.duration_min, "::smallint");
   if (patch.gcal_event_id !== undefined) put("gcal_event_id", patch.gcal_event_id, "::text");
+  if (patch.gtask_id !== undefined) put("gtask_id", patch.gtask_id, "::text");
+  if (patch.gtask_updated !== undefined)
+    put("gtask_updated", patch.gtask_updated, "::timestamptz");
   if (patch.status !== undefined) {
     put("status", patch.status, "::text");
     vals.push(patch.status);
@@ -556,6 +573,60 @@ export async function updateTask(
 export async function deleteTask(id: string): Promise<boolean> {
   const r = await pool.query(`DELETE FROM day_tasks WHERE id = $1`, [id]);
   return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * Every task already bound to a Google Calendar event, keyed by event id.
+ *
+ * This map is what makes the pull sync idempotent: a second run over the same
+ * window finds the event already linked and updates it in place instead of
+ * creating a duplicate. Without it, a five-minute poll would grow the board by
+ * the size of the week, every five minutes.
+ */
+export async function tasksByEventId(): Promise<Map<string, DayTask>> {
+  const r = await pool.query<DayTask>(
+    `SELECT ${TASK_COLS} FROM day_tasks WHERE gcal_event_id IS NOT NULL`,
+  );
+  return new Map(r.rows.map((t) => [t.gcal_event_id as string, t]));
+}
+
+/** Board tasks bound to a Google Tasks entry, keyed by that entry's id. */
+export async function tasksByGtaskId(): Promise<Map<string, DayTask>> {
+  const r = await pool.query<DayTask>(
+    `SELECT ${TASK_COLS} FROM day_tasks WHERE gtask_id IS NOT NULL`,
+  );
+  return new Map(r.rows.map((t) => [t.gtask_id as string, t]));
+}
+
+/**
+ * Open board tasks that belong in Google Tasks and are not there yet.
+ *
+ * `start_time IS NULL` is the whole routing rule: a task with an hour is a
+ * calendar event, and Google Tasks would throw that hour away (its `due` is
+ * date-precision). Parked tasks stay off the phone deliberately — parking one
+ * is how you get it out of sight.
+ */
+export async function tasksNeedingGtask(): Promise<DayTask[]> {
+  const r = await pool.query<DayTask>(
+    `SELECT ${TASK_COLS} FROM day_tasks
+      WHERE gtask_id IS NULL
+        AND start_time IS NULL
+        AND status IN ('todo','doing')
+      ORDER BY created_at`,
+  );
+  return r.rows;
+}
+
+/** Drop the calendar link from any task pointing at `eventId`. The task itself
+ *  survives — deleting the meeting does not mean the work stopped existing. */
+export async function unlinkTasksFromEvent(eventId: string): Promise<number> {
+  const r = await pool.query(
+    `UPDATE day_tasks
+        SET gcal_event_id = NULL, start_time = NULL, updated_at = now()
+      WHERE gcal_event_id = $1`,
+    [eventId],
+  );
+  return r.rowCount ?? 0;
 }
 
 export async function rolloverTasks(to: Day): Promise<DayTask[]> {

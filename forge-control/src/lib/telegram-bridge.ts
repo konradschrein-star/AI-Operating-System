@@ -33,6 +33,10 @@ import {
 } from "../db/notifications.ts";
 import { appendToDailyNote, createNote, type DailySection } from "./vault.ts";
 import { parseWhen } from "./when-parser.ts";
+import { parseTodo, parseAppointment } from "./quick-parse.ts";
+import { createTask, listTasks } from "../db/daily.ts";
+import { createCalendarEvent } from "./calendar.ts";
+import { berlinDay } from "./day-score.ts";
 import { createReminder, listReminders } from "../db/reminders.ts";
 import { REMINDER_TEXT_MAX } from "./reminder-text.ts";
 import {
@@ -53,7 +57,9 @@ const HELP = `VPS Cat — your AI OS on Telegram.
 Plain text → talk to the OS (Claude Code with skills, MCP, your vault).
 Photos/files → attached to the conversation.
 
-/todo <text> — task into today's daily note
+/todo <text> — real task · @area !high ~90m due:friday
+/appointment <what> <when> [dur] — Google Calendar, e.g. "dentist tomorrow 14:00 90m"
+/tasks — what's open today, most pressing first
 /note <text> — note into today's daily note
 /journal <text> — journal entry
 /capture <text> — new note in vault Inbox
@@ -89,8 +95,74 @@ async function handleCommand(text: string): Promise<string> {
     case "start":
     case "help":
       return HELP;
-    case "todo":
-      return daily("Tasks", "- [ ] ");
+    /*
+     * /todo used to append "- [ ] <text>" to the Obsidian daily note. That is
+     * why the board sat at two tasks while the notes filled up: a markdown
+     * checkbox reaches no board, no Google Tasks and no phone. It now creates a
+     * real task, and the 5-minute tick puts it in the Google Tasks app.
+     */
+    case "todo": {
+      if (!args) {
+        return "usage: /todo <text> [@area] [!high] [~90m] [due:friday]";
+      }
+      const parsed = parseTodo(args);
+      if (!parsed) return "could not read a task out of that";
+      const task = await createTask({
+        title: parsed.title,
+        area: parsed.area,
+        importance: parsed.importance,
+        planned_day: parsed.planned_day,
+        due_day: parsed.due_day,
+        est_min: parsed.est_min,
+      });
+      const bits = [
+        task.area ? `@${task.area}` : null,
+        task.planned_day ? task.planned_day : null,
+        task.due_day ? `due ${task.due_day}` : null,
+      ].filter(Boolean);
+      return `✅ "${task.title}"${bits.length ? ` · ${bits.join(" · ")}` : ""}`;
+    }
+    case "appointment":
+    case "appt": {
+      if (!args) {
+        return 'usage: /appointment <what> <when> [duration] — "dentist tomorrow 14:00 90m"';
+      }
+      const parsed = parseAppointment(args);
+      if (!parsed) {
+        return 'no time found — try "dentist tomorrow 14:00 90m" or "call Sem in 2h"';
+      }
+      const event = await createCalendarEvent({
+        summary: parsed.summary,
+        start: parsed.start,
+        end: parsed.end,
+      });
+      const when = new Date(parsed.start).toLocaleString("de-DE", {
+        timeZone: process.env.REMINDER_TZ ?? "Europe/Berlin",
+        weekday: "short",
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      return `📅 "${event.summary}" · ${when} · ${parsed.durationMin} min`;
+    }
+    case "tasks": {
+      const open = (await listTasks({ view: "today", today: berlinDay() })).filter(
+        (t) => t.status !== "done" && t.status !== "parked",
+      );
+      if (open.length === 0) return "nothing open today.";
+      open.sort((a, b) => b.importance - a.importance || b.carried - a.carried);
+      const lines = open.slice(0, 12).map((t) => {
+        const marks = [
+          t.area ? `@${t.area}` : null,
+          t.due_day ? `due ${t.due_day}` : null,
+          t.carried >= 3 ? `carried ${t.carried}x` : null,
+        ].filter(Boolean);
+        return `· ${t.title}${marks.length ? ` (${marks.join(", ")})` : ""}`;
+      });
+      const more = open.length > 12 ? `\n… and ${open.length - 12} more` : "";
+      return `${open.length} open today:\n${lines.join("\n")}${more}`;
+    }
     case "note":
       return daily("Notes");
     case "journal":

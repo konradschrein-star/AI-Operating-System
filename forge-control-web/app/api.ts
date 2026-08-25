@@ -2172,6 +2172,12 @@ export interface DayTask {
   start_time?: string | null;
   duration_min?: number | null;
   gcal_event_id?: string | null;
+  /** Bound Google Tasks entry — set for day-precision work (migration 0047).
+   *  A task is in one or the other, never both: with an hour it belongs on the
+   *  calendar; without one it belongs in Google Tasks, whose `due` is
+   *  date-precision and silently discards the time of day. */
+  gtask_id?: string | null;
+  gtask_updated?: string | null;
 }
 
 export interface CalendarEvent {
@@ -2862,6 +2868,29 @@ export const fetchCalendarView = async (
   );
   return Array.isArray(r.events) ? r.events : [];
 };
+
+export interface QuickCaptureResult {
+  ok: boolean;
+  kind: "todo" | "appointment";
+  task?: DayTask;
+  event?: { id: string; summary: string; htmlLink?: string };
+  start?: string;
+  end?: string;
+  duration_min?: number;
+  applied?: string[];
+}
+
+/**
+ * One-line capture — `/todo` and `/appointment`.
+ *
+ * The grammar lives on the server (lib/quick-parse.ts) so the desktop composer,
+ * the Telegram bridge and the manager agent all read the same one. A client-side
+ * parser here would mean `/todo` behaving differently on the phone.
+ */
+export const quickCapture = (
+  kind: "todo" | "appointment",
+  text: string,
+): Promise<QuickCaptureResult> => postJson<QuickCaptureResult>("/daily/quick", { kind, text });
 
 export const createCalendarEvent = (
   input: CreateCalendarEventInput,
