@@ -58,6 +58,55 @@ that produced the five rows below, in front of everyone downstream of them.
 → only then run this runbook.** This is the deploy task's job, not a build
 task's.
 
+## Step 0 of the merge — assert this branch owns everything it is merging
+
+`scripts/ops/assert-merge-scope.sh` — run it BEFORE the merge, not after.
+
+```bash
+scripts/ops/assert-merge-scope.sh main HEAD \
+  'forge-control-web/' 'forge-control/src/routes/files\.ts'
+```
+
+It prints the merge scope, refuses (exit 1) if any path in it matches a refused
+pattern, and exits 0 with `SCOPE CLEAN` otherwise. It merges nothing and writes
+nothing.
+
+**Why those two patterns.** Round 3's review found the LIVE checkout
+`/opt/forge-ai-os` dirty with six paths:
+
+```
+ M forge-control-web/app/desktop/ChatSurface.tsx
+ M forge-control-web/app/desktop/chat/FileExplorerPanel.tsx
+ M forge-control-web/app/desktop/chat/MessageMarkdown.tsx
+ M forge-control/src/routes/files.ts
+?? forge-control-web/app/desktop/chat/code-path-link.ts
+?? forge-control-web/app/desktop/chat/open-file-bus.ts
+```
+
+All six belong to `aios-chat-reference-navigation` (`project/ecacba29*`) and
+land with **that** lane's merge. **The required action is not "revert".**
+Reverting them manufactures a conflict, and `ChatSurface.tsx` is main's
+committed pagination thunk *plus* that lane's wiring — a combination carried on
+no ref, so a revert drops work that exists nowhere else. The required action is
+that this project's merge does not contain them, which is a checkable fact
+about `git diff main...HEAD --name-only` rather than a promise. As of
+`79cb925`+ the scope contains neither pattern; the point of the script is that
+the deploy task proves it at merge time instead of trusting this sentence.
+
+**Three dots, not two.** `main...HEAD` diffs from the MERGE BASE — what this
+branch adds. `main..HEAD` would also list everything main gained since the fork
+and would refuse a perfectly clean branch.
+
+**It bites** — measured, `79cb925`+ this branch:
+
+| invocation | exit | why |
+| --- | --- | --- |
+| `main HEAD 'forge-control-web/' 'forge-control/src/routes/files\.ts'` | 0 | `SCOPE CLEAN`, 19 paths |
+| `main HEAD 'forge-control-web/' 'forge-control/src/executor\.ts'` | 1 | `>>> REFUSED by pattern` naming `forge-control/src/executor.ts` |
+| `main HEAD` (no patterns) | 2 | a run that could not fail is a usage error, not a pass |
+| `main no-such-branch-xyz '…'` | 2 | `FATAL: cannot resolve revision` |
+| `HEAD HEAD '…'` | 0 | empty scope, **said out loud** rather than reported as a silent pass |
+
 ## The five rows, and why only four are in scope
 
 | task id | project | role | recover? |

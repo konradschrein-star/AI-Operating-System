@@ -280,6 +280,110 @@ transcript: `/tmp/gates808-full.log` on this box (not committed — evidence art
 large are reproducible on demand from the command above, and the repo convention is to
 paste, not commit, full gate logs).
 
+## E — ROUND 4 (fix cycle 1): the harness now runs the PRODUCT's statement
+
+Round 3's reviewer landed a fair hit that was not in the numbered blockers, so it is
+closed here rather than left for someone to re-find:
+
+> Gate 29's `attemptCompletion` uses a *simplified* statement; the product's actual
+> `UPDATE … FROM (SELECT status AS prev … FOR UPDATE) old … RETURNING old.prev` is the
+> riskiest new SQL in the diff and nothing executes it. […] The SQL is correct — the gap
+> is coverage, not behaviour.
+
+They reconstructed it by hand and found it correct. A fact re-derived by hand at review
+time is not a gate: the next edit to that statement would land unexecuted again. Two
+changes, both in `docs/plan/evidence/stuck-trapdoor-dryrun.mts`:
+
+**1. `attemptCompletionFull()` composes the statement the way `completeRun` composes it** —
+the `FROM (SELECT status AS prev FROM runs WHERE id = $1 FOR UPDATE) old` self-join, the
+qualified `runs.id = $1` predicate, and the `RETURNING old.prev, metadata->>'pending_input'
+AS pending_input` list, with `COMPLETABLE_STATUS_SQL` still **imported**, never retyped.
+
+**2. A drift guard, because a copy is a thing that can drift.** `assertProductFragment()`
+reads `forge-control/src/executor.ts` and throws at startup if any of the four fragments
+the harness executes is no longer in the product source. The fragments are matched
+*without* their leading newline deliberately: in `executor.ts` they sit inside template
+literals as the two characters `\` `n`, so a real-newline needle would never match and the
+guard would be **inert** — the exact failure mode this project's evidence standard exists
+to catch.
+
+**Scenario G** then runs that statement across the whole status space and asserts the
+**pre-image**, not just the rowCount — `prev` is what drives `completionTransition` and the
+reclaim warning at `executor.ts:562-575`, and `rowCount` alone can no longer identify it,
+which is the entire reason the self-join exists.
+
+```
+=== G. the PRODUCT statement over every prior status — rowCount AND pre-image ===
+  PASS  G: running -> rowCount 1 — 1
+  PASS  G: running -> prev running — running
+  PASS  G: running -> now 'completed' — completed
+  PASS  G: stuck/heartbeat_stale -> rowCount 1 — 1
+  PASS  G: stuck/heartbeat_stale -> prev stuck — stuck
+  PASS  G: stuck/heartbeat_stale -> now 'completed' — completed
+  PASS  G: stuck/timeout -> rowCount 0 — 0
+  PASS  G: stuck/timeout -> prev null — null
+  PASS  G: stuck/timeout -> row untouched — stuck/timeout
+  PASS  G: stuck/NULL signal -> rowCount 0 — 0
+  PASS  G: stuck/NULL signal -> prev null — null
+  PASS  G: stuck/NULL signal -> row untouched — stuck/null
+  PASS  G: cancelled -> rowCount 0 — 0
+  PASS  G: cancelled -> prev null — null
+  PASS  G: cancelled -> row untouched — cancelled/null
+  PASS  G: paused -> rowCount 0 — 0
+  PASS  G: paused -> prev null — null
+  PASS  G: paused -> row untouched — paused/null
+  PASS  G: failed -> rowCount 0 — 0
+  PASS  G: failed -> prev null — null
+  PASS  G: failed -> row untouched — failed/null
+  PASS  G: completed -> rowCount 0 — 0
+  PASS  G: completed -> prev null — null
+  PASS  G: completed -> row untouched — completed/null
+  PASS  G: queued -> rowCount 0 — 0
+  PASS  G: queued -> prev null — null
+  PASS  G: queued -> row untouched — queued/null
+  PASS  G: pending_input survives the self-join — the operator asked a question
+  PASS  G: absent id -> rowCount 0 — 0
+  PASS  G: absent id -> prev null, no crash — null
+
+ALL CHECKS PASSED
+```
+
+Whole harness now: **7 scenarios, 48 assertions, 0 FAIL, exit 0** (`grep -c '^  PASS'` →
+48, `grep -c '^  FAIL'` → 0), same throwaway `stuck_trapdoor_dryrun`, `content_forge`
+still never written.
+
+Two assertions deserve naming because they are the ones a reviewer would otherwise have to
+take on trust:
+
+- **`prev` is `null` on every refusal.** A non-null `prev` beside `rowCount 0` would mean
+  the `FOR UPDATE` sub-select produced a row the outer `WHERE` then discarded, which would
+  make the reported pre-image a lie. It does not: nine statuses, nine nulls where expected.
+- **`pending_input` survives the self-join.** `old` exposes only `prev`, so `metadata` in
+  the RETURNING list resolves to `runs.metadata` — true until someone adds a column to that
+  sub-select, which is why it is measured rather than reasoned about.
+
+### Mutation proof for the round-4 additions — all three bite
+
+`cp` backups, `sha256sum -c` verified restore, `git status --porcelain` clean afterwards.
+Run from `forge-control/`, same `DRYRUN_DATABASE_URL`.
+
+| # | mutation | result |
+| - | --- | --- |
+| **M5** | `executor.ts`: `RETURNING … AS pending_input` → `… AS pi` | **EXIT=1** — the drift guard throws before a single query runs (`stuck-trapdoor-dryrun.mts:228`) |
+| **M6** | `executor.ts`: `FOR UPDATE` dropped from the pre-image sub-select | **EXIT=1** — drift guard throws (`…:223`) |
+| **M7** | `run-liveness.ts`: `COMPLETABLE_STATUS_SQL` narrowed back to `(status = 'running')` — i.e. the trapdoor restored | **EXIT=1, 7 CHECK(S) FAILED** — D and G's `stuck/heartbeat_stale` rows stop landing |
+
+M5 and M6 are the ones that matter for the reviewer's finding: they prove the harness is
+**coupled to the product's statement**, so an unreviewed change to the riskiest SQL in the
+diff cannot slip past gate 29 the way it did in round 3. M7 is the same control as
+Mutation 1 above, re-run to confirm the rewritten `attemptCompletion` still detects the
+original bug.
+
+```
+src/executor.ts: OK
+src/lib/run-liveness.ts: OK
+```
+
 ## Left for the deploy phase
 
 `stuck_trapdoor_dryrun` stays on the box, alongside `forge_r860_dryrun` /

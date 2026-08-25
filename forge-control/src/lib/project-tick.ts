@@ -2538,15 +2538,11 @@ export async function deferForApiOverload(
  * told), so returning false is ALWAYS safe — which is what makes the watchdog
  * keep working on a run that really is dead.
  *
- * The refusals, in order, each for its own reason:
+ * The two unconditional refusals, each for its own reason:
  *  - not 'stuck' — a `failed`/`cancelled` run belongs to the three siblings and
  *    to the ordinary path. This equality is also half of the disjointness
  *    argument for the ordering (see the call site).
  *  - no run row — nothing to requeue.
- *  - project not accepting work — a queued run is invisible to project status
- *    (the executor's claim loop knows about runs, not projects), so resuming one
- *    on a blocked or paused project would smuggle billable work past the gate.
- *    Identical to the three siblings, same warn line.
  *
  * Then the decision table, which is `planStuckRecovery` in ./stuck-recovery —
  * pure, so every route through it is reachable in a test. This function keeps
@@ -2559,6 +2555,28 @@ export async function deferForApiOverload(
  *  | heartbeat_stale + gone + attempts exhausted  | give up → false         | 'failed'  | blocked  |
  *  | 'timeout' or anything else                   | give up → false         | 'failed'  | blocked  |
  *
+ * THE PROJECT-STATUS TERM GATES `resume` ONLY, AND IT SITS BELOW THE PLAN.
+ * The three siblings check `projectAcceptsWork` up front because every action
+ * they can take is a re-queue: for them "the project is not accepting work"
+ * and "do not start this" are the same sentence. This function has an action
+ * they do not — `hold`, which starts nothing, spends nothing, and merely
+ * declines to lie about a task whose process is still running — so the up-front
+ * placement was a resume-only argument applied to both, and it was wrong. On a
+ * blocked/paused/cancelled project it hard-failed a demonstrably ALIVE run and
+ * burned its attempt; the child then finished and landed through completeRun's
+ * reclaim, leaving `run = 'completed'` carrying real work beside
+ * `task = 'failed'` — PERMANENTLY, because `listSettledRunningTasks` only ever
+ * re-reads `pt.status = 'running'`. That is the original defect surviving
+ * inside its own fix. So:
+ *  - `hold` holds regardless of project status. A queued run is invisible to
+ *    project status, but a run that is ALREADY RUNNING is not queued — the
+ *    money is spent either way, and holding is self-terminating: liveness is
+ *    re-proven every tick, so the moment the process dies the same row falls to
+ *    `resume`, which is gated, and then to `give_up`.
+ *  - `resume` keeps the siblings' refusal verbatim in effect: the executor's
+ *    claim loop knows about runs, not projects, so re-queuing one on a project
+ *    that is not accepting work would smuggle billable work past the gate.
+ *
  * ORDER OF THE TWO READS. `classifyStuck` first, and the /proc walk ONLY for a
  * `heartbeat_stale` row. This is not a micro-optimisation: `readEngineCmdlines`
  * is a SERIAL `await readFile` over every pid on the box (749 measured live,
@@ -2568,21 +2586,16 @@ export async function deferForApiOverload(
  * policy gives up on regardless would be adding latency to the bug. It is
  * provably free of behaviour change and pinned by a test:
  * `planStuckRecovery` ignores `processAlive` entirely unless
- * `kind === "heartbeat_stale"`.
+ * `kind === "heartbeat_stale"`. The price of moving the project term below it
+ * is that a `heartbeat_stale` row on a non-active project now pays for that
+ * walk before being refused; that is bounded by the number of stuck rows on
+ * dead projects and is what buys the correctness above.
  */
 export async function deferForStuckRun(
   task: SettledRunningTask,
   project: Project | null,
 ): Promise<boolean> {
   if (task.run_status !== "stuck" || !task.run_id) return false;
-  if (!project || !projectAcceptsWork(project.status)) {
-    console.warn(
-      `[project-tick] task ${task.id} was flipped to 'stuck' but its project is ` +
-        `${project?.status ?? "unreadable"} — failing it rather than parking work on a ` +
-        `project that is not accepting any`,
-    );
-    return false;
-  }
 
   const kind = classifyStuck(task.run_stuck_signal);
   /* `false` here means "no evidence of life", never "proven dead" — a run with
@@ -2617,6 +2630,20 @@ export async function deferForStuckRun(
       `[project-tick] task ${task.id} (${task.role} · ${task.title}) sits in 'stuck' ` +
         `(signal ${task.run_stuck_signal ?? "null"}) — ${plan.reason}; falling back to the ` +
         `normal failure path`,
+    );
+    return false;
+  }
+
+  /* `resume` — and ONLY `resume` — is a re-queue, so this is where the
+   * siblings' project-status refusal belongs. Above the plan it also caught
+   * `hold`, which failed a live run and burned its attempt; see the docstring.
+   * Past this point the engine process is known GONE (a live one is held, and
+   * `planStuckRecovery` returns `resume` only for `processAlive: false`). */
+  if (!project || !projectAcceptsWork(project.status)) {
+    console.warn(
+      `[project-tick] run ${task.run_id} of task ${task.id} was flipped to 'stuck' and its ` +
+        `engine process is gone, but its project is ${project?.status ?? "unreadable"} — ` +
+        `failing it rather than re-queuing work on a project that is not accepting any`,
     );
     return false;
   }

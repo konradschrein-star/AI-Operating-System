@@ -93,9 +93,15 @@ async function seedRun(opts: {
   stuckSignal?: string | null;
   lastHeartbeatAt?: string | null;
   sessionId?: string | null;
+  /** Set so scenario G can prove the pre-image self-join does not shadow
+   *  `runs.metadata` in the RETURNING list. */
+  pendingInput?: string | null;
 }): Promise<string> {
   const id = probeId();
   const thread = [{ role: "user", content: "do the thing", ts: "2026-08-25T08:00:00Z", kind: "text" }];
+  const metadata: Record<string, string> = {};
+  if (opts.sessionId) metadata.cc_session_id = opts.sessionId;
+  if (opts.pendingInput) metadata.pending_input = opts.pendingInput;
   await q(
     `INSERT INTO runs (id, title, prompt, worker, status, stuck_signal, thread, metadata, last_heartbeat_at)
      VALUES ($1,'stuck-trapdoor-dryrun task','p','project:builder',$2,$3,$4::jsonb,$5::jsonb,$6)`,
@@ -104,7 +110,7 @@ async function seedRun(opts: {
       opts.status,
       opts.stuckSignal ?? null,
       JSON.stringify(thread),
-      JSON.stringify(opts.sessionId ? { cc_session_id: opts.sessionId } : {}),
+      JSON.stringify(metadata),
       opts.lastHeartbeatAt ?? null,
     ],
   );
@@ -169,26 +175,99 @@ async function watchdogTickForRow(
 }
 
 /**
- * Mirrors `completeRun()`'s guarded branch (executor.ts:533-546) for a normal
- * (non-'stuck') completion. `COMPLETABLE_STATUS_SQL` is IMPORTED — the one SQL
- * precondition this whole project exists to widen — never retyped.
+ * `completeRun()`'s guarded branch (executor.ts:533-546), COMPOSED THE SAME WAY
+ * THE PRODUCT COMPOSES IT — not a simplification of it.
+ *
+ * ROUND 4, why this changed. Round 3's reviewer found that the earlier version
+ * of this function ran a plainer statement: `WHERE id = $1 AND <guard>
+ * RETURNING id`. The product's real statement is
+ * `UPDATE … FROM (SELECT status AS prev … FOR UPDATE) old WHERE runs.id = $1
+ * AND <guard> RETURNING old.prev, …` — the riskiest new SQL in the diff — and
+ * nothing in the shipped harness executed it. The reviewer reconstructed it by
+ * hand and it was correct, but a fact re-derived by hand at review time is not
+ * a gate; the next change to it would land unexecuted again. So the harness now
+ * runs the real thing.
+ *
+ * TWO THINGS KEEP IT HONEST, because a copy of a statement is a copy that can
+ * drift:
+ *  1. `COMPLETABLE_STATUS_SQL` is IMPORTED from lib/run-liveness.ts — one
+ *     definition, never retyped.
+ *  2. The three fragments the guarded branch composes are asserted, verbatim,
+ *     against executor.ts's SOURCE below (`assertProductFragment`). Change the
+ *     product's self-join, its `runs.id = $1` predicate or its RETURNING list
+ *     and this gate goes red at startup instead of quietly testing a statement
+ *     the product no longer runs.
+ *
+ * The fragments are matched WITHOUT their leading newline on purpose: in
+ * executor.ts they live inside template literals as the two characters `\` `n`,
+ * not as a real line break, so a real-newline needle would never match the
+ * source and the drift guard would be inert.
  */
-async function attemptCompletion(runId: string): Promise<number> {
+const { readFile: readFile_ } = await import("node:fs/promises");
+const EXECUTOR_SRC = await readFile_(`${ROOT}/executor.ts`, "utf8");
+
+function assertProductFragment(label: string, fragment: string): string {
+  if (!EXECUTOR_SRC.includes(fragment)) {
+    throw new Error(
+      `DRIFT: executor.ts no longer contains the ${label} fragment this harness executes:\n` +
+        `  ${JSON.stringify(fragment)}\n` +
+        `Either the product's completion SQL changed (update this harness AND say so in the ` +
+        `proof doc) or ROOT resolved to the wrong checkout (${ROOT}).`,
+    );
+  }
+  return fragment;
+}
+
+/* executor.ts:511-518 — `preImage`, `idPredicate`, `returning`, for
+ * guardRunning = true. */
+const PRE_IMAGE = assertProductFragment(
+  "pre-image self-join",
+  "FROM (SELECT status AS prev FROM runs WHERE id = $1 FOR UPDATE) old",
+);
+const ID_PREDICATE = assertProductFragment("qualified id predicate", "runs.id = $1");
+const RETURNING = assertProductFragment(
+  "RETURNING list",
+  "RETURNING old.prev, metadata->>'pending_input' AS pending_input",
+);
+/* …and the non-'stuck' SET list it is spliced into (executor.ts:536-543). */
+assertProductFragment("completion SET list", "completed_at = now(),");
+
+interface CompletionOutcome {
+  rowCount: number;
+  /** The pre-image the UPDATE actually matched — `null` when no row matched.
+   *  rowCount alone can no longer identify it: COMPLETABLE_STATUS_SQL admits
+   *  TWO prior statuses, which is exactly why the self-join exists. */
+  prev: string | null;
+  pendingInput: string | null;
+}
+
+async function attemptCompletionFull(runId: string): Promise<CompletionOutcome> {
   const entry = { role: "assistant", content: "done", ts: new Date().toISOString(), kind: "text" };
-  const res = await pool.query(
+  const params: unknown[] = [runId, JSON.stringify([entry]), "completed"];
+  const res = await pool.query<{ prev: string; pending_input: string | null }>(
     `UPDATE runs
         SET thread = thread || $2::jsonb,
-            status = 'completed',
+            status = $${params.length},
             stuck_signal = NULL,
             completed_at = now(),
             updated_at = now(),
             last_heartbeat_at = now()
-      WHERE id = $1
-        AND ${COMPLETABLE_STATUS_SQL}
-      RETURNING id`,
-    [runId, JSON.stringify([entry])],
+         ${PRE_IMAGE}
+      WHERE ${ID_PREDICATE}
+           AND ${COMPLETABLE_STATUS_SQL}
+      ${RETURNING}`,
+    params,
   );
-  return res.rowCount ?? 0;
+  return {
+    rowCount: res.rowCount ?? 0,
+    prev: res.rows[0]?.prev ?? null,
+    pendingInput: res.rows[0]?.pending_input ?? null,
+  };
+}
+
+/** Kept for the scenarios that only care whether the write landed. */
+async function attemptCompletion(runId: string): Promise<number> {
+  return (await attemptCompletionFull(runId)).rowCount;
 }
 
 console.log("\n=== A. stale + NO in-process owner + NO live session -> flips to 'stuck' ===");
@@ -272,6 +351,76 @@ console.log("\n=== F. cancelled + completion -> REFUSED ===");
   check("F: row untouched — status still 'cancelled'", row.status === "cancelled", row.status);
   const thread = row.thread as Array<{ role: string }>;
   check("F: row untouched — no assistant turn appended", !thread.some((t) => t.role === "assistant"));
+}
+
+console.log("\n=== G. the PRODUCT statement over every prior status — rowCount AND pre-image ===");
+{
+  /* Round 4. D/E/F above already cover three of these, but they read only
+   * rowCount and the row afterwards. The self-join's job is to report WHICH
+   * pre-image the UPDATE matched, and that value drives completionTransition
+   * and the reclaim warning in executor.ts:562-575 — so assert it directly,
+   * across the whole status space rather than the three statuses that happened
+   * to be interesting. `prev` must be null whenever nothing matched: a
+   * non-null prev on a rowCount 0 would mean the FOR UPDATE sub-select
+   * produced a row the outer WHERE then discarded, which would make the
+   * reported pre-image a lie. */
+  const cases: Array<{
+    label: string;
+    status: string;
+    signal?: string | null;
+    rowCount: number;
+    prev: string | null;
+  }> = [
+    { label: "running", status: "running", rowCount: 1, prev: "running" },
+    { label: "stuck/heartbeat_stale", status: "stuck", signal: "heartbeat_stale", rowCount: 1, prev: "stuck" },
+    { label: "stuck/timeout", status: "stuck", signal: "timeout", rowCount: 0, prev: null },
+    { label: "stuck/NULL signal", status: "stuck", signal: null, rowCount: 0, prev: null },
+    { label: "cancelled", status: "cancelled", rowCount: 0, prev: null },
+    { label: "paused", status: "paused", rowCount: 0, prev: null },
+    { label: "failed", status: "failed", rowCount: 0, prev: null },
+    { label: "completed", status: "completed", rowCount: 0, prev: null },
+    { label: "queued", status: "queued", rowCount: 0, prev: null },
+  ];
+
+  for (const c of cases) {
+    const runId = await seedRun({ status: c.status, stuckSignal: c.signal ?? null });
+    const [before] = await q(`SELECT status, stuck_signal, thread FROM runs WHERE id = $1`, [runId]);
+    const out = await attemptCompletionFull(runId);
+    check(`G: ${c.label} -> rowCount ${c.rowCount}`, out.rowCount === c.rowCount, String(out.rowCount));
+    check(`G: ${c.label} -> prev ${String(c.prev)}`, out.prev === c.prev, String(out.prev));
+    const [after] = await q(`SELECT status, stuck_signal, thread FROM runs WHERE id = $1`, [runId]);
+    if (c.rowCount === 0) {
+      // The refusal must be total, not partial: no status change, no signal
+      // cleared, no assistant turn appended by the `thread || $2` in the SET.
+      check(
+        `G: ${c.label} -> row untouched`,
+        after.status === before.status &&
+          String(after.stuck_signal) === String(before.stuck_signal) &&
+          JSON.stringify(after.thread) === JSON.stringify(before.thread),
+        `${after.status}/${after.stuck_signal}`,
+      );
+    } else {
+      check(`G: ${c.label} -> now 'completed'`, after.status === "completed", after.status);
+    }
+  }
+
+  // pending_input rides in the RETURNING list beside `old.prev`. `old` exposes
+  // only `prev`, so `metadata` there resolves to runs.metadata — but that is
+  // the kind of thing that is true until someone adds a column to the
+  // sub-select, so measure it rather than reason about it.
+  const withInput = await seedRun({
+    status: "stuck",
+    stuckSignal: "heartbeat_stale",
+    pendingInput: "the operator asked a question",
+  });
+  const gotInput = await attemptCompletionFull(withInput);
+  check("G: pending_input survives the self-join", gotInput.pendingInput === "the operator asked a question", String(gotInput.pendingInput));
+
+  // An id no row carries: 0, `prev` null, and no crash. The FOR UPDATE
+  // sub-select returning nothing must not make the whole statement throw.
+  const absent = await attemptCompletionFull("dead0000-0000-4000-8000-ffffffffffff");
+  check("G: absent id -> rowCount 0", absent.rowCount === 0, String(absent.rowCount));
+  check("G: absent id -> prev null, no crash", absent.prev === null, String(absent.prev));
 }
 
 console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}`);

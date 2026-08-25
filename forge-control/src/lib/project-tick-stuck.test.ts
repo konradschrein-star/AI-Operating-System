@@ -310,11 +310,44 @@ describe("refusals", () => {
     assert.equal(value, false);
   });
 
-  test("a cancelled or paused project is refused even when the process is ALIVE", async () => {
-    // The strongest form of this refusal: the recoverable case in every other
-    // respect. A queued run is invisible to project status (the executor's
-    // claim loop knows about runs, not projects), so resuming one here would
-    // smuggle billable work past the gate.
+  /* THE PROJECT-STATUS TERM. Round 3's reviewer found this refusal sitting
+   * ABOVE the plan, where it caught `hold` as well as `resume`: on a
+   * blocked/paused/cancelled project a demonstrably ALIVE run was hard-failed
+   * and its attempt burned, the child then finished and landed through
+   * completeRun's reclaim, and the row pair `run='completed'` (carrying real
+   * work) beside `task='failed'` was PERMANENT — `listSettledRunningTasks`
+   * only ever re-reads `pt.status='running'`. That is the original defect
+   * surviving inside its own fix. The two tests below are what the one test
+   * that pinned the old behaviour split into. */
+
+  test("RESUME is refused on a project that is not accepting work", async () => {
+    // The re-queue really would smuggle billable work past the gate: a queued
+    // run is invisible to project status (the executor's claim loop knows about
+    // runs, not projects). Session nobody has ⇒ no evidence of life ⇒ the plan
+    // is `resume` ⇒ this is exactly the input the refusal is FOR.
+    for (const status of ["cancelled", "paused", "blocked", "done"] as const) {
+      const { value, warnings } = await captureWarnings(() =>
+        deferForStuckRun(
+          stuckTask({ run_session_id: SESSION_NOBODY_HAS }),
+          project({ status }),
+        ),
+      );
+      assert.equal(value, false, `project status ${status} must not accept a re-queue`);
+      assert.match(warnings[0], new RegExp(`its project is ${status}`));
+      assert.match(warnings[0], /failing it rather than re-queuing work/);
+      // It RETURNED instead of rejecting — with the pool pointed at a closed
+      // port (see the header) that is positive proof the refusal happened
+      // BEFORE requeueRunAfterStuck, not after a write that already landed.
+    }
+  });
+
+  test("an ALIVE run is still HELD on a blocked, paused or cancelled project", async () => {
+    // Holding starts nothing and spends nothing. The money is already spent —
+    // the process is running right now — so the only question is whether the
+    // task row tells the truth about it. Self-terminating, too: liveness is
+    // re-proven every tick, so when the process dies this same row falls to
+    // `resume`, which the test above proves is still gated, and then to
+    // `give_up`.
     const sid = `22222222-live-4000-8000-${process.pid.toString().padStart(12, "0")}`;
     liveEngineFixture(sid);
     await new Promise((r) => setTimeout(r, 250));
@@ -323,16 +356,34 @@ describe("refusals", () => {
       const { value, warnings } = await captureWarnings(() =>
         deferForStuckRun(stuckTask({ run_session_id: sid }), project({ status })),
       );
-      assert.equal(value, false, `project status ${status} must not accept parked work`);
-      assert.match(warnings[0], new RegExp(`its project is ${status}`));
-      assert.match(warnings[0], /failing it rather than parking work/);
+      assert.equal(
+        value,
+        true,
+        `a live process must be held on a ${status} project, not failed with its attempt burned`,
+      );
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /ALIVE/);
+      assert.match(warnings[0], /task NOT failed, project NOT blocked/);
     }
   });
 
-  test("an unreadable project is refused and says so", async () => {
-    const { value, warnings } = await captureWarnings(() => deferForStuckRun(stuckTask(), null));
+  test("an unreadable project refuses the resume but does not break the hold", async () => {
+    const { value, warnings } = await captureWarnings(() =>
+      deferForStuckRun(stuckTask({ run_session_id: SESSION_NOBODY_HAS }), null),
+    );
     assert.equal(value, false);
     assert.match(warnings[0], /its project is unreadable/);
+
+    // `project === null` must not turn a live run into a failure either — the
+    // hold path never dereferences it.
+    const sid = `33333333-live-4000-8000-${process.pid.toString().padStart(12, "0")}`;
+    liveEngineFixture(sid);
+    await new Promise((r) => setTimeout(r, 250));
+    const held = await captureWarnings(() =>
+      deferForStuckRun(stuckTask({ run_session_id: sid }), null),
+    );
+    assert.equal(held.value, true);
+    assert.match(held.warnings[0], /ALIVE/);
   });
 });
 
@@ -514,6 +565,33 @@ describe("the call site", () => {
     // The note is the fleet's answer to the "already done" redispatch defect —
     // it must come from stuck-recovery.ts, not be re-worded inline here.
     assert.match(body, /note: stuckResumeNote\(\{ attempt: plan\.attempt \}\)/);
+  });
+
+  test("the projectAcceptsWork refusal sits BELOW the plan, gating resume only", () => {
+    // The behavioural halves of this are the two refusal tests above; this is
+    // the structural pin, because the defect was a matter of ORDER and a
+    // future edit that moves the guard back to the top of the function would
+    // otherwise only be caught by whichever of those two tests someone happened
+    // to keep. Reverting the order reddens this immediately.
+    const body = sliceBetween(
+      TICK,
+      "export async function deferForStuckRun(",
+      "/** Notification source for the engine-fallback push",
+      "deferForStuckRun",
+    );
+    const plan = body.indexOf("const plan = planStuckRecovery({");
+    const hold = body.indexOf('if (plan.action === "hold") {');
+    const gate = body.indexOf("if (!project || !projectAcceptsWork(project.status)) {");
+    const requeue = body.indexOf("const resumed = await requeueRunAfterStuck({");
+    assert.ok(plan >= 0 && hold >= 0 && gate >= 0 && requeue >= 0, "all four anchors present");
+    assert.ok(plan < gate, "the project-status refusal must not run before the plan is known");
+    assert.ok(hold < gate, "the hold path must return before the project-status refusal");
+    assert.ok(gate < requeue, "…and the refusal must still precede the re-queue write");
+    assert.equal(
+      (body.match(/projectAcceptsWork\(/g) ?? []).length,
+      1,
+      "exactly one project-status term in this function — a second one would re-open the hold",
+    );
   });
 
   test("project-tick does not import from executor.ts", () => {

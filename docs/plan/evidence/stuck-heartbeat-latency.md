@@ -6,6 +6,15 @@ not tune `HEARTBEAT_STUCK_THRESHOLD_MS` or `max=5`, and it changes nothing in
 a throwaway database, named and left in place below. Isolation is asserted and
 pasted at the end of §2.
 
+**Round 4 amendment (fix cycle 1).** Round 3's review rejected §1.4's
+concurrency reconstruction as corroboration for the verdict — correctly: it is a
+lower bound, and a lower bound cannot establish that a value is small. §1.4 now
+records its own retirement and §3 no longer cites it. §1.5 is new: the flips
+**by hour**, which is a measurement rather than a reconstruction, and which
+shows 28 of 35 inside two hours following a usage wall release. The verdict
+itself is unchanged, and so is the headline: the cause of the >90s gaps is
+**still unfound**, and nothing in `forge-control/` was tuned.
+
 Known/verified going in (PLAN.md §1, not re-derived): single fork-mode
 `forge-executor` process; `heartbeat()` interval is 5s per in-flight run
 (`executor.ts:857`); `stuckWatchdogTick()` and `projectTick()` share that one
@@ -226,14 +235,109 @@ FROM stuck s ORDER BY terminal_overlap DESC LIMIT 20;
  (14 of the 20 rows shown: 0)
 ```
 The corrected count tops out at **13** (once, at 09:59:11 on 08-23) and is
-**0 for 14 of the 20 highest-overlap flips**. This is a *lower* bound (it
-excludes other runs that were themselves concurrently `running`/`stuck` at the
-moment, which the data cannot distinguish after the fact), while the naive
-count is an *upper* bound inflated by zombie rows. **Truth is bracketed between
-0–13 (corrected, most flips) and 42 (naive, contaminated) — closer to the low
-end, since the naive number's inflation mechanism is understood and explains
-itself.** Either way, most individual flips were not obviously coincident with
-heavy concurrency; a handful were.
+**0 for 14 of the 20 highest-overlap flips**. This is a *lower* bound: it
+excludes every other run that was itself `running` or `stuck` at that instant,
+which is precisely the population the question is about, and which the data
+cannot distinguish after the fact.
+
+**VERDICT ON §1.4: concurrency at flip time is NOT RECOVERABLE from this
+schema, and nothing downstream may lean on these numbers.** Round 3's review
+was right to reject the earlier reading. The naive query is an upper bound
+contaminated by the bug being measured; the corrected query is a lower bound
+that omits the relevant rows; and *"the truth is closer to the low end"* was an
+argument about which bound's error is better understood, not a measurement. A
+lower bound of 0–13 is consistent with a true value of 0 and equally consistent
+with a true value of 40 — it can rule nothing in and nothing out. The one thing
+this section legitimately establishes is the **zombie-`completed_at` artifact**
+itself (a `stuck` row never reaches a terminal state, so it counts as "still
+running" against every later flip, without bound), which is a real property of
+the data worth knowing and is why the naive 42 must never be quoted as a
+concurrency figure. Everything else here is retired. §3's verdict rests on the
+microbenchmark in §2, which needs no help from this section.
+
+---
+
+### 1.5 WHEN the flips happened — flips by hour, and the usage wall window
+
+The question §1.4 could not answer by reconstruction can be asked directly of
+the clock. Every `stuck` row's `updated_at` IS the flip instant
+(`executor.ts:1518-1529` writes `status='stuck'` and `updated_at = now()` in one
+statement), so bucketing by hour is a measurement, not a reconstruction:
+
+```sql
+SELECT date_trunc('hour',updated_at) AS hour, count(*) AS flips,
+       count(*) FILTER (WHERE stuck_signal='heartbeat_stale') AS heartbeat_stale
+FROM runs WHERE status='stuck' GROUP BY 1 ORDER BY 1;
+```
+```
+          hour          | flips | heartbeat_stale 
+------------------------+-------+-----------------
+ 2026-08-23 09:00:00+00 |     1 |               1
+ 2026-08-23 17:00:00+00 |     2 |               2
+ 2026-08-25 06:00:00+00 |    15 |              15
+ 2026-08-25 07:00:00+00 |    13 |              13
+ 2026-08-25 08:00:00+00 |     1 |               1
+ 2026-08-25 10:00:00+00 |     3 |               3
+(6 rows)
+```
+
+**28 of 35 flips — 80% — fall inside two consecutive hours, 06:00–07:00 UTC on
+2026-08-25.** The flips are not spread across the fleet's life; they are one
+burst with a handful of stragglers. That is the strongest signal in the data and
+the earlier draft of this document never named it.
+
+**What precedes that burst is a usage-wall release.** The runs that carry
+`metadata->>'usage_wall_attempts'` are the ones R860 parked behind a session
+limit and later woke:
+
+```sql
+SELECT date_trunc('hour',updated_at) AS hour, count(*)
+FROM runs WHERE (metadata->>'usage_wall_attempts') IS NOT NULL
+GROUP BY 1 ORDER BY 1;
+```
+```
+ 2026-08-23 09:00:00+00 |    12      2026-08-25 05:00:00+00 |     7
+ 2026-08-23 16:00:00+00 |    10      (older hours omitted: 1,1,1,2,6,2)
+```
+
+On all three days that carry flips, a batch of wall-parked runs discharges in
+the hour of — or the hour before — the flips: 12 at 08-23 09:00 against that
+day's 09:00 flip, 10 at 08-23 16:00 against the 17:00 flips, and 7 at 08-25
+05:00 immediately before the 06:00–07:00 burst. The dispatch rate follows:
+
+```sql
+SELECT date_trunc('hour',started_at) AS hour, count(*) FROM runs
+WHERE started_at >= '2026-08-25' AND started_at < '2026-08-26' GROUP BY 1 ORDER BY 1;
+```
+```
+ 05:00 | 30      06:00 | 27      07:00 |  3      08:00 |  1      10:00 |  2
+```
+
+**The counter-example, stated because it is what stops this becoming §1.4's
+mistake in a new costume.** Run-start rate alone does NOT predict flips:
+2026-08-23 00:00 started **65** runs — more than double the 06:00 hour — and
+produced **zero** stuck rows.
+
+```sql
+SELECT date_trunc('hour',started_at) AS hour, count(*) AS started,
+       count(*) FILTER (WHERE status='stuck') AS became_stuck
+FROM runs WHERE started_at >= '2026-08-23' AND started_at < '2026-08-24'
+GROUP BY 1 ORDER BY 1;
+```
+```
+ 2026-08-23 00:00 |  65 |  0     2026-08-23 16:00 |  25 |  0
+ 2026-08-23 09:00 |  14 |  1     2026-08-23 17:00 |  16 |  2
+```
+
+So this section claims exactly one thing and no more: **the flips cluster in
+the hours that follow a usage-wall release, and a post-wall discharge is not
+the same thing as a high start rate.** It is a correlation on 3 days and 35
+rows. It does NOT identify the mechanism, it does NOT re-instate the pg-pool
+candidate §2 refutes, and it is not a licence to tune anything. What would
+turn it into a cause is named in §3's "what to measure next": instrument the
+event loop during the next wall release and watch whether the lag spike is
+real. Until then the cause of the >90s gaps remains **unfound**, which is why
+this project fixes the trapdoor rather than the threshold.
 
 ---
 
@@ -317,8 +421,8 @@ task does not need.
 ## 3. The verdict
 
 **Pool saturation on `max=5` alone does not explain a >90000ms gap.** Even at
-`N=20` — double the `agent.spawn_cap` of 10, and far above the §1.4 concurrency
-reconstruction's observed range (0–13, mostly 0, at actual flip moments) — the
+`N=20` — double the `agent.spawn_cap` of 10, which is the highest concurrency
+this fleet's own guardrails permit — the
 worst heartbeat latency measured was **946.8ms**, about **1/95th** of the
 90000ms threshold, and every level's p50 stayed under 260ms. The `thread ||`
 append pattern is real, measurable cost (§1.2's TOAST-rewrite argument holds,
@@ -330,14 +434,25 @@ reach 90s by this mechanism alone — nowhere near anything this fleet's
 guardrails permit.
 
 Combined with §1.3 (zero pool/lock waits in three live samples, no historical
-percentile data because `pg_stat_statements` is absent) and §1.4 (most flips
-show low-to-zero reconstructed concurrency), the evidence does not support
-"the pg pool queues heartbeats behind large JSONB appends for 90+ seconds" as
-the mechanism. **The measurement does not support that conclusion — say so
-plainly rather than assume it, per the brief's evidence standard.**
+percentile data because `pg_stat_statements` is absent), the evidence does not
+support "the pg pool queues heartbeats behind large JSONB appends for 90+
+seconds" as the mechanism. **The measurement does not support that conclusion —
+say so plainly rather than assume it, per the brief's evidence standard.**
+
+**§1.4 is deliberately absent from that sentence.** An earlier draft cited its
+"0–13, mostly 0" reconstruction as corroboration; it cannot corroborate
+anything, because it is a lower bound and a lower bound cannot show that a
+value is small. The refutation above stands on the microbenchmark alone, which
+does not need it: at twice the maximum concurrency the guardrails allow, the
+mechanism produces ~1/95th of the required latency. What §1.5 adds is not
+corroboration either — it is a *timing* correlation (80% of flips in the two
+hours after a usage-wall release) that names where to look next, with its own
+counter-example attached.
 
 **What to measure next**, in order of plausibility given what this task ruled
-out:
+out — and **when**: §1.5 says the next flip burst is most likely to arrive in
+the hour after a usage-wall release, so the instruments below should be armed
+*then* rather than left running blind.
 1. **The executor's own event loop, not the pool.** `stuckWatchdogTick()`'s
    liveness walk (`readEngineCmdlines()`, `forge-control/src/lib/run-liveness.ts:66-93`)
    does a **serial** `for` loop of `await readFile('/proc/<pid>/cmdline')` over
