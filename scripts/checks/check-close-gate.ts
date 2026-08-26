@@ -591,6 +591,18 @@ async function main(): Promise<void> {
   //      workstreams covering each other and nothing else is the shape that is
   //      left, and it doubles as a cycle-termination case with no `main` row
   //      anywhere on the path.
+  //
+  //      ONE REWRITE THIS FIXTURE DOES NOT NEED TO REFUSE, so that the next
+  //      reader does not re-derive it as the round-5 reviewer did: the round-3
+  //      note named `AND (i.workstream = 'main' OR i.role = 'integrator')` as
+  //      the residual exposure — a widening that keeps the pinned literal.
+  //      It is UNREACHABLE against the real schema. `project_tasks_role_check`
+  //      (db/migrations/0038_steward_tester_roles.sql, the last migration to
+  //      touch it) admits exactly architect, planner, scout, researcher,
+  //      builder, reviewer, steward, tester. There is no 'integrator' member,
+  //      so that disjunct can never match a row and the mutant it would create
+  //      is behaviourally identical to R70 as written. Add a role and this
+  //      sentence expires with it.
   const jm0 = taskId();
   const jaA = taskId();
   const jbB = taskId();
