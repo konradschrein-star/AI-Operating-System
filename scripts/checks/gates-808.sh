@@ -226,6 +226,45 @@ gate "no-raw-colours.cjs (whole app)" node scripts/checks/no-raw-colours.cjs
 # A PATH-SCOPED WAIVER IS NOT ENOUGH BY ITSELF. It would let any LATER commit on
 # this branch edit project-tick.ts unseen. The gate directly below closes that
 # half: under a waiver the CONTENT may change, the exported API may not.
+#
+# OPERATOR WAIVER 2026-08-26 — BRANCH-SCOPED to `project/0a0806d3`.
+# Scope: forge-control/src/lib/project-tick.ts (+ its .test.ts) and
+#        forge-control/src/db/projects.ts. Nothing else, no other branch.
+#
+# Authorised by the fleet supervisor, on the record in the vault at
+# "AI OS/Operator Decisions.md" (2026-08-26, "Gate 6 waiver for
+# project/0a0806d3, and the list that lives twice"). Project
+# aios-r70-transitive-and-idle-fleet-alarm is CHARTERED to change R70: the fleet
+# could not tell a working project from a finished one because
+# `closeFinishedProjects()` tested DIRECT `depends_on` membership where the
+# architect seeds a chain, so three projects with zero open tasks sat 'active'
+# and the stall detector reported nothing. R70 lives in exactly two places —
+# the SQL in `db/projects.ts` and its readable mirror `unintegratedWorkstreams()`
+# reached through `lib/project-tick.ts` — so a fix that cannot touch either file
+# cannot exist. The brief named both files before any code was written.
+#
+# THIS WAIVER EXTENDS THE 2026-08-25 SCOPE ABOVE RATHER THAN COPYING IT, and the
+# extension is deliberate, not drift. That waiver kept `db/projects.ts`
+# forbidden for its own project in terms ("cc-runner, executor.ts and db/projects
+# stay forbidden for this project as well"), and was right to: a default-tier lane
+# had no business in the close predicate. THIS lane's whole subject IS the close
+# predicate. Same gate, opposite answer, because the charter differs — narrow it
+# back for any lane that is not chartered there.
+#
+# `cc-runner` and `executor.ts` stay armed on every branch INCLUDING this one.
+# `lib/task-graph.ts` and `lib/project-reconcile.ts` are not matched by the
+# gate's pattern at all and need no waiver — the waiver is scoped to what the
+# gate actually catches, not to everything the lane touched.
+#
+# CROSS-REFERENCE — THE PAIR MOVES TOGETHER. The forbidden list lives TWICE:
+# here, and in `scripts/checks/guard.sh` (FORBIDDEN_RE, with its own branch
+# waiver block below it). They have already diverged once — commit `e0c388f`
+# waived `operator/agy-fix` HERE and never touched guard.sh. That commit is on
+# main but NOT an ancestor of this branch (merge base `48c34d7`), so it will
+# REAPPEAR at merge and re-diverge the two lists; reconcile both blocks in the
+# same commit at that point, and re-measure rather than trusting any snapshot of
+# main. A waiver applied to one instrument and not its twin is how the next lane
+# spends an hour rediscovering the divergence.
 gate_sh "forbidden-file diff — three-dot main...HEAD" \
   "waived=''; \
    [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'project/860c948e' ] \
@@ -234,6 +273,8 @@ gate_sh "forbidden-file diff — three-dot main...HEAD" \
      && waived='forge-control/src/(lib/project-tick(\\.test)?\\.ts|db/projects\\.ts)\$'; \
    [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'project/51ddfb27' ] \
      && waived='forge-control/src/lib/project-tick(\\.test)?\\.ts\$'; \
+   [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'project/0a0806d3' ] \
+     && waived='forge-control/src/(lib/project-tick(\\.test)?\\.ts|db/projects\\.ts)\$'; \
    hits=\$(git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects' || true); \
    [ -n \"\$waived\" ] && [ -n \"\$hits\" ] && hits=\$(printf '%s\\n' \"\$hits\" | grep -vE \"\$waived\" || true); \
    [ -n \"\$hits\" ] && { printf '%s\\n' \"\$hits\"; echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; }; \
@@ -243,12 +284,59 @@ gate_sh "forbidden-file diff — three-dot main...HEAD" \
 # content ban for one branch; it cannot say "and only the part you were
 # authorised to change". This supplies that half: a prompt string may be
 # rewritten, an exported symbol may not appear or vanish.
+#
+# STRENGTHENED 2026-08-26 (project/0a0806d3, round 6) — AND IT IS A
+# STRENGTHENING, NOT A WIDENING. The form this gate landed with on main at
+# `b3c23ce` compared the output of
+#
+#     grep -oE '^export (async function|function|const|type|interface|class) [A-Za-z0-9_]+'
+#
+# taken over `git show main:` and over HEAD. It CLAIMED "exported surface
+# identical" and MEASURED "declaration lines identical", and those differ in
+# both directions — both measured, neither suspected:
+#
+#   FALSE GREEN, the direction the gate exists for: the pattern does not match
+#   `export {` at all. Appending `export { somethingNew };` leaves the grep's
+#   output byte-identical. The API GROWS under a content waiver and the gate
+#   says nothing.
+#   FALSE RED: this lane moved `unintegratedWorkstreams` and `CloseGateTask`
+#   into the pure leaf `lib/task-graph.ts` — the whole point of NF3, so that
+#   check-close-gate.ts can import the predicate without dragging `db/*` and
+#   `node:fs` in — and left `export { unintegratedWorkstreams, type
+#   CloseGateTask };` behind. 34 declaration lines against main's 36, the SAME
+#   36 names, and a red gate.
+#
+# The ruling (fleet supervisor, 2026-08-26) was to fix the gate rather than
+# waive it — a third waiver, applied to the very API gate that exists to bound
+# the content waivers above, would hollow out the only thing standing between a
+# waived file and a silent API change — and not to re-declare thin delegates in
+# project-tick.ts either, since that re-creates the second surface site this
+# project exists to remove.
+#
+# So both forms are resolved into a set of exported NAMES by
+# scripts/checks/exported-names.sh (declaration forms as before, plus
+# `export { a, type B, x as y }`, `export type { … }`, `export * as ns`,
+# `export default`), and the sorted SETS are compared. Removing an export still
+# goes red — the original job, unchanged. Adding one now goes red as well.
+# scripts/checks/prove-surface-gate-bites.sh is the two-sided control: it runs
+# both mutations against this gate AND against a frozen copy of the b3c23ce
+# body, and the contrast (old GREEN / new RED on the added export) is the
+# evidence that coverage grew instead of moved.
+#
+# AT MERGE: main carries the b3c23ce one-liner and this block replaces it. Take
+# THIS side whole, keep every waiver block on both sides of it (all additive),
+# and re-measure against main as merged rather than against any snapshot —
+# `exported-names.sh` must arrive in the same merge or the gate cannot run.
 gate_sh "project-tick.ts exported surface identical to main (a waiver covers content, never API)" \
-  "a=\$(git show main:forge-control/src/lib/project-tick.ts 2>/dev/null | grep -oE '^export (async function|function|const|type|interface|class) [A-Za-z0-9_]+' | sort); \
-   b=\$(grep -oE '^export (async function|function|const|type|interface|class) [A-Za-z0-9_]+' forge-control/src/lib/project-tick.ts | sort); \
-   if [ \"\$a\" = \"\$b\" ]; then echo 'exported surface identical'; exit 0; fi; \
-   echo 'EXPORTED SURFACE CHANGED vs main:'; echo '--- main'; printf '%s\\n' \"\$a\"; echo '--- HEAD'; printf '%s\\n' \"\$b\"; exit 1"
-
+  "a=\$(git show main:forge-control/src/lib/project-tick.ts 2>/dev/null | bash scripts/checks/exported-names.sh -) \
+     || { echo '>>> could not read the exported names of main:forge-control/src/lib/project-tick.ts'; exit 1; }; \
+   b=\$(bash scripts/checks/exported-names.sh forge-control/src/lib/project-tick.ts) \
+     || { echo '>>> could not read the exported names of HEAD forge-control/src/lib/project-tick.ts'; exit 1; }; \
+   n=\$(printf '%s\\n' \"\$a\" | wc -l | tr -d ' '); \
+   if [ \"\$a\" = \"\$b\" ]; then echo \"exported surface identical — \$n names, every form resolved\"; exit 0; fi; \
+   echo 'EXPORTED SURFACE CHANGED vs main (< main only, > HEAD only):'; \
+   diff <(printf '%s\\n' \"\$a\") <(printf '%s\\n' \"\$b\") | grep -E '^[<>]'; \
+   echo '>>> EXPORTED SURFACE CHANGED'; exit 1"
 
 gate_sh "forge-control/ untouched by round 808's own commits" \
   "changed=\$(git diff --name-only 7b961b5..HEAD -- forge-control/ | wc -l); \
