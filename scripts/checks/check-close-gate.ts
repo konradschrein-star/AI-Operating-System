@@ -3,7 +3,8 @@
  *
  *   R70  `closeFinishedProjects()` must not close a project while some
  *        workstream W <> 'main' has at least one task and there is NO task with
- *        workstream='main' whose `depends_on` covers every task id of W. The
+ *        workstream='main' from which every task of W is REACHABLE through
+ *        `depends_on` (transitively — the 2026-08-26 fix, round 1). The
  *        refusal is loud (NF1) — the project stays 'active' and the function
  *        reports it as `held` so the tick can name the workstream.
  *
@@ -84,6 +85,18 @@
  *      over that project's own rows and asserts the verdicts agree. A pass that
  *      never executed this step is caught the same way every other missed
  *      probe is: EXPECTED_ASSERTIONS below counts it.
+ *  (e) THE INTEGRATOR FILTER WITH NO BEHAVIOURAL CONTROL — round 4, and it was
+ *      MEASURED, not suspected. Delete `AND i.workstream = 'main'` from the SQL
+ *      and make the pure predicate's filter `.filter((t) => t.depends_on !==
+ *      null)` — a mutant that lets ANY task integrate a workstream — and this
+ *      harness still reported 51/51 PASS, exit 0. Fixture (6) had been the
+ *      control for exactly that term and went inert the moment R70 became
+ *      transitive (see its own comment). A PIN ON A LITERAL IS NOT A TEST OF A
+ *      TERM: `project-tick.test.ts` greps the string `i.workstream = 'main'`
+ *      out of the source, which any rewrite KEEPING the literal and widening
+ *      the disjunction satisfies. Fixture (13) below is the behavioural
+ *      control that replaces it, and it is checked by
+ *      scripts/checks/prove-close-gate-bites.sh on demand rather than trusted.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -236,7 +249,7 @@ function lit(s: string): string {
  * 3. Assertions, and the accounting that makes a missed probe a failure.
  * ------------------------------------------------------------------------- */
 
-const EXPECTED_ASSERTIONS = 51;
+const EXPECTED_ASSERTIONS = 57;
 let assertionsRun = 0;
 let assertionsFailed = 0;
 
@@ -316,6 +329,8 @@ const P = {
   cycleReachable: "00000000-0000-4000-8000-0000000c100a",
   negativeUnreachable: "00000000-0000-4000-8000-0000000c100b",
   disconnectedBranch: "00000000-0000-4000-8000-0000000c100c",
+  // Round 4 — the discriminating fixture for the integrator filter, header (e).
+  mutualCover: "00000000-0000-4000-8000-0000000c100d",
 } as const;
 
 /** `depends_on` values: `null` is the LEGACY sentinel, an array is a graph row. */
@@ -541,7 +556,62 @@ async function main(): Promise<void> {
   seedTask(P.disconnectedBranch, ibB1, "branch", [i0]);
   seedTask(P.disconnectedBranch, taskId(), MAIN_WORKSTREAM, [ibA1]);
 
-  assertEq("twelve fixture projects seeded", "12", q("SELECT count(*) FROM projects"));
+  // (13) ROUND 4 — THE INTEGRATOR-FILTER CONTROL. LOAD-BEARING, AND REVERSE-
+  //      ENGINEERED FROM A SURVIVING MUTANT: do not "correct" this shape into
+  //      something more natural-looking. Deleting the sentence that says so is
+  //      what let fixture (6) go quiet for a round.
+  //
+  //      Two NON-MAIN workstreams, one task each, whose tasks depend on EACH
+  //      OTHER, plus a 'main' root that reaches neither:
+  //
+  //          jm0  main   []
+  //          jaA  alpha  [jbB]
+  //          jbB  beta   [jaA]
+  //
+  //      ('alpha'/'beta' rather than the ruling's literal A/B: workstream names
+  //      are CHECK-constrained to `^[a-z0-9][a-z0-9-]{0,39}$` by
+  //      project_tasks_workstream_chk, so an uppercase name is refused by the
+  //      constraint before R70 ever sees the row.)
+  //
+  //      Under R70 as written, the only candidate integrator is `jm0` (the
+  //      `main` filter), it reaches nothing, and BOTH workstreams are open, so
+  //      the project is HELD. Delete the integrator's `workstream = 'main'`
+  //      test on either side and `jaA` becomes a candidate that reaches `jbB`
+  //      (covering 'beta') while `jbB` reaches `jaA` (covering 'alpha') — the mutant
+  //      CLOSES this project. That is the whole discrimination, and it is why
+  //      the pair must be a CYCLE: with a one-way edge the mutant would cover
+  //      only one of the two and hold the project anyway, agreeing with the
+  //      correct rule (asserted in §5c below).
+  //
+  //      Why no simpler shape survives. Under transitive reach, a 'main' task
+  //      that integrates a foreign workstream covering W also reaches W through
+  //      it — fixture (6) is exactly that, and it now closes under BOTH the
+  //      correct rule and the mutant. Every "a non-main task covers W" fixture
+  //      whose own workstream is properly integrated is therefore inert. Two
+  //      workstreams covering each other and nothing else is the shape that is
+  //      left, and it doubles as a cycle-termination case with no `main` row
+  //      anywhere on the path.
+  const jm0 = taskId();
+  const jaA = taskId();
+  const jbB = taskId();
+  seedProject(P.mutualCover, "mutual-cover-non-main");
+  seedTask(P.mutualCover, jm0, MAIN_WORKSTREAM, []);
+  seedTask(P.mutualCover, jaA, "alpha", [jbB]);
+  seedTask(P.mutualCover, jbB, "beta", [jaA]);
+
+  assertEq("thirteen fixture projects seeded", "13", q("SELECT count(*) FROM projects"));
+  assertEq(
+    "mutualCover really is two single-task non-main workstreams naming each other (round 4)",
+    "alpha|beta",
+    q(
+      `SELECT string_agg(workstream, '|' ORDER BY workstream)
+         FROM project_tasks
+        WHERE project_id = ${lit(P.mutualCover)}
+          AND workstream <> 'main'
+          AND depends_on IS NOT NULL
+          AND cardinality(depends_on) = 1`,
+    ),
+  );
   assertEq(
     "chainLive workstream 'md' really is a 3-task chain (round 2)",
     "3",
@@ -582,7 +652,7 @@ async function main(): Promise<void> {
   console.log("--- 3. POSITIVE CONTROL: the pre-R70 statement would have closed the attack ---");
   const wouldHaveClosed = q(PRE_R70_PREDICATE).split("\n").filter(Boolean).sort();
   assertEq(
-    "pre-R70, all eleven finished projects qualify to close — including every held one",
+    "pre-R70, all twelve finished projects qualify to close — including every held one",
     [
       P.crossProject,
       P.graphMain,
@@ -595,6 +665,7 @@ async function main(): Promise<void> {
       P.cycleReachable,
       P.negativeUnreachable,
       P.disconnectedBranch,
+      P.mutualCover,
     ].sort(),
     wouldHaveClosed,
   );
@@ -674,8 +745,14 @@ async function main(): Promise<void> {
     closed.includes(P.disconnectedBranch),
   );
   assertEq("(12) …and it is reported held", true, held.includes(P.disconnectedBranch));
+  assertEq(
+    "(13) THE INTEGRATOR-FILTER CONTROL — two non-main workstreams covering each other do NOT close, round 4",
+    false,
+    closed.includes(P.mutualCover),
+  );
+  assertEq("(13) …and it is reported held", true, held.includes(P.mutualCover));
   assertEq("exactly six projects closed", 6, closed.length);
-  assertEq("exactly five projects are held", 5, held.length);
+  assertEq("exactly six projects are held", 6, held.length);
 
   console.log();
   console.log("--- 5. the rows agree with the return value ----------------------------------");
@@ -729,6 +806,7 @@ async function main(): Promise<void> {
     { id: P.cycleReachable, label: "(10) cycleReachable" },
     { id: P.negativeUnreachable, label: "(11) negativeUnreachable" },
     { id: P.disconnectedBranch, label: "(12) disconnectedBranch" },
+    { id: P.mutualCover, label: "(13) mutualCover (held — the integrator-filter control)" },
   ];
   for (const { id, label } of MIRROR_PROJECTS) {
     const rows = fetchCloseGateTasks(id);
@@ -741,10 +819,62 @@ async function main(): Promise<void> {
   }
 
   console.log();
+  console.log("--- 5c. ROUND 4 — the two properties fixture (13) rests on, asserted ----------");
+  // Both are probes of the PURE predicate over hand-built rows — no database,
+  // no SQL — and both assert the EXACT workstream list rather than the
+  // closed/held boolean §5b compares. WHY THE EXACT LIST: §5b would be
+  // satisfied by a rule that holds (13) for the wrong workstream, and the whole
+  // reason this round exists is that a green run said nothing about a term.
+
+  // (i) THE DISCRIMINATION ITSELF, stated as a list. Same shape as fixture
+  //     (13). Correct rule: BOTH workstreams open, because the only 'main' row
+  //     reaches nothing. Integrator-filter mutant: `a1` reaches `b1` and `b1`
+  //     reaches `a1`, so each covers the other's single-task workstream and the
+  //     answer collapses to []. Measured, both ways — see
+  //     scripts/checks/prove-close-gate-bites.sh.
+  assertEq(
+    "(13) pure: two non-main workstreams covering each other leave BOTH open (round 4)",
+    ["alpha", "beta"],
+    unintegratedWorkstreams([
+      { id: "m0", workstream: MAIN_WORKSTREAM, depends_on: [] },
+      { id: "a1", workstream: "alpha", depends_on: ["b1"] },
+      { id: "b1", workstream: "beta", depends_on: ["a1"] },
+    ]),
+  );
+
+  // (ii) REACH EXCLUDES SELF — an explicit assertion, not a doc-comment, and
+  //      the reason (13) had to be built at all. `reachableFrom()` seeds its
+  //      frontier from the candidate's `depends_on` and NEVER from the
+  //      candidate's own id, so a task never covers itself. Fixture (11)'s
+  //      shape below is where that bites: `o2` reaches every OTHER task of
+  //      'orphan' but not `o2`, so 'orphan' stays open.
+  //
+  //      HONEST SCOPE, because overclaiming an instrument is the failure this
+  //      round is fixing. While the `main` filter stands, self-exclusion is
+  //      UNOBSERVABLE through this function — an integrator is 'main' and is
+  //      therefore never a member of the workstream it integrates, so no input
+  //      can make the two seedings disagree. This probe is what tells the next
+  //      reader why (11) is NOT the integrator-filter control: with self
+  //      excluded, the mutant also answers ["orphan"] here and (11) is inert
+  //      against it; with self included, `o2` would cover 'orphan' and (11)
+  //      would kill the mutant on its own. It does bite independently on a
+  //      different regression — coverage weakened from "every task of W" to
+  //      "some task of W" returns [] here.
+  assertEq(
+    "reach excludes self: W's own last task reaches every OTHER task of W and still does not integrate W (round 4)",
+    ["orphan"],
+    unintegratedWorkstreams([
+      { id: "h0", workstream: MAIN_WORKSTREAM, depends_on: [] },
+      { id: "o1", workstream: "orphan", depends_on: ["h0"] },
+      { id: "o2", workstream: "orphan", depends_on: ["o1"] },
+    ]),
+  );
+
+  console.log();
   console.log("--- 6. idempotence: a second call closes nothing new --------------------------");
   const again = await closeFinishedProjects();
   assertEq("second call closes nothing", 0, again.closed.length);
-  assertEq("second call still reports the same five held", 5, again.held.length);
+  assertEq("second call still reports the same six held", 6, again.held.length);
 
   console.log();
   console.log("--- 7. creating the missing integration task releases the project ------------");
