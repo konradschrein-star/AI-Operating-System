@@ -14,8 +14,11 @@
  * It calls the SHIPPED `closeFinishedProjects` — not a re-implementation — with
  * `DATABASE_URL` pointed at the scratch database and the pool's `search_path`
  * pinned to a throwaway schema, so what is proved is the function the executor
- * will run. The pure mirror (`unintegratedWorkstreams` in lib/project-tick.ts)
- * is unit-tested in project-tick.test.ts; this script proves the SQL agrees.
+ * will run. The pure mirror (`unintegratedWorkstreams` in lib/task-graph.ts,
+ * re-exported from lib/project-tick.ts) is unit-tested in project-tick.test.ts;
+ * this script IMPORTS THE REAL PREDICATE (round 2 — it did not before, see item
+ * (d) below) and proves the SQL agrees, project by project, rather than
+ * asserting the agreement in a comment.
  *
  * ---------------------------------------------------------------------------
  * OPERATOR PREAMBLE — run these three lines once, by hand, before this script.
@@ -69,6 +72,18 @@
  *      block below prints the sha256 of the db/projects.ts this process
  *      imported, and case 1 fails unless the shipped function actually
  *      transitioned a project to 'done'.
+ *  (d) THE PAIRING THAT DID NOT EXIST BEFORE ROUND 2. This file's own header
+ *      claimed the SQL was proved against the pure predicate while importing
+ *      only five node builtins — `grep -rn unintegratedWorkstreams src scripts`
+ *      found exactly one non-comment importer, the unit test, so the agreement
+ *      was asserted by a regex over source text and by nothing else. Round 2
+ *      imports `unintegratedWorkstreams` from lib/task-graph.ts (the pure leaf
+ *      — never lib/project-tick.ts, which would drag `db/*` and `node:fs` into
+ *      this process and repoint DATABASE_URL out from under it) and, for every
+ *      fixture project the SQL actually classified, re-runs the real predicate
+ *      over that project's own rows and asserts the verdicts agree. A pass that
+ *      never executed this step is caught the same way every other missed
+ *      probe is: EXPECTED_ASSERTIONS below counts it.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -76,6 +91,13 @@ import { join, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+
+// The pure leaf, not lib/project-tick.ts — see item (d) above and
+// oracle-sql-mirror-is-check-scheduler-sql / terminal-task-statuses-owned-by-
+// the-pure-leaf in the fleet memory: lib/task-graph.ts type-imports
+// TaskStatus from db/projects.ts only, so this stays a Postgres-free import
+// and does not build a pg Pool before SCRATCH_DATABASE_URL is resolved below.
+import { unintegratedWorkstreams, MAIN_WORKSTREAM, type CloseGateTask } from "../../forge-control/src/lib/task-graph.ts";
 
 function findRepoRoot(): string {
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -214,7 +236,7 @@ function lit(s: string): string {
  * 3. Assertions, and the accounting that makes a missed probe a failure.
  * ------------------------------------------------------------------------- */
 
-const EXPECTED_ASSERTIONS = 27;
+const EXPECTED_ASSERTIONS = 51;
 let assertionsRun = 0;
 let assertionsFailed = 0;
 
@@ -251,6 +273,7 @@ function git(args: readonly string[]): string {
 }
 
 const PROJECTS_REL = "forge-control/src/db/projects.ts";
+const TASK_GRAPH_REL = "forge-control/src/lib/task-graph.ts";
 
 console.log("=== check-close-gate.ts — build identity =====================================");
 console.log(`  repo worktree        : ${REPO_ROOT}`);
@@ -260,6 +283,10 @@ console.log(
   `  uncommitted (subj)   : ${git(["status", "--porcelain", "--", PROJECTS_REL]) || "(clean)"}`,
 );
 console.log(`  sha256(projects.ts)  : ${sha256(PROJECTS_REL)}…`);
+console.log(
+  `  uncommitted (pure)   : ${git(["status", "--porcelain", "--", TASK_GRAPH_REL]) || "(clean)"}`,
+);
+console.log(`  sha256(task-graph.ts): ${sha256(TASK_GRAPH_REL)}… (owns unintegratedWorkstreams, round 2)`);
 console.log(`  scratch database     : ${SCRATCH.name} (local; DSN never printed)`);
 console.log(`  throwaway schema     : ${SCHEMA}`);
 console.log(`  expected assertions  : ${EXPECTED_ASSERTIONS}`);
@@ -283,6 +310,12 @@ const P = {
   wsForeignIntegrator: "00000000-0000-4000-8000-0000000c1006",
   unfinished: "00000000-0000-4000-8000-0000000c1007",
   crossProject: "00000000-0000-4000-8000-0000000c1008",
+  // Round 2 — the four cases the brief names, each proving transitive
+  // reachability rather than direct membership (see the header's item (d)).
+  chainLive: "00000000-0000-4000-8000-0000000c1009",
+  cycleReachable: "00000000-0000-4000-8000-0000000c100a",
+  negativeUnreachable: "00000000-0000-4000-8000-0000000c100b",
+  disconnectedBranch: "00000000-0000-4000-8000-0000000c100c",
 } as const;
 
 /** `depends_on` values: `null` is the LEGACY sentinel, an array is a graph row. */
@@ -402,24 +435,32 @@ async function main(): Promise<void> {
   seedTask(P.wsPartial, cUi2, "ui", [c1]);
   seedTask(P.wsPartial, taskId(), "main", [cUi1]);
 
-  // (6) A covering task that lives in ANOTHER workstream. It would merge in the
-  //     wrong worktree, so it integrates nothing.
+  // (6) A covering task that lives in ANOTHER workstream, chained INTO by a
+  //     proper 'main' integrator.
   //
-  //     THE SHAPE OF THIS FIXTURE IS FORCED BY A SURVIVING MUTATION, not chosen
-  //     for readability. Written the obvious way — 'api' covering 'ui' and
-  //     nothing covering 'api' — the project is held whatever the integrator
-  //     filter says, because 'api' is open on its own account, and deleting
-  //     `i.workstream = 'main'` from the statement left this case green.
-  //     'api' is therefore PROPERLY integrated by a 'main' task here, so the
-  //     ONLY thing that can hold this project is `ui`'s foreign integrator.
+  //     ROUND 2 CORRECTION: this fixture predates the transitive rewrite
+  //     (project-tick.test.ts era of R70, direct `depends_on` membership) and
+  //     was never re-run against the shipped round-1 code before this round —
+  //     it was silently stale, an orphan of [[checks-dir-is-compiled-not-executed]].
+  //     Under DIRECT membership the final 'main' task named only `dApi1`, so
+  //     'ui' (member `dUi1`) was uncovered and the project stayed held — that
+  //     was the case's whole point. Under TRANSITIVE reachability (landed,
+  //     `unintegratedWorkstreams()`'s own "COVERAGE IS ⊇, NOT =" doc-comment)
+  //     the SAME final task now walks `dApi1 -> dUi1 -> d1` and reaches `dUi1`
+  //     too, so 'ui' is ALSO covered — by design, not by accident: reachability
+  //     does not stop at a workstream boundary partway along the chain, only
+  //     the id it started from ('main') and the ids it must cover matter. Both
+  //     the SQL and the pure mirror agree this project now CLOSES — see the
+  //     round-2 mirror step below — so the fixture is kept as the demonstration
+  //     of that specific, intended consequence rather than reworked to dodge it.
   const d1 = taskId();
   const dUi1 = taskId();
   const dApi1 = taskId();
   seedProject(P.wsForeignIntegrator, "ws-foreign-integrator");
   seedTask(P.wsForeignIntegrator, d1, "main", []);
   seedTask(P.wsForeignIntegrator, dUi1, "ui", [d1]);
-  seedTask(P.wsForeignIntegrator, dApi1, "api", [dUi1]); //  covers all of 'ui' — but is not 'main'
-  seedTask(P.wsForeignIntegrator, taskId(), "main", [dApi1]); // integrates 'api' properly
+  seedTask(P.wsForeignIntegrator, dApi1, "api", [dUi1]); // covers all of 'ui' — but is not 'main'
+  seedTask(P.wsForeignIntegrator, taskId(), "main", [dApi1]); // integrates 'api', and transitively 'ui' through it
 
   // (7) A project with work still to do — neither closed nor reported held.
   seedProject(P.unfinished, "unfinished");
@@ -439,7 +480,93 @@ async function main(): Promise<void> {
   //     correlation is what makes it harmless here.
   seedTask(P.graphMain, taskId(), "main", [eUi1]);
 
-  assertEq("eight fixture projects seeded", "8", q("SELECT count(*) FROM projects"));
+  // (9) ROUND 2 — THE LIVE SHAPE, the red-to-green case. Workstream 'md' is a
+  //     CHAIN (f1 <- fmd1 <- fmd2 <- fmd3) and the one 'main' integrator
+  //     depends only on the LAST link, exactly as every architect-seeded
+  //     integration task does. Direct array membership held this forever
+  //     (fmd1/fmd2 never appear in the integrator's own depends_on); transitive
+  //     reachability walks fmd3 -> fmd2 -> fmd1 and closes it. This is the
+  //     shape measured live on all eight failing workstreams
+  //     (r70-transitive-fix-is-invisible-to-its-own-tests.md).
+  const f1 = taskId();
+  const fmd1 = taskId();
+  const fmd2 = taskId();
+  const fmd3 = taskId();
+  seedProject(P.chainLive, "chain-live-shape");
+  seedTask(P.chainLive, f1, MAIN_WORKSTREAM, []);
+  seedTask(P.chainLive, fmd1, "md", [f1]);
+  seedTask(P.chainLive, fmd2, "md", [fmd1]);
+  seedTask(P.chainLive, fmd3, "md", [fmd2]);
+  seedTask(P.chainLive, taskId(), MAIN_WORKSTREAM, [fmd3]);
+
+  // (10) ROUND 2 — A CYCLE inside W, reachable from the integrator: gc1 and
+  //      gc2 depend on each other. The walk must both answer correctly (the
+  //      cycle does not hide gc1 from the integrator) and TERMINATE — proven
+  //      below by timing the single call that has to resolve this alongside
+  //      every other fixture (recursive-cte-depth-column-defeats-the-union-
+  //      cycle-guard.md: dedup is the guard, not a depth column).
+  const g0 = taskId();
+  const gc1 = taskId();
+  const gc2 = taskId();
+  seedProject(P.cycleReachable, "cycle-inside-workstream");
+  seedTask(P.cycleReachable, g0, MAIN_WORKSTREAM, []);
+  seedTask(P.cycleReachable, gc1, "cyc", [g0, gc2]);
+  seedTask(P.cycleReachable, gc2, "cyc", [gc1]);
+  seedTask(P.cycleReachable, taskId(), MAIN_WORKSTREAM, [gc2]);
+
+  // (11) ROUND 2 — THE PRESERVED NEGATIVE, the case that stops the fix from
+  //      becoming a tautology. Workstream 'orphan' chains internally
+  //      (ho1 <- ho2) exactly like the live-shape case above, but NO 'main'
+  //      task depends on either of them, directly or transitively — there is
+  //      no path in from any integrator at all. Must stay HELD.
+  const h0 = taskId();
+  const ho1 = taskId();
+  const ho2 = taskId();
+  seedProject(P.negativeUnreachable, "no-path-reaches-it");
+  seedTask(P.negativeUnreachable, h0, MAIN_WORKSTREAM, []);
+  seedTask(P.negativeUnreachable, ho1, "orphan", [h0]);
+  seedTask(P.negativeUnreachable, ho2, "orphan", [ho1]);
+
+  // (12) ROUND 2 — A DISCONNECTED SECOND BRANCH: workstream 'branch' has two
+  //      tasks off the SAME root, ibA1 and ibB1, that never depend on each
+  //      other. The integrator reaches ibA1 transitively but has no edge
+  //      anywhere near ibB1. Coverage is over EVERY task of W, so partial
+  //      transitive reach still holds the project.
+  const i0 = taskId();
+  const ibA1 = taskId();
+  const ibB1 = taskId();
+  seedProject(P.disconnectedBranch, "disconnected-second-branch");
+  seedTask(P.disconnectedBranch, i0, MAIN_WORKSTREAM, []);
+  seedTask(P.disconnectedBranch, ibA1, "branch", [i0]);
+  seedTask(P.disconnectedBranch, ibB1, "branch", [i0]);
+  seedTask(P.disconnectedBranch, taskId(), MAIN_WORKSTREAM, [ibA1]);
+
+  assertEq("twelve fixture projects seeded", "12", q("SELECT count(*) FROM projects"));
+  assertEq(
+    "chainLive workstream 'md' really is a 3-task chain (round 2)",
+    "3",
+    q(`SELECT count(*) FROM project_tasks WHERE project_id = ${lit(P.chainLive)} AND workstream = 'md'`),
+  );
+  assertEq(
+    "cycleReachable workstream 'cyc' really contains the cycle (round 2)",
+    "2",
+    q(`SELECT count(*) FROM project_tasks WHERE project_id = ${lit(P.cycleReachable)} AND workstream = 'cyc'`),
+  );
+  assertEq(
+    "negativeUnreachable workstream 'orphan' really has no integrator naming it (round 2)",
+    "0",
+    q(
+      `SELECT count(*) FROM project_tasks
+        WHERE project_id = ${lit(P.negativeUnreachable)} AND workstream = 'main'
+          AND depends_on IS NOT NULL
+          AND (${lit(ho1)} = ANY(depends_on) OR ${lit(ho2)} = ANY(depends_on))`,
+    ),
+  );
+  assertEq(
+    "disconnectedBranch workstream 'branch' really has two independent tasks (round 2)",
+    "2",
+    q(`SELECT count(*) FROM project_tasks WHERE project_id = ${lit(P.disconnectedBranch)} AND workstream = 'branch'`),
+  );
   assertEq(
     "the attack fixture really holds a non-main workstream",
     "2",
@@ -455,8 +582,20 @@ async function main(): Promise<void> {
   console.log("--- 3. POSITIVE CONTROL: the pre-R70 statement would have closed the attack ---");
   const wouldHaveClosed = q(PRE_R70_PREDICATE).split("\n").filter(Boolean).sort();
   assertEq(
-    "pre-R70, all seven finished projects qualify to close — including every held one",
-    [P.crossProject, P.graphMain, P.legacy, P.wsForeignIntegrator, P.wsIntegrated, P.wsNoIntegration, P.wsPartial].sort(),
+    "pre-R70, all eleven finished projects qualify to close — including every held one",
+    [
+      P.crossProject,
+      P.graphMain,
+      P.legacy,
+      P.wsForeignIntegrator,
+      P.wsIntegrated,
+      P.wsNoIntegration,
+      P.wsPartial,
+      P.chainLive,
+      P.cycleReachable,
+      P.negativeUnreachable,
+      P.disconnectedBranch,
+    ].sort(),
     wouldHaveClosed,
   );
   console.log(
@@ -478,11 +617,14 @@ async function main(): Promise<void> {
     }>;
   };
 
+  const callStartedAt = Date.now();
   const out = await closeFinishedProjects();
+  const callElapsedMs = Date.now() - callStartedAt;
   const closed = out.closed.map((p) => p.id).sort();
   const held = out.held.map((p) => p.id).sort();
   console.log(`      closed: ${out.closed.map((p) => p.name).join(", ") || "(none)"}`);
   console.log(`      held  : ${out.held.map((p) => p.name).join(", ") || "(none)"}`);
+  console.log(`      elapsed: ${callElapsedMs}ms`);
   console.log();
 
   assertEq("(1) a legacy all-'main' project closes, exactly as before R70", true, closed.includes(P.legacy));
@@ -493,20 +635,53 @@ async function main(): Promise<void> {
   assertEq("(4) …and is NOT reported held", false, held.includes(P.wsIntegrated));
   assertEq("(5) partial coverage does not close", false, closed.includes(P.wsPartial));
   assertEq("(5) …and is reported held", true, held.includes(P.wsPartial));
-  assertEq("(6) an integrator in another workstream does not close it", false, closed.includes(P.wsForeignIntegrator));
-  assertEq("(6) …and it is held for 'ui' alone — its 'api' workstream IS integrated", true, held.includes(P.wsForeignIntegrator));
+  assertEq(
+    "(6) a proper 'main' integrator chained THROUGH another workstream closes it too (round-2 correction)",
+    true,
+    closed.includes(P.wsForeignIntegrator),
+  );
+  assertEq("(6) …and is NOT reported held", false, held.includes(P.wsForeignIntegrator));
   assertEq("(7) a project with a running task neither closes…", false, closed.includes(P.unfinished));
   assertEq("(7) …nor is reported held", false, held.includes(P.unfinished));
   assertEq("(8) another project's task cannot vouch for this workstream", false, closed.includes(P.crossProject));
   assertEq("(8) …and it is reported held", true, held.includes(P.crossProject));
-  assertEq("exactly three projects closed", 3, closed.length);
-  assertEq("exactly four projects are held", 4, held.length);
+  assertEq(
+    "(9) THE LIVE SHAPE — a chain workstream closes via transitive reach, round 2",
+    true,
+    closed.includes(P.chainLive),
+  );
+  assertEq("(9) …and is NOT reported held", false, held.includes(P.chainLive));
+  assertEq(
+    "(10) a cycle inside W, reachable from the integrator, still closes, round 2",
+    true,
+    closed.includes(P.cycleReachable),
+  );
+  assertEq("(10) …and is NOT reported held", false, held.includes(P.cycleReachable));
+  assertEq(
+    "(10) …and the whole call — cycle included — terminates well under 5s",
+    true,
+    callElapsedMs < 5000,
+  );
+  assertEq(
+    "(11) THE PRESERVED NEGATIVE — no path from any integrator does NOT close, round 2",
+    false,
+    closed.includes(P.negativeUnreachable),
+  );
+  assertEq("(11) …and it is reported held", true, held.includes(P.negativeUnreachable));
+  assertEq(
+    "(12) A DISCONNECTED SECOND BRANCH — partial transitive reach does NOT close, round 2",
+    false,
+    closed.includes(P.disconnectedBranch),
+  );
+  assertEq("(12) …and it is reported held", true, held.includes(P.disconnectedBranch));
+  assertEq("exactly six projects closed", 6, closed.length);
+  assertEq("exactly five projects are held", 5, held.length);
 
   console.log();
   console.log("--- 5. the rows agree with the return value ----------------------------------");
   assertEq(
-    "three projects are 'done' in the table",
-    "3",
+    "six projects are 'done' in the table",
+    "6",
     q("SELECT count(*) FROM projects WHERE status = 'done'"),
   );
   assertEq(
@@ -521,10 +696,55 @@ async function main(): Promise<void> {
   );
 
   console.log();
+  console.log("--- 5b. ROUND 2 — the SQL agrees with the REAL unintegratedWorkstreams() ------");
+  // Item (d) above: for every fixture project the SQL actually classified (i.e.
+  // excluding P.unfinished, which the SQL puts in neither partition because it
+  // has an open task and never reaches R70's term at all), read that project's
+  // own (id, workstream, depends_on) rows back out of the scratch schema, run
+  // the SHIPPED pure predicate over them, and assert its verdict agrees with the
+  // SQL's closed/held split: pure returns [] exactly when the SQL closed the
+  // project, and pure names at least one workstream exactly when the SQL held
+  // it. This is the driver step check-scheduler-sql.sh's `mirror` step models —
+  // it is what makes "if the two disagree the pure side is right" a checked
+  // claim instead of a comment.
+  function fetchCloseGateTasks(projectId: string): CloseGateTask[] {
+    const raw = q(
+      `SELECT COALESCE(json_agg(json_build_object(
+                'id', id::text, 'workstream', workstream, 'depends_on', depends_on
+              )), '[]'::json)
+         FROM project_tasks WHERE project_id = ${lit(projectId)}`,
+    );
+    return JSON.parse(raw) as CloseGateTask[];
+  }
+
+  const MIRROR_PROJECTS: ReadonlyArray<{ id: string; label: string }> = [
+    { id: P.legacy, label: "(1) legacy" },
+    { id: P.graphMain, label: "(2) graphMain" },
+    { id: P.wsNoIntegration, label: "(3) THE ATTACK" },
+    { id: P.wsIntegrated, label: "(4) wsIntegrated" },
+    { id: P.wsPartial, label: "(5) wsPartial" },
+    { id: P.wsForeignIntegrator, label: "(6) wsForeignIntegrator (closes, round-2 correction)" },
+    { id: P.crossProject, label: "(8) crossProject" },
+    { id: P.chainLive, label: "(9) chainLive" },
+    { id: P.cycleReachable, label: "(10) cycleReachable" },
+    { id: P.negativeUnreachable, label: "(11) negativeUnreachable" },
+    { id: P.disconnectedBranch, label: "(12) disconnectedBranch" },
+  ];
+  for (const { id, label } of MIRROR_PROJECTS) {
+    const rows = fetchCloseGateTasks(id);
+    const pureOpen = unintegratedWorkstreams(rows);
+    assertEq(
+      `mirror: pure unintegratedWorkstreams() agrees with the SQL partition for ${label}`,
+      closed.includes(id),
+      pureOpen.length === 0,
+    );
+  }
+
+  console.log();
   console.log("--- 6. idempotence: a second call closes nothing new --------------------------");
   const again = await closeFinishedProjects();
   assertEq("second call closes nothing", 0, again.closed.length);
-  assertEq("second call still reports the same four held", 4, again.held.length);
+  assertEq("second call still reports the same five held", 5, again.held.length);
 
   console.log();
   console.log("--- 7. creating the missing integration task releases the project ------------");
