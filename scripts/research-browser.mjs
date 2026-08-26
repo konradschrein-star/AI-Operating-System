@@ -48,7 +48,9 @@
 // computeTakeoverDeadlines(), pure and unit-tested:
 //   - a connected viewer is never idle; after the last socket closes, TAKEOVER_IDLE_GRACE_MS
 //     (default 30 min) must pass before an idle shutdown — the first idle tick only ARMS it;
-//   - TAKEOVER_MAX_SESSION_MS (default 2 h) from first_connect_at is the safety cap;
+//   - TAKEOVER_MAX_SESSION_MS (default 2 h) from max(first_connect_at, THIS supervisor's start)
+//     is the safety cap — the origin can never precede the supervisor, and teardown nulls
+//     first_connect_at so a durable profile never carries one life's origin into the next;
 //   - HARD_MAX_SESSION_MS (8 h from launch) stays the outer bound.
 // session.json carries takeover_started_at / takeover_deadline / connected so a page can show
 // the remaining time, and EVERY shutdown first writes <STATE_ROOT>/<profile>/last-shutdown.json
@@ -958,8 +960,16 @@ function terminate(pid, token, what) {
 //
 // The combination that bites on day two is stated here because each half is reported as
 // something else: a teardown that leaks a live x11vnc (this) plus a takeover-cap origin that
-// outlives the session (computeTakeoverDeadlines, fixed to measure THIS supervisor) means a
-// durable profile fails twice, for two unrelated reasons, neither of which names itself.
+// outlives the session means a durable profile fails twice, for two unrelated reasons,
+// neither of which names itself — "could not obtain listening port" from the leak, and
+// "takeover cap 2h" on a session seconds old from the origin. The R8 version of this comment
+// claimed the origin half was already fixed; it was not (round-10 review, measured at ef6dab3:
+// supervisor up 07:21:57.926Z, "shutting down (takeover cap 2h)" 07:22:00.198Z). Fix cycle 2
+// closes it in two places: computeTakeoverDeadlines() takes the supervisor's own startedAt and
+// uses max(first_connect_at, startedAt) as the origin, and teardownTakeoverAt() nulls
+// first_connect_at in takeover-activity.json once the stack is proven gone
+// (resetTakeoverOriginAt). Both, deliberately: the max() makes a stale file harmless, the
+// reset keeps the file honest.
 // ---------------------------------------------------------------------------
 export const TERMINATE_GRACE_MS = 3_000; // SIGTERM → SIGKILL
 export const KILL_GRACE_MS = 1_000; // SIGKILL → "still alive" (only an uninterruptible D-state process can do this)
@@ -1533,19 +1543,84 @@ export async function teardownStack(state, { graceMs, killGraceMs, portTimeoutMs
  * became invisible and every later open on the profile hung with no diagnosis anywhere.
  */
 export async function teardownTakeoverAt(path, opts = {}) {
+  const activityFile = join(dirname(path), TAKEOVER_ACTIVITY_FILE);
   const state = readTakeoverAt(path);
-  if (state === null) return { actions: [], complete: true };
+  if (state === null) {
+    // No stack recorded, so nothing to signal — but a stale origin from an earlier life may
+    // still be sitting beside where the state file was; that is exactly what must not survive.
+    return { actions: [], complete: true, origin: resetTakeoverOriginAt(activityFile, Date.now()) };
+  }
   const { actions, complete } = await teardownStack(state, opts);
+  let origin;
   if (complete) {
     removeIfPresent(path);
+    origin = resetTakeoverOriginAt(activityFile, Date.now());
   } else {
     const survivors = actions
       .filter((a) => !TEARDOWN_DONE_RESULTS.has(a.result))
       .map((a) => `${a.what}: ${a.result}${a.detail ? ` (${a.detail})` : ''}`)
       .join('; ');
     writeErr(`${SELF}: takeover stack is NOT fully down — keeping ${path} so the survivors stay visible: ${survivors}\n`);
+    // The survivors' session is still real, so its origin stays; the next successful teardown
+    // (close, or the reap on the next open) resets it.
+    origin = { result: 'kept-stack-incomplete' };
   }
-  return { actions, complete };
+  return { actions, complete, origin };
+}
+
+const TAKEOVER_ACTIVITY_FILE = 'takeover-activity.json';
+
+/**
+ * Fix cycle 2 (operator ruling): null `first_connect_at` in takeover-activity.json once the
+ * stack is torn down, so the profile's NEXT supervisor starts with no origin. forge-control
+ * writes this file (takeover-session.ts) and its reader THROWS on a malformed field — a bad
+ * write here would refuse the next socket with 503 — so the key set and value types are kept
+ * exactly: `connected` becomes 0 (websockify is proven dead, no socket can be open), the
+ * cumulative `connects` and the two `last_*` facts survive, `written_at` is now.
+ *
+ * Race, named: forge-control's recordDisconnect() for the socket that died WITH websockify may
+ * read-modify-write this file a few ms after us and put the old origin back. That lost update
+ * is exactly why computeTakeoverDeadlines() also clamps the origin to the supervisor's start —
+ * this reset keeps the file honest, the max() keeps the session safe, and neither relies on
+ * the other. Never throws: a shutdown must finish; corrupt state is reported, never replaced.
+ *
+ *   reset | already-null | absent | unreadable | not-an-object | write-failed
+ */
+export function resetTakeoverOriginAt(activityFile, nowMs) {
+  let raw;
+  try {
+    raw = readFileSync(activityFile, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return { result: 'absent' };
+    return { result: 'unreadable', detail: `${err.code ?? 'error'} ${err.message}` };
+  }
+  let activity;
+  try {
+    activity = JSON.parse(raw);
+  } catch (err) {
+    return { result: 'unreadable', detail: `not JSON: ${err.message}` };
+  }
+  if (activity === null || typeof activity !== 'object' || Array.isArray(activity)) {
+    return { result: 'not-an-object' };
+  }
+  if (activity.first_connect_at === null || activity.first_connect_at === undefined) {
+    return { result: 'already-null' };
+  }
+  const count = (v) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0);
+  const isoOrNull = (v) => (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? v : null);
+  try {
+    writeJsonAtomicOrThrow(activityFile, {
+      connected: 0,
+      connects: count(activity.connects),
+      first_connect_at: null,
+      last_connect_at: isoOrNull(activity.last_connect_at),
+      last_disconnect_at: isoOrNull(activity.last_disconnect_at),
+      written_at: new Date(nowMs).toISOString(),
+    });
+  } catch (err) {
+    return { result: 'write-failed', detail: `${err.code ?? 'error'} ${err.message}` };
+  }
+  return { result: 'reset' };
 }
 
 function teardownTakeover(profile) {
@@ -1607,13 +1682,14 @@ async function reapOrphanedTakeover(profile) {
   }
   if (!verdict.reap) return null;
   writeErr(`${SELF}: reaping an orphaned takeover stack for "${profile}" — ${verdict.reason}\n`);
-  const { actions, complete } = await teardownTakeover(profile);
+  const { actions, complete, origin } = await teardownTakeover(profile);
   return {
     reaped: true,
     complete,
     supervisor_pid: supervisorPid,
     reason: verdict.reason,
     actions,
+    takeover_origin: origin,
   };
 }
 
@@ -1664,7 +1740,7 @@ export const TAKEOVER_MAX_SESSION_DEFAULT_MS = 2 * 60 * 60 * 1000;
 export const TAKEOVER_IDLE_GRACE_MS = Number(process.env[TAKEOVER_IDLE_GRACE_ENV] ?? TAKEOVER_IDLE_GRACE_DEFAULT_MS);
 export const TAKEOVER_MAX_SESSION_MS = Number(process.env[TAKEOVER_MAX_SESSION_ENV] ?? TAKEOVER_MAX_SESSION_DEFAULT_MS);
 /** The activity file forge-control writes (contract with browser-takeover.ts, B2). */
-export const takeoverActivityPath = (profile) => join(stateDir(profile), 'takeover-activity.json');
+export const takeoverActivityPath = (profile) => join(stateDir(profile), TAKEOVER_ACTIVITY_FILE);
 export const lastShutdownPath = (profile) => join(stateDir(profile), 'last-shutdown.json');
 /** session.json is polled by other processes; while a viewer is connected the idle deadline
  *  advances every tick, and rewriting it 4×/s would be churn for nothing. */
@@ -1706,6 +1782,7 @@ const hoursLabel = (ms) => `${ms / 3600000}h`;
  * One supervisor tick's worth of clock arithmetic. Pure: epoch-ms in, epoch-ms out.
  *
  *   now            Date.now()
+ *   startedAt      when THIS supervisor process started (ms) — REQUIRED, see rule 3
  *   activity       parsed takeover-activity.json, or null (absent / unreadable / garbage)
  *   idleDeadline   the supervisor's current idle deadline (ms) — only ever moved LATER here
  *   hardDeadline   HARD_MAX_SESSION_MS from launch (ms) — the outer bound, never exceeded
@@ -1717,14 +1794,32 @@ const hoursLabel = (ms) => `${ms / 3600000}h`;
  *   2. else last_disconnect_at  → idleDeadline = max(idleDeadline, last_disconnect_at + grace).
  *                                  The first idle tick after a disconnect only ARMS the grace;
  *                                  stepping away for a coffee does not kill the session.
- *   3. first_connect_at         → takeoverDeadline = min(first_connect_at + takeoverMaxMs,
- *                                  hardDeadline); now > takeoverDeadline → shutdownReason.
+ *   3. first_connect_at         → origin = max(first_connect_at, startedAt);
+ *                                  takeoverDeadline = min(origin + takeoverMaxMs, hardDeadline);
+ *                                  now > takeoverDeadline → shutdownReason.
+ *                                  The max() is the fix-cycle-2 ruling: first_connect_at is
+ *                                  written once per profile by forge-control and survived every
+ *                                  teardown, so a supervisor born hours after a durable
+ *                                  profile's FIRST-EVER connect computed a deadline already in
+ *                                  the past and died on its first tick, reporting "takeover cap
+ *                                  2h" on a session 250 ms old. A supervisor cannot be
+ *                                  responsible for time before it existed. (The file is also
+ *                                  reset at teardown — resetTakeoverOriginAt — so the max()
+ *                                  only ever has to rescue a lost write.)
  *   4. hardDeadline caps every deadline returned here. The hard-cap shutdown itself stays in
  *      the loop, exactly as before this round.
- * A malformed field never throws: it is ignored AND named in `warnings`, which the supervisor
- * logs once. Silence would hide a broken writer; dying would kill a live session over a log.
+ * A malformed ACTIVITY field never throws: it is ignored AND named in `warnings`, which the
+ * supervisor logs once. Silence would hide a broken writer; dying would kill a live session
+ * over a log. A missing `startedAt` is different — that is a caller bug, and it would
+ * silently re-arm the lifetime cap, so it throws.
  */
-export function computeTakeoverDeadlines({ now, activity, idleDeadline, hardDeadline, config }) {
+export function computeTakeoverDeadlines({ now, startedAt, activity, idleDeadline, hardDeadline, config }) {
+  if (typeof startedAt !== 'number' || !Number.isFinite(startedAt)) {
+    throw new TypeError(
+      `computeTakeoverDeadlines: startedAt must be the supervisor's start in epoch ms, got ${JSON.stringify(startedAt)} — ` +
+        `without it the cap would count from the profile's first-ever connect, not this session`,
+    );
+  }
   const { idleGraceMs, takeoverMaxMs } = config;
   const warnings = [];
   let nextIdle = idleDeadline;
@@ -1756,8 +1851,9 @@ export function computeTakeoverDeadlines({ now, activity, idleDeadline, hardDead
     if (Number.isNaN(firstConnect)) {
       warnings.push(`takeover-activity.json first_connect_at=${JSON.stringify(activity.first_connect_at)} is not an ISO time — no takeover cap can be applied`);
     } else if (firstConnect !== null) {
-      takeoverStartedAt = firstConnect;
-      takeoverDeadline = Math.min(firstConnect + takeoverMaxMs, hardDeadline);
+      // Rule 3: the origin is THIS session's, never the profile's lifetime.
+      takeoverStartedAt = Math.max(firstConnect, startedAt);
+      takeoverDeadline = Math.min(takeoverStartedAt + takeoverMaxMs, hardDeadline);
       if (now > takeoverDeadline) shutdownReason = `takeover cap ${hoursLabel(takeoverMaxMs)}`;
     }
   }
@@ -2271,7 +2367,10 @@ async function supervise(profile, displayNum) {
   });
 
   const page = context.pages()[0] ?? (await context.newPage());
-  const startedAt = new Date().toISOString();
+  // One clock reading for the supervisor's birth: session.json's started_at AND the floor of
+  // the takeover-cap origin (computeTakeoverDeadlines rule 3) come from the same instant.
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
   let idleDeadline = Date.now() + IDLE_TIMEOUT_MS;
   const hardDeadline = Date.now() + HARD_MAX_SESSION_MS;
   // Takeover clock state, derived each tick from takeover-activity.json (epoch ms / count).
@@ -2331,12 +2430,14 @@ async function supervise(profile, displayNum) {
     // file as "the supervisor is finished", and teardown now takes real time (a stubborn
     // x11vnc costs up to TERMINATE_GRACE_MS + KILL_GRACE_MS) — removing the file first would
     // hand `close` a stack that is still being signalled and have two processes race for it.
-    const { actions, complete } = await teardownTakeover(profile);
+    const { actions, complete, origin } = await teardownTakeover(profile);
     // One line per teardown in supervisor.log: which process needed a SIGKILL is exactly what
-    // the next "the takeover hangs on this profile" investigation has to know first.
+    // the next "the takeover hangs on this profile" investigation has to know first — and
+    // whether the cap origin was reset, which is what the one after that has to know.
     writeErr(
       `${SELF}[supervisor]: teardown ${complete ? 'complete' : 'INCOMPLETE — takeover.json kept for the next open/status'}: ` +
-        `${actions.map((a) => `${a.what} ${a.result}${a.pid ? ` pid ${a.pid}` : ''}`).join(', ')}\n`,
+        `${actions.map((a) => `${a.what} ${a.result}${a.pid ? ` pid ${a.pid}` : ''}`).join(', ')}; ` +
+        `takeover origin ${origin.result}${origin.detail ? ` (${origin.detail})` : ''}\n`,
     );
     removeIfPresent(sessionPath(profile));
     removeIfPresent(stopPath(profile));
@@ -2394,6 +2495,7 @@ async function supervise(profile, displayNum) {
     if (problem === null) activityProblemLogged = null;
     const clock = computeTakeoverDeadlines({
       now: Date.now(),
+      startedAt: startedAtMs,
       activity,
       idleDeadline,
       hardDeadline,
@@ -3050,6 +3152,8 @@ async function cmdClose(opts) {
       ...baseStatus(opts.profile, 'close', ports, runInfo),
       actions,
       teardown_complete: teardown.complete,
+      // Fix cycle 2: whether takeover-activity.json's cap origin was nulled for the next life.
+      takeover_origin: teardown.origin,
       note: teardown.complete
         ? `the profile directory ${profileDir(opts.profile)} is NOT touched — its cookies are the ` +
           `whole point of a persistent profile`

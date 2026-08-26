@@ -209,3 +209,85 @@ receipt, §4.1.)
 `:6029`/`:6939` free; `/opt/ai-os/uploads/e2ec11b00002` and the mktemp echo dirs are gone;
 `/opt/ai-os/browser-profiles/testtextinput/` and `testclipe2e/` remain (`.throwaway`-marked,
 0 logins) — deleting a profile dir is Konrad's call.
+
+## B8 — keysym arrival under load: does a remap-aware inter-key gap stop the drop? (No.)
+
+This is the section `vm-keys.ts` (the `REMAP_KEY_DELAY_MS` comment) and `TextToVM.tsx` (the
+"UNDER LOAD" line of its verification ledger) cite as "§B8". The round-8 ui builder (run
+`7cd25bd2`, task `29d35773`) measured it, wrote the citation, and ended without committing
+the section or the code (recovered as `b98f2d3`, see `deploy.md` §5). The raw results lived
+only in `/tmp/r8-rig/` — a reboot deletes them — so they are transcribed here, in fix cycle 2,
+from the two result files as they sat on disk on 2026-08-26 (read directly, not from the
+builder's summary).
+
+### B8.1 The rig (`/tmp/r8-rig/rig.mts`, `load.sh`, `burn.sh`; outside the repo, read-only)
+
+Question: §4.1 found a keysym the Xvfb `us` map LACKS (ß, ä, the euro sign — anything x11vnc
+must add on the fly with `-add_keysyms`) dropped under CPU contention while the panel said
+"typed". Does a longer gap around such a keysym (`keyGapMs()` = `REMAP_KEY_DELAY_MS` 50 ms on
+both sides of a non-keymap keysym) beat the shipped uniform `KEY_DELAY_MS` 4 ms?
+
+- **Pipe:** the REAL stack, as in §1 — a research-browser throwaway profile → Xvfb/x11vnc/
+  websockify → noVNC `vnc.html` driven by headless Playwright, `rfb.sendKey` per keysym — and
+  the VM textarea read back through a local echo server (`echo.html`). `next dev` is left out;
+  it is not on the keysym pipe.
+- **Fresh keysyms per trial:** x11vnc reuses an added keycode for a repeated keysym, so a
+  character typed once never races the keymap again; a repeated sentinel would measure nothing
+  after trial 1. Each trial draws 7 code points never used before from Latin-1 high half
+  (U+00A1–U+00FF, no soft hyphen) then Latin Extended-A (U+0100–U+017E).
+- **Fresh x11vnc every 3 trials** (`--per-stack 3`): Xvfb's `us` map has ≤ 19 free keycodes;
+  after that `add_keysym` has nowhere to put a new keysym and every key is lost regardless of
+  timing. That is *keycode exhaustion*, a different failure — see B8.2.
+- **Policies alternate trial by trial** so both see the same load: `before` = uniform 4 ms
+  (the shipped B1 loop), `after` = `keyGapMs()` (50 ms around a non-keymap keysym).
+- **Load:** `load.sh` re-launches `scripts/checks/check-instrument-typecheck.sh` (~63 `tsc`
+  processes — the exact storm B5 typed beside in §4.1) back to back; `burn.sh` runs waves of
+  16 concurrent `tsc --noEmit`. Both poll `/tmp/r8-rig/STOP`; `loadavg` is sampled per trial
+  from `/proc/loadavg`. (The rig outlived its builder by 2.5 h at loadavg ~40 — memory note
+  `r8-load-rig-outlived-its-builder-at-loadavg-40`; `STOP` exists now and load is back to ~9.)
+
+### B8.2 Run 1 — `results-1787717715085.json`: EXCLUDED (keycode exhaustion, not the race)
+
+24 trials, one x11vnc for all of them, loadavg1 8.97–23.67 — the storm had not yet built.
+
+| policy | trials | keys sent | arrived | lost | `sendMs` per trial |
+|---|---|---|---|---|---|
+| before (4 ms uniform) | 12 | 84 | 34 | **50** | 33–50 |
+| after (50 ms remap gap) | 12 | 84 | 34 | **50** | 310–351 |
+
+Trials 0–3 arrived 7/7; from trial 4 on EVERY trial arrived exactly 2/7 with the last five
+code points missing (`U+00B6…U+00BA`, `U+00C0…U+00C4`, …), in both arms, at a load of 9. That
+is not a timing race: the single x11vnc had used up Xvfb's free keycodes and `add_keysym` was
+failing for every further keysym, two per trial squeezing into slots freed by the previous
+trial's key-ups. Identical loss in both arms at low load is the signature; the fix was
+`--per-stack 3` (fresh x11vnc every 3 trials) in run 2. Kept here so nobody re-reads 50/84 as
+"the race drops 60 %".
+
+### B8.3 Run 2 — `results-1787718015881.json`: the measurement (loadavg1 36.75–54.10)
+
+24 trials, 8 x11vnc stacks (`stack` 0–7, 3 trials each), both load scripts running, loadavg1
+sampled per trial from 36.75 to 54.10 on 16 cores.
+
+| policy | trials | keys sent | arrived | lost | which, at what load | `sendMs` per trial |
+|---|---|---|---|---|---|---|
+| before (4 ms uniform) | 12 | 84 | 83 | **1** | trial 22, `U+0110` (Đ), loadavg1 49.36 | 37–81 |
+| after (50 ms remap gap) | 12 | 84 | 83 | **1** | trial 15, `U+00F1` (ñ), loadavg1 51.56 | 315–398 |
+
+Same loss rate in both arms — 1 of 84 — at the top of the load range, with the remap-aware gap
+costing ~8× the send time. The gap buys nothing measurable. It is kept in `vm-keys.ts` only
+because it is free and cannot hurt; the comment there says so, and says why no browser-side
+delay can work: `add_keysym` in x11vnc does `XChangeKeyboardMapping`, `XFlush`, then the fake
+`KeyPress` with no `XSync` — the MappingNotify and the press are back to back INSIDE x11vnc,
+and a gap taken before the next key cannot separate them (memory note
+`remap-keysym-race-has-no-provably-safe-delay`).
+
+### B8.4 What follows from it
+
+1. The correctness fix is the WORDING: `TextToVM.tsx` reports `sent N keys to the VM —
+   arrival not verified`, never `typed` (pinned by `check-takeover-text-input-e2e.ts` §6b;
+   `sent`→`typed` mutation = 2 FAIL, round-9 integrator).
+2. The real cure is on the supervisor side and out of scope here: give Xvfb a keymap that
+   already carries Latin-1 (a `de` layout or an `xmodmap` pre-load), so ä ö ü ß never need a
+   remap at all.
+3. Plain ASCII was never dropped in either run. The drop does not reproduce on a quiet box —
+   do not raise `REMAP_KEY_DELAY_MS` on the strength of a green idle run.

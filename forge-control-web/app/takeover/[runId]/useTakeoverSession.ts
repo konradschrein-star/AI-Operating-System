@@ -236,6 +236,13 @@ export function useTakeoverSession(dirId: string, options: TakeoverSessionOption
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptRef = useRef(0);
   const connectedSinceRef = useRef<number | null>(null);
+  /** Re-fetch the session view NOW (fix cycle 2). The poll below runs on mount and every
+   *  SESSION_POLL_MS; a socket transition in between left the header showing the PREVIOUS
+   *  view for up to 15 s — "connected · ends in 1:59:40 · idle: stack closes in 0:59:41
+   *  unless reconnected", the idle tail belonging to the pre-connect fetch. Invisible while
+   *  the cap was armed only by the first connect; visible on every open once the cap counts
+   *  from the supervisor's start. Set by the poll effect, called from the bridge's onState. */
+  const refreshSessionRef = useRef<() => void>(() => undefined);
   const endedRef = useRef(false);
 
   const clearReconnectTimer = useCallback(() => {
@@ -335,6 +342,11 @@ export function useTakeoverSession(dirId: string, options: TakeoverSessionOption
         bridgeRef.current = bridge;
         unsubscribeRef.current = bridge.onState((state, previous) => {
           setViewer(state);
+          // A real transition changes connected_sockets on the server (recordConnect runs at
+          // upgrade acceptance, before the RFB handshake that produces "connected" here), so
+          // the view is refetched at once instead of at the next 15 s tick. The synchronous
+          // first call (previous === state) carries no new server fact and is skipped.
+          if (state !== previous) refreshSessionRef.current();
           if (state === "connected") {
             connectedSinceRef.current = Date.now();
             attemptRef.current = 0;
@@ -372,10 +384,12 @@ export function useTakeoverSession(dirId: string, options: TakeoverSessionOption
         clearReconnectTimer();
       }
     };
+    refreshSessionRef.current = () => void tick();
     void tick();
     const timer = setInterval(() => void tick(), SESSION_POLL_MS);
     return () => {
       cancelled = true;
+      refreshSessionRef.current = () => undefined;
       clearInterval(timer);
     };
   }, [enabled, dirId, clearReconnectTimer]);

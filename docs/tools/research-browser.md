@@ -391,8 +391,13 @@ Xvfb; Chrome dies with its display; the profile directory is untouched.
      pre-existing `IDLE_TIMEOUT_MS` (1 h) / `LOGIN_IDLE_TIMEOUT_MS` (4 h after a wall) keep
      governing the agent-only case, and the supervisor takes the *later* of the two.
    - **Safety cap.** `TAKEOVER_MAX_SESSION_MS` (default 2 h = `7200000`) from
-     `first_connect_at` → `shutdown('takeover cap 2h')`. Env-configurable; both values must be
-     finite and > 0 or the supervisor refuses to start.
+     `max(first_connect_at, this supervisor's start)` → `shutdown('takeover cap 2h')`. The
+     `max()` is deliberate: `first_connect_at` is written once per profile and used to outlive
+     every teardown, so on a durable profile a supervisor started 2 h after the first-ever
+     connect died on its first tick. Teardown now also nulls `first_connect_at`
+     (`takeover origin reset` in the supervisor's teardown line; `takeover_origin` in `close`'s
+     JSON), so each life starts with no origin. Env-configurable; both values must be finite
+     and > 0 or the supervisor refuses to start.
    - **Outer bound.** `HARD_MAX_SESSION_MS` (8 h from launch) is never exceeded by either.
 
 **What the page shows.** `/takeover/<runId>` polls

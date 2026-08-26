@@ -22,7 +22,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +32,7 @@ import { join } from "node:path";
 // between two modules that never import each other, and a restated literal
 // would agree with itself while the two sides drifted apart.
 import { PROFILE_MARKER_DIR } from "./browser-takeover.ts";
+import { readActivity } from "./takeover-session.ts";
 
 const REPO_ROOT = new URL("../../../", import.meta.url).pathname;
 const SCRIPT = `${REPO_ROOT}scripts/research-browser.mjs`;
@@ -260,7 +261,8 @@ interface ResearchBrowser {
   teardownTakeoverAt(
     path: string,
     opts?: { graceMs?: number; killGraceMs?: number; portTimeoutMs?: number },
-  ): Promise<{ actions: TeardownAction[]; complete: boolean }>;
+  ): Promise<{ actions: TeardownAction[]; complete: boolean; origin: OriginReset }>;
+  resetTakeoverOriginAt(activityPath: string, nowMs: number): OriginReset;
   PLAYWRIGHT_CANDIDATE_PATHS: string[];
   CHROME_CANDIDATE_PATHS: string[];
   WM_CANDIDATE_PATHS: string[];
@@ -294,11 +296,19 @@ interface ResearchBrowser {
   };
   computeTakeoverDeadlines(input: {
     now: number;
+    /** Fix cycle 2: the supervisor's own start (epoch ms) — the cap origin can never precede it. */
+    startedAt?: number;
     activity: TakeoverActivity | unknown[] | string | null;
     idleDeadline: number;
     hardDeadline: number;
     config: { idleGraceMs: number; takeoverMaxMs: number };
   }): TakeoverClock;
+}
+
+/** What resetTakeoverOriginAt() / teardownTakeoverAt().origin report about takeover-activity.json. */
+interface OriginReset {
+  result: "reset" | "already-null" | "absent" | "unreadable" | "not-an-object" | "write-failed" | "kept-stack-incomplete";
+  detail?: string;
 }
 
 const rb = (await import(SCRIPT_URL)) as ResearchBrowser;
@@ -1779,6 +1789,19 @@ describe("teardownTakeoverAt — takeover.json survives until the stack is prove
   test("kept while a port is still held; removed once the teardown is complete", async () => {
     const dir = mkdtempSync(join(tmpdir(), "rbtest-r8-"));
     const path = join(dir, "takeover.json");
+    // Fix cycle 2: the activity file beside takeover.json carries the cap origin. It must be
+    // KEPT while the stack is up (the survivors' session is still real) and RESET once the
+    // teardown is proven complete, so the profile's next supervisor starts with a null origin.
+    const activityFile = join(dir, "takeover-activity.json");
+    const staleActivity = {
+      connected: 0,
+      connects: 12,
+      first_connect_at: "2026-08-26T02:27:43.267Z",
+      last_connect_at: "2026-08-26T02:41:16.222Z",
+      last_disconnect_at: "2026-08-26T02:41:37.487Z",
+      written_at: "2026-08-26T02:41:37.487Z",
+    };
+    writeFileSync(activityFile, `${JSON.stringify(staleActivity, null, 2)}\n`, { mode: 0o600 });
     const foreign = await spawnStub("rbtest-r8-holder-for-state", { ignoreSigterm: false, listen: true });
     try {
       writeFileSync(
@@ -1803,17 +1826,96 @@ describe("teardownTakeoverAt — takeover.json survives until the stack is prove
       assert.equal(first.complete, false);
       assert.equal(existsSync(path), true, "the state file must outlive a teardown that did not happen");
       assert.equal(byWhat(first.actions, "VNC port").pid, foreign.pid);
+      assert.deepEqual(first.origin, { result: "kept-stack-incomplete" });
+      assert.equal(
+        (JSON.parse(readFileSync(activityFile, "utf8")) as { first_connect_at: unknown }).first_connect_at,
+        staleActivity.first_connect_at,
+        "the origin is untouched while the stack is still up",
+      );
 
       reapStub(foreign);
       await foreign.exit();
       const second = await rb.teardownTakeoverAt(path, { graceMs: 200, portTimeoutMs: 300 });
       assert.equal(second.complete, true, JSON.stringify(second.actions));
       assert.equal(existsSync(path), false, "gone only once the ports are proven free");
+      assert.deepEqual(second.origin, { result: "reset" });
+      const afterReset = JSON.parse(readFileSync(activityFile, "utf8")) as Record<string, unknown>;
+      assert.equal(afterReset.first_connect_at, null, "the next supervisor on this profile starts with no origin");
+      assert.equal(afterReset.connects, 12, "the cumulative facts survive");
 
       const third = await rb.teardownTakeoverAt(path);
-      assert.deepEqual(third, { actions: [], complete: true }, "no state file: nothing to do, and that is complete");
+      assert.deepEqual(
+        third,
+        { actions: [], complete: true, origin: { result: "already-null" } },
+        "no state file: nothing to do, and that is complete; the origin needs no second rewrite",
+      );
     } finally {
       reapStub(foreign);
+      if (existsSync(path)) unlinkSync(path);
+      unlinkSync(activityFile);
+      rmdirSync(dir);
+    }
+  });
+});
+
+describe("resetTakeoverOriginAt — a profile never carries a cap origin into its next life", () => {
+  const NOW = Date.parse("2026-08-26T03:00:44.250Z");
+  const stale = {
+    connected: 1,
+    connects: 7,
+    first_connect_at: "2026-08-25T22:30:44.000Z",
+    last_connect_at: "2026-08-26T02:41:16.222Z",
+    last_disconnect_at: "2026-08-26T02:41:37.487Z",
+    written_at: "2026-08-26T02:41:37.487Z",
+  };
+
+  test("a stale origin is nulled, connected reads 0, connects and the last_* facts survive — and forge-control's strict reader accepts the result", async () => {
+    // Laid out as <stateRoot>/<profile>/takeover-activity.json so readActivity() — the reader
+    // that THROWS on a malformed field and would refuse the next socket with 503 — can be run
+    // against exactly the bytes the supervisor wrote. That is the contract, not this test's
+    // opinion of it.
+    const root = mkdtempSync(join(tmpdir(), "rbtest-origin-"));
+    const profile = "rbtest-origin";
+    mkdirSync(join(root, profile), { mode: 0o700 });
+    const path = join(root, profile, "takeover-activity.json");
+    try {
+      writeFileSync(path, `${JSON.stringify(stale, null, 2)}\n`, { mode: 0o600 });
+      assert.deepEqual(rb.resetTakeoverOriginAt(path, NOW), { result: "reset" });
+      const after = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      assert.deepEqual(after, {
+        connected: 0,
+        connects: 7,
+        first_connect_at: null,
+        last_connect_at: stale.last_connect_at,
+        last_disconnect_at: stale.last_disconnect_at,
+        written_at: new Date(NOW).toISOString(),
+      });
+      const parsed = await readActivity(profile, root);
+      assert.equal(parsed?.first_connect_at, null);
+      assert.equal(parsed?.connects, 7);
+      assert.deepEqual(rb.resetTakeoverOriginAt(path, NOW + 1), { result: "already-null" }, "idempotent: nothing to rewrite");
+      assert.equal((JSON.parse(readFileSync(path, "utf8")) as { written_at: string }).written_at, new Date(NOW).toISOString(), "and it did not rewrite");
+    } finally {
+      unlinkSync(path);
+      rmdirSync(join(root, profile));
+      rmdirSync(root);
+    }
+  });
+
+  test("absent → absent; garbage → unreadable with the bytes untouched; a non-object → not-an-object. Never a throw, never a silent rewrite", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rbtest-origin-"));
+    const path = join(dir, "takeover-activity.json");
+    try {
+      assert.deepEqual(rb.resetTakeoverOriginAt(path, NOW), { result: "absent" });
+      writeFileSync(path, "{not json", { mode: 0o600 });
+      const garbage = rb.resetTakeoverOriginAt(path, NOW);
+      assert.equal(garbage.result, "unreadable");
+      assert.match(garbage.detail ?? "", /JSON/);
+      assert.equal(readFileSync(path, "utf8"), "{not json", "corrupt state is reported, never silently replaced");
+      writeFileSync(path, "[1,2]", { mode: 0o600 });
+      assert.equal(rb.resetTakeoverOriginAt(path, NOW).result, "not-an-object");
+      assert.equal(readFileSync(path, "utf8"), "[1,2]");
+    } finally {
       if (existsSync(path)) unlinkSync(path);
       rmdirSync(dir);
     }
@@ -1965,7 +2067,7 @@ describe("computeTakeoverDeadlines", () => {
   });
 
   test("no activity file (nobody ever connected) changes nothing — the agent-only clocks govern", () => {
-    const c = rb.computeTakeoverDeadlines({ now: T0, activity: null, idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0, activity: null, idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.deepEqual(c, {
       idleDeadline: T0 + 60 * MIN,
       takeoverDeadline: null,
@@ -1979,17 +2081,17 @@ describe("computeTakeoverDeadlines", () => {
   test("a CONNECTED viewer is never idle: the idle deadline is pushed past `now` even when it had expired", () => {
     // The agent's 1 h idle clock ran out 20 min ago; Konrad is in the session. No shutdown.
     const expired = T0 - 20 * MIN;
-    const c = rb.computeTakeoverDeadlines({ now: T0, activity: activity(), idleDeadline: expired, hardDeadline: T0 + 480 * MIN, config });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0, activity: activity(), idleDeadline: expired, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(c.connected, 1);
     assert.equal(c.idleDeadline, T0 + 30 * MIN, "now + grace, so the loop's `now > idleDeadline` cannot fire");
     assert.equal(c.shutdownReason, null);
     // …and it keeps moving with every tick, never backwards.
-    const later = rb.computeTakeoverDeadlines({ now: T0 + 5 * MIN, activity: activity(), idleDeadline: c.idleDeadline, hardDeadline: T0 + 480 * MIN, config });
+    const later = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0 + 5 * MIN, activity: activity(), idleDeadline: c.idleDeadline, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(later.idleDeadline, T0 + 35 * MIN);
   });
 
   test("a later existing idle deadline is kept — max(), never a pull-back", () => {
-    const c = rb.computeTakeoverDeadlines({ now: T0, activity: activity(), idleDeadline: T0 + 240 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0, activity: activity(), idleDeadline: T0 + 240 * MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(c.idleDeadline, T0 + 240 * MIN, "LOGIN_IDLE 4 h outlives a 30 min grace");
   });
 
@@ -1997,16 +2099,16 @@ describe("computeTakeoverDeadlines", () => {
     const left = T0 + 10 * MIN;
     const gone = activity({ connected: 0, last_disconnect_at: iso(left) });
     // The tick right after the socket closed: idle deadline was already past, still no shutdown.
-    const first = rb.computeTakeoverDeadlines({ now: left + 1, activity: gone, idleDeadline: T0 - MIN, hardDeadline: T0 + 480 * MIN, config });
+    const first = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: left + 1, activity: gone, idleDeadline: T0 - MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(first.connected, 0);
     assert.equal(first.idleDeadline, left + 30 * MIN, "armed: last_disconnect_at + grace");
     assert.equal(first.shutdownReason, null);
     assert.ok(first.idleDeadline > left + 1, "the loop's idle check cannot fire on this tick");
     // 29 min later: still inside the grace.
-    const inside = rb.computeTakeoverDeadlines({ now: left + 29 * MIN, activity: gone, idleDeadline: first.idleDeadline, hardDeadline: T0 + 480 * MIN, config });
+    const inside = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: left + 29 * MIN, activity: gone, idleDeadline: first.idleDeadline, hardDeadline: T0 + 480 * MIN, config });
     assert.ok(inside.idleDeadline > left + 29 * MIN);
     // 31 min later: the deadline is behind `now` — the LOOP's idle check fires (not this function).
-    const after = rb.computeTakeoverDeadlines({ now: left + 31 * MIN, activity: gone, idleDeadline: first.idleDeadline, hardDeadline: T0 + 480 * MIN, config });
+    const after = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: left + 31 * MIN, activity: gone, idleDeadline: first.idleDeadline, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(after.idleDeadline, left + 30 * MIN);
     assert.ok(left + 31 * MIN > after.idleDeadline, "grace elapsed → idle shutdown is due");
     assert.equal(after.shutdownReason, null, "idle is the loop's verdict; only the cap is decided here");
@@ -2014,49 +2116,104 @@ describe("computeTakeoverDeadlines", () => {
 
   test("a reconnect within the grace cancels it — connected wins over last_disconnect_at", () => {
     const back = activity({ connected: 1, last_disconnect_at: iso(T0 + 10 * MIN), last_connect_at: iso(T0 + 20 * MIN) });
-    const c = rb.computeTakeoverDeadlines({ now: T0 + 20 * MIN, activity: back, idleDeadline: T0 + 40 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0 + 20 * MIN, activity: back, idleDeadline: T0 + 40 * MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(c.idleDeadline, T0 + 50 * MIN, "now + grace, not last_disconnect_at + grace");
   });
 
   test("the cap counts from first_connect_at and fires only once `now` is past it", () => {
-    const before = rb.computeTakeoverDeadlines({ now: T0 + 119 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    const before = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0 + 119 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(before.takeoverStartedAt, T0);
     assert.equal(before.takeoverDeadline, T0 + 120 * MIN);
     assert.equal(before.shutdownReason, null);
-    const at = rb.computeTakeoverDeadlines({ now: T0 + 120 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    const at = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0 + 120 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(at.shutdownReason, null, "the boundary itself is not past");
-    const past = rb.computeTakeoverDeadlines({ now: T0 + 120 * MIN + 1, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    const past = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0 + 120 * MIN + 1, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(past.shutdownReason, "takeover cap 2h");
   });
 
+  /* Fix cycle 2 — the operator ruling: the cap must measure THIS session, never the profile's
+   * lifetime. `first_connect_at` is written once by forge-control, preserved by the boot
+   * reconcile and (before this fix) cleared by nothing, so a supervisor born hours after a
+   * profile's first-ever connect computed a deadline already in the past and shut down on its
+   * first tick — "takeover cap 2h" on a session 250 ms old. The fixture below is copied
+   * VERBATIM from /opt/ai-os/browser-profiles/.state/rbtest-clock-zz/takeover-activity.json as
+   * it sat on disk on 2026-08-26 (the ruling's "WOULD SHUT DOWN IMMEDIATELY" row). The four
+   * .state files stay on disk as evidence; this copy is the regression test. */
+  const STALE_ORIGIN_FIXTURE = {
+    connected: 1,
+    connects: 1,
+    first_connect_at: "2026-08-25T22:30:44.000Z",
+    last_connect_at: "2026-08-25T22:30:44.000Z",
+    last_disconnect_at: null,
+    written_at: "2026-08-26T01:30:44.000Z",
+  };
+
+  test("REGRESSION (ruling): a first_connect_at 4.5 h old read by a supervisor 250 ms old → NO shutdown, a full cap window from the supervisor's start", () => {
+    const now = Date.parse("2026-08-26T03:00:44.250Z"); // 4.5 h after the fixture's origin
+    const startedAt = now - 250; // the supervisor's first tick after Chrome came up
+    const c = rb.computeTakeoverDeadlines({
+      now, startedAt, activity: STALE_ORIGIN_FIXTURE, idleDeadline: now + 60 * MIN, hardDeadline: startedAt + 480 * MIN, config,
+    });
+    assert.equal(c.shutdownReason, null, "a supervisor cannot be responsible for time before it existed");
+    assert.equal(c.takeoverStartedAt, startedAt, "origin = max(first_connect_at, startedAt)");
+    assert.equal(c.takeoverDeadline, startedAt + 120 * MIN, "the FULL cap window, counted from this supervisor");
+    assert.ok((c.takeoverDeadline ?? 0) > now, "the deadline lies ahead of the first tick, not 150 min behind it");
+    // Control: the same file read by a supervisor that HAS been alive since before that first
+    // connect is genuinely 2.5 h into its own session, and the cap must still fire. Removing
+    // the cap would pass the assertions above and fail this one.
+    const firstConnect = Date.parse(STALE_ORIGIN_FIXTURE.first_connect_at);
+    const old = rb.computeTakeoverDeadlines({
+      now, startedAt: firstConnect - MIN, activity: STALE_ORIGIN_FIXTURE, idleDeadline: now + 60 * MIN, hardDeadline: now + 480 * MIN, config,
+    });
+    assert.equal(old.shutdownReason, "takeover cap 2h");
+    assert.equal(old.takeoverStartedAt, firstConnect, "a connect after the supervisor's start stays the origin");
+  });
+
+  test("a connect AFTER the supervisor started is the origin — the ordinary session is unchanged by the fix", () => {
+    const c = rb.computeTakeoverDeadlines({ now: T0 + MIN, startedAt: T0 - 5 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(c.takeoverStartedAt, T0);
+    assert.equal(c.takeoverDeadline, T0 + 120 * MIN);
+    assert.equal(c.shutdownReason, null);
+  });
+
+  test("startedAt is REQUIRED — a caller that forgets it gets a throw naming the field, not a silent lifetime cap", () => {
+    for (const bad of [undefined, null, Number.NaN, Number.POSITIVE_INFINITY, "2026-08-26T01:00:00.000Z"]) {
+      assert.throws(
+        () => rb.computeTakeoverDeadlines({ now: T0, startedAt: bad as unknown as number, activity: activity(), idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config }),
+        /startedAt/,
+        `startedAt=${String(bad)} must throw`,
+      );
+    }
+  });
+
   test("the cap fires even while a viewer is connected — it is the safety cap, not an idle rule", () => {
-    const c = rb.computeTakeoverDeadlines({ now: T0 + 121 * MIN, activity: activity({ connected: 2 }), idleDeadline: T0, hardDeadline: T0 + 480 * MIN, config });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0 + 121 * MIN, activity: activity({ connected: 2 }), idleDeadline: T0, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(c.connected, 2);
     assert.equal(c.shutdownReason, "takeover cap 2h");
   });
 
   test("the cap survives reconnects: later connects do not move first_connect_at", () => {
     const re = activity({ connects: 6, last_connect_at: iso(T0 + 110 * MIN) });
-    const c = rb.computeTakeoverDeadlines({ now: T0 + 121 * MIN, activity: re, idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0 + 121 * MIN, activity: re, idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(c.takeoverDeadline, T0 + 120 * MIN);
     assert.equal(c.shutdownReason, "takeover cap 2h");
   });
 
   test("the hard deadline is the outer bound for every deadline returned", () => {
     const hard = T0 + 60 * MIN;
-    const c = rb.computeTakeoverDeadlines({ now: T0, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: hard, config });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: hard, config });
     assert.equal(c.takeoverDeadline, hard, "min(first_connect + cap, hard)");
     assert.equal(c.idleDeadline, hard, "idle can never be scheduled past the hard cap");
   });
 
   test("the reason string carries the configured cap, not a literal", () => {
-    const c = rb.computeTakeoverDeadlines({ now: T0 + 31 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config: { idleGraceMs: 30 * MIN, takeoverMaxMs: 30 * MIN } });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0 + 31 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config: { idleGraceMs: 30 * MIN, takeoverMaxMs: 30 * MIN } });
     assert.equal(c.shutdownReason, "takeover cap 0.5h");
   });
 
   test("garbage fields are ignored AND named — never a throw, never silence", () => {
     const bad = activity({ connected: "two", first_connect_at: "yesterday", last_disconnect_at: 42 });
-    const c = rb.computeTakeoverDeadlines({ now: T0, activity: bad, idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0, activity: bad, idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(c.connected, 0);
     assert.equal(c.takeoverDeadline, null);
     assert.equal(c.shutdownReason, null);
@@ -2067,7 +2224,7 @@ describe("computeTakeoverDeadlines", () => {
     assert.match(c.warnings[2], /first_connect_at="yesterday" is not an ISO time/);
     // A file that is JSON but not an object is one warning and no effect.
     for (const junk of [[1, 2], "connected"]) {
-      const j = rb.computeTakeoverDeadlines({ now: T0, activity: junk, idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config });
+      const j = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0, activity: junk, idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config });
       assert.equal(j.idleDeadline, T0 + 60 * MIN);
       assert.equal(j.warnings.length, 1, JSON.stringify(junk));
       assert.match(j.warnings[0], /not an object/);
@@ -2075,7 +2232,7 @@ describe("computeTakeoverDeadlines", () => {
   });
 
   test("a negative connected count is clamped to 0 — a decrement bug upstream must not pin the session open", () => {
-    const c = rb.computeTakeoverDeadlines({ now: T0, activity: activity({ connected: -1 }), idleDeadline: T0 - MIN, hardDeadline: T0 + 480 * MIN, config });
+    const c = rb.computeTakeoverDeadlines({ startedAt: T0 - MIN, now: T0, activity: activity({ connected: -1 }), idleDeadline: T0 - MIN, hardDeadline: T0 + 480 * MIN, config });
     assert.equal(c.connected, 0);
     assert.equal(c.idleDeadline, T0 - MIN, "not connected and never disconnected: nothing to arm");
   });

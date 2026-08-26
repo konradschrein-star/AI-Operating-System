@@ -196,3 +196,15 @@ id from §2.2, the statement that `pm2 restart forge-executor` was NOT run and t
 restart was launched, the §3 evidence with screenshot URLs, and the one thing Konrad owes the
 system: the forge-control restart at a moment of his choosing, and his profile-migration answer
 (`docs/tools/research-browser.md` §4.1 — default C, fresh `konrad-main`, stands if silent).
+
+## 5. Write-set ledger — commits that touched files outside their task's declared write_set
+
+Recorded here per the round-10 review (finding 4) so the deploy reviewer does not have to
+rediscover them from `git log`. Every entry was disclosed in its own commit message; none was
+declared on a task row.
+
+| commit | task (write_set as declared) | undeclared paths | why it had to change |
+|---|---|---|---|
+| `b98f2d3` | R8 ui `29d35773` — the three `forge-control-web/app/takeover/[runId]/` files | `scripts/checks/check-takeover-text-input-e2e.ts`, `scripts/checks/check-vm-keys.ts` | the checks that pin the new wording ("sent", never "typed") and the header clock; they could not stay green without the edit. The lane died uncommitted; the round-9 integrator recovered and committed it. |
+| `ef6dab3` | R9 integrator `1bd633ea` — write_set `{}` (empty) | `forge-control-web/app/takeover/[runId]/TextToVM.tsx`, `forge-control-web/app/takeover/[runId]/vm-keys.ts` | gate 9 (`dollar-sweep`) greps the euro glyph; two comments and one feedback string were rewritten to "the euro sign" / U+20AC. |
+| fix cycle 2 (round 11) | builder task — write_set `{}` (empty; the reviewer's verdict names the intended set) | `scripts/research-browser.mjs`, `forge-control/src/lib/research-browser-cli.test.ts`, `scripts/checks/gates-808.sh`, `scripts/checks/check-takeover-text-input-e2e.ts`, `docs/plan/aios-takeover-usable/evidence-text-input.md`, this file | round-10 verdict items 1–4: the cap-origin fix + its regression test, the two `skip` rows, the §B8 evidence, this ledger. `check-vm-keys.ts` was named in the verdict's intended set and was NOT touched. |

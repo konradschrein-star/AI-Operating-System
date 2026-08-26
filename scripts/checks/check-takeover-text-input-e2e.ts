@@ -1235,16 +1235,30 @@ async function e2e(): Promise<string[]> {
   check(`connected_sockets = 1 (got ${sessionBody.connected_sockets})`, sessionBody.connected_sockets === 1);
   check(`remaining_ms > 0 (got ${sessionBody.remaining_ms})`, typeof sessionBody.remaining_ms === "number" && sessionBody.remaining_ms > 0);
   check("supervisor_live and stack_up are true, ended is null", sessionBody.supervisor_live === true && sessionBody.stack_up === true && sessionBody.ended === null);
+  // The whole line, anchored: "connected" from the socket, "ends in" from the cap, and NO
+  // idle tail — the tail is rendered only when the server view says 0 sockets, so its
+  // presence here means the header is showing a view fetched before the socket connected.
+  // Fix cycle 2 made useTakeoverSession refetch on every socket transition; before that the
+  // first 'ends in' line was the stale one for up to SESSION_POLL_MS, and a check that took
+  // the first line containing 'ends in' read the wrong view.
+  const HEADER_CAP_RE = /^connected · ends in (\d+):(\d\d):(\d\d)$/;
   const clockLine = await waitUntil(
-    "'ends in' in the header",
+    "'connected · ends in h:mm:ss' in the header, without an idle tail",
     async () => {
       const t = await statusText(page);
-      return t.includes("ends in") ? t : null;
+      return HEADER_CAP_RE.test(t) ? t : null;
     },
     20_000,
     250,
   ).catch(async () => statusText(page));
-  check("header shows 'connected · ends in h:mm:ss'", /^connected · ends in \d+:\d\d:\d\d$/.test(clockLine), clockLine);
+  const clockMatch = HEADER_CAP_RE.exec(clockLine);
+  check("header shows 'connected · ends in h:mm:ss'", clockMatch !== null, clockLine);
+  // Round-10 review: the shape alone cannot tell the 2 h cap from the 1 h agent idle deadline
+  // (IDLE_TIMEOUT_MS) or the 30 min takeover grace. The header must count to the CAP, and a
+  // session connected seconds ago has ~1:59:xx of it left — so anything under 1:30:00 here is
+  // the wrong clock (or, before fix cycle 2, a stale profile origin eating the window).
+  const clockSeconds = clockMatch === null ? -1 : Number(clockMatch[1]) * 3600 + Number(clockMatch[2]) * 60 + Number(clockMatch[3]);
+  check("header clock exceeds 1:30:00 — it is the session cap, not the idle deadline", clockSeconds > 90 * 60, `${clockLine} → ${clockSeconds}s`);
 
   await page.evaluate(() => {
     const w = window as unknown as { __endBody?: unknown; fetch: typeof fetch };

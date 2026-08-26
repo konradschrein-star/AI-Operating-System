@@ -578,6 +578,13 @@ else
     "browser harness not requested (--browser); run separately, recipe in docs/plan/artifacts/chat-ref-nav/README.md"
   skip "check-chat-tool-path.mjs — tool-row paths are openable, prose is not" \
     "browser harness not requested (--browser); run separately, recipe in docs/plan/artifacts/chat-ref-nav/README.md"
+  # aios-takeover-usable fix cycle 2: without these two lines the takeover E2Es were not
+  # SKIPPED, they were ABSENT — a 44-row table reading "RED 0" while the project's headline
+  # browser gate was red at E1. A gate the table does not list is a gate nobody misses.
+  skip "check-takeover-clipboard-e2e.ts — Paste/Copy buttons through the real noVNC iframe" \
+    "browser harness not requested (--browser); run separately: cd forge-control-web && ../forge-control/node_modules/.bin/tsx --tsconfig ../tsconfig.checks.json ../scripts/checks/check-takeover-clipboard-e2e.ts"
+  skip "check-takeover-text-input-e2e.ts --browser — type through the real stack, restart-reconnect, Done, no-log" \
+    "browser harness not requested (--browser); run separately: cd forge-control-web && ../forge-control/node_modules/.bin/tsx --tsconfig ../tsconfig.checks.json ../scripts/checks/check-takeover-text-input-e2e.ts --browser"
 fi
 
 gate_sh "reproduce-cleanliness — re-running a protocol leaves the tree untouched" \
