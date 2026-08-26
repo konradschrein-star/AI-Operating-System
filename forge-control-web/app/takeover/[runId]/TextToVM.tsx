@@ -13,8 +13,11 @@
  * Two mechanisms, a segmented control, default = Type keys:
  *   Type keys        — one RFB KeyEvent pair (down+up) per code point through
  *                      `rfb.sendKey(keysym, null)` (noVNC core/rfb.js:408),
- *                      KEY_DELAY_MS apart. Works on login forms that block
- *                      paste. Lands wherever the VM's keyboard focus is.
+ *                      KEY_DELAY_MS apart, REMAP_KEY_DELAY_MS around any
+ *                      keysym the VM keymap lacks (vm-keys.ts keyGapMs). Works
+ *                      on login forms that block paste. Lands wherever the
+ *                      VM's keyboard focus is. Reports "sent N keys", never
+ *                      "typed": the page cannot see what arrived.
  *   Set VM clipboard — `rfb.clipboardPasteFrom(text)` (rfb.js:443): the VNC
  *                      server clipboard, then Ctrl+V inside the VM. Same
  *                      path the header's Paste-to-VM button drives.
@@ -41,10 +44,20 @@
  *     (noVNC 1.3.0 legacy ClientCutText; x11vnc 0.9.16 offers no extended-
  *     clipboard notify). So clipboard mode REFUSES text with any code point
  *     above U+00FF and points at Type keys, which carries all of them.
+ *   ✓ UNDER LOAD (B5, then B8 — evidence-text-input.md §B8): with a 63-process
+ *     tsc storm beside the stack (loadavg 30–54 on 16 cores) a keysym the VM
+ *     keymap LACKS (ß, ä, €, …) is dropped roughly once per ~80 sent, at 4 ms
+ *     and at 50 ms alike — the race is inside x11vnc (`-add_keysyms`:
+ *     XChangeKeyboardMapping then the fake press, no XSync) and no browser-
+ *     side delay can split it. Plain ASCII was never dropped. Hence the
+ *     feedback says "sent N keys — arrival not verified", never "typed".
  * ── WHAT WAS NOT VERIFIED ──
+ *   ✗ ARRIVAL. `rfb.sendKey` writes a WebSocket frame; nothing on this page
+ *     can read the VM's DOM or X11 focus back. Every count here is a count
+ *     of frames written, and the wording says so.
  *   ✗ Non-Latin scripts beyond the table (CJK IME composition, RTL shaping).
- *   ✗ Behaviour under a loaded host or a non-US X keymap (hence KEY_DELAY_MS
- *     is 4 ms rather than the 0 ms that passed).
+ *   ✗ A non-US X keymap (a `de` layout would remove the remap for umlauts
+ *     entirely — supervisor-side, not this file).
  *   ✗ Any Chrome field other than a textarea / input (rich editors may
  *     debounce or transform bursts).
  *   ✗ Which VM widget holds focus. The page cannot see X11 focus. R1 §3.1:
@@ -53,7 +66,7 @@
  *     is a separate, explicit button, and the hint says tap the field first.
  *
  * NEVER LOGGED. No console.* in this file, no fetch, no error message that
- * contains the text; progress is counts only ('typing 37/120'). The text goes
+ * contains the text; progress is counts only ('sending 37/120'). The text goes
  * browser → WebSocket → x11vnc as RFB frames that forge-control pipes without
  * parsing. Keep it that way.
  */
@@ -61,7 +74,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { tokens } from "../../tokens";
 import type { NoVNCBridge } from "./novnc-bridge";
-import { KEY_DELAY_MS, XK_RETURN, textToKeyEvents } from "./vm-keys";
+import { XK_RETURN, keyGapMs, textToKeyEvents } from "./vm-keys";
 
 export type SendMode = "type" | "clipboard";
 
@@ -163,9 +176,17 @@ export function TextToVM({ getBridge, connected, extraActions, initiallyHidden =
           }
           rfb.sendKey(events[i].keysym, null); // down + up
           setProgress({ sent: i + 1, total });
-          if (KEY_DELAY_MS > 0) await sleep(KEY_DELAY_MS);
+          // A keysym the VM keymap lacks (ä ß, the euro sign, …) gets
+          // REMAP_KEY_DELAY_MS on both sides; plain ASCII keeps KEY_DELAY_MS.
+          // See vm-keys.ts.
+          const gap = keyGapMs(events[i].keysym, i + 1 < total ? events[i + 1].keysym : null);
+          if (gap > 0) await sleep(gap);
         }
-        say(`typed ${total} key${total === 1 ? "" : "s"} into the VM${withReturn ? " + Enter" : ""}`);
+        // "sent", never "typed": sendKey writes a WebSocket frame and nothing
+        // on this page can see whether Chrome inside the VM received it. B5
+        // measured a lost ß under CPU load while the old wording said "typed
+        // 30 keys" — a claim of arrival the page cannot make.
+        say(`sent ${total} key${total === 1 ? "" : "s"} to the VM${withReturn ? " + Enter" : ""} — arrival not verified, check the field`);
         setText("");
       } finally {
         sendingRef.current = false;
@@ -272,7 +293,7 @@ export function TextToVM({ getBridge, connected, extraActions, initiallyHidden =
         )}
         {progress && (
           <span data-text-to-vm-progress style={{ fontSize: 11, color: tokens.info, whiteSpace: "nowrap", marginLeft: "auto" }}>
-            typing {progress.sent}/{progress.total}
+            sending {progress.sent}/{progress.total}
           </span>
         )}
       </div>
@@ -334,7 +355,7 @@ export function TextToVM({ getBridge, connected, extraActions, initiallyHidden =
             cursor: canSend ? "pointer" : "not-allowed",
           }}
         >
-          {sending ? `typing ${progress.sent}/${progress.total}` : mode === "type" ? "Send" : "Set clipboard"}
+          {sending ? `sending ${progress.sent}/${progress.total}` : mode === "type" ? "Send" : "Set clipboard"}
         </button>
         {mode === "type" && (
           <button

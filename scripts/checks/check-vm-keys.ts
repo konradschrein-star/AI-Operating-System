@@ -28,9 +28,12 @@
 import {
   BMP_TABLE_SIZE,
   KEY_DELAY_MS,
+  REMAP_KEY_DELAY_MS,
   XK_RETURN,
   XK_TAB,
   countKeyEvents,
+  isInBaseKeymap,
+  keyGapMs,
   keysymForCodePoint,
   textToKeyEvents,
 } from "../../forge-control-web/app/takeover/[runId]/vm-keys.ts";
@@ -44,8 +47,11 @@ import {
   RECONNECT_MAX_ATTEMPTS,
   SESSION_POLL_MS,
   SESSION_WARN_UNDER_MS,
+  capRemainingAtFetch,
   composeStatusLine,
   formatRemaining,
+  idleRemainingAtFetch,
+  msUntil,
 } from "../../forge-control-web/app/takeover/[runId]/useTakeoverSession.ts";
 import {
   takeoverEndUrl,
@@ -163,6 +169,7 @@ const okClock = {
     ended: null,
   },
   remainingMs: (1 * 3600 + 52 * 60 + 10) * 1000,
+  idleRemainingMs: null,
 };
 
 eq(
@@ -228,6 +235,86 @@ eq(
   "minting → 'minting ticket'",
   composeStatusLine({ ticket: "loading", viewer: "init", reconnect: null, clock: { kind: "loading" }, bridgeError: null }),
   "minting ticket",
+);
+
+/* ── 3b. B8 · remap-aware key gaps; the cap is the clock, idle is separate ── */
+section("3b. B8 · keyGapMs / isInBaseKeymap, capRemainingAtFetch / idleRemainingAtFetch, idle tail");
+
+check(
+  `REMAP_KEY_DELAY_MS (${REMAP_KEY_DELAY_MS}) is ≥ 10× KEY_DELAY_MS and ≤ 200 ms`,
+  REMAP_KEY_DELAY_MS >= KEY_DELAY_MS * 10 && REMAP_KEY_DELAY_MS <= 200,
+);
+check(
+  "printable ASCII, Return and Tab are in the VM's base keymap",
+  isInBaseKeymap(0x20) && isInBaseKeymap(0x61) && isInBaseKeymap(0x7e) && isInBaseKeymap(XK_RETURN) && isInBaseKeymap(XK_TAB),
+);
+check(
+  "ä ß € 🙂 and a table hit (ー) are NOT — x11vnc must -add_keysyms them",
+  !isInBaseKeymap(0xe4) && !isInBaseKeymap(0xdf) && !isInBaseKeymap(0x20ac) && !isInBaseKeymap(0x0101f642) && !isInBaseKeymap(0x4b0),
+);
+check("ASCII → ASCII keeps KEY_DELAY_MS", keyGapMs(0x61, 0x62) === KEY_DELAY_MS);
+check("after a remapped key → REMAP gap", keyGapMs(0xdf, 0x41) === REMAP_KEY_DELAY_MS);
+check("before a remapped key → REMAP gap", keyGapMs(0x41, 0xdf) === REMAP_KEY_DELAY_MS);
+check("last key: ASCII → KEY_DELAY_MS, remapped → REMAP", keyGapMs(0x61, null) === KEY_DELAY_MS && keyGapMs(0x20ac, null) === REMAP_KEY_DELAY_MS);
+{
+  // The string B5 lost ß in under load: every gap touching one of its seven
+  // non-keymap keysyms is the slow one (11 of 15), the four ASCII-only gaps stay fast.
+  const ev = textToKeyEvents("Pässwörd ßÄÖÜ €");
+  const g = ev.map((e, i) => keyGapMs(e.keysym, i + 1 < ev.length ? ev[i + 1].keysym : null));
+  const slow = g.filter((x) => x === REMAP_KEY_DELAY_MS).length;
+  check(`"Pässwörd ßÄÖÜ €": ${slow}/${g.length} gaps are REMAP, ${g.length - slow} stay KEY_DELAY_MS`, slow === 11 && g.length === 15);
+}
+
+// The route body B5 measured: remaining_ms is the EARLIEST deadline, which
+// while connected is the sliding 1 h idle clock — the header must not show it.
+const capBody = {
+  ...okClock.body,
+  idle_deadline: "2026-08-26T03:07:50Z",
+  takeover_deadline: "2026-08-26T04:00:00Z",
+  hard_deadline: "2026-08-26T09:00:00Z",
+  remaining_ms: 3_600_000,
+  now: "2026-08-26T02:07:50Z",
+};
+check(
+  "capRemainingAtFetch is the TAKEOVER cap (1:52:10), never remaining_ms (the idle hour)",
+  capRemainingAtFetch(capBody) === (1 * 3600 + 52 * 60 + 10) * 1000,
+  String(capRemainingAtFetch(capBody)),
+);
+check("idleRemainingAtFetch = idle_deadline − now = 1:00:00", idleRemainingAtFetch(capBody) === 3_600_000);
+check(
+  "no takeover cap armed yet → the hard cap (6:52:10)",
+  capRemainingAtFetch({ ...capBody, takeover_deadline: null }) === (6 * 3600 + 52 * 60 + 10) * 1000,
+);
+check("no cap at all → null (rendered as 'no session clock armed')", capRemainingAtFetch({ ...capBody, takeover_deadline: null, hard_deadline: null }) === null);
+check("no idle deadline → null", idleRemainingAtFetch({ ...capBody, idle_deadline: null }) === null);
+let threwBad = false;
+try {
+  msUntil("not-a-timestamp", capBody.now, "takeover_deadline");
+} catch (e) {
+  threwBad = /takeover_deadline/.test((e as Error).message);
+}
+check("an unparseable deadline throws, naming the field (no NaN clock)", threwBad);
+eq(
+  "connected: the idle clock is NOT rendered (it slides while a socket is up)",
+  composeStatusLine({
+    ticket: "ready",
+    viewer: "connected",
+    reconnect: null,
+    clock: { kind: "ok", body: capBody, remainingMs: 6_730_000, idleRemainingMs: 3_600_000 },
+    bridgeError: null,
+  }),
+  "connected · ends in 1:52:10",
+);
+eq(
+  "nobody connected: the cap first, then the idle deadline, labelled",
+  composeStatusLine({
+    ticket: "loading",
+    viewer: "disconnected",
+    reconnect: { attempt: 2, max: 5, droppedAfterS: 118, exhausted: false },
+    clock: { kind: "ok", body: { ...capBody, connected_sockets: 0 }, remainingMs: 6_730_000, idleRemainingMs: 3_492_000 },
+    bridgeError: null,
+  }),
+  "reconnecting 2/5 · dropped after 118 s · ends in 1:52:10 · idle: stack closes in 0:58:12 unless reconnected",
 );
 
 /* ── 4. browser-shots · the two new URLs ─────────────────────────────────── */
