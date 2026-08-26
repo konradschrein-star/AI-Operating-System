@@ -24,9 +24,8 @@
  * `db/runs.ts` are owned by the engine lane this cycle and must not change.
  */
 
-import { appendFile } from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import pg from "pg";
 import type { QueryResult, QueryResultRow } from "pg";
 
@@ -358,19 +357,9 @@ export async function resolveChatProject(
   };
 }
 
-/** Repo root, from this module's own location:
- *  `<root>/forge-control/src/routes/chat-linkage.ts` → `<root>`. Derived from
- *  `import.meta.url` and not from `process.cwd()` on purpose: the API is
- *  started by pm2 with an unrelated working directory, and the log must land
- *  in the worktree that owns the code that wrote it. */
-const REPO_ROOT = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../..",
-);
-const BACKFILL_LOG = path.join(
-  REPO_ROOT,
-  "docs/plan/artifacts/phase300/backfill.log",
-);
+export const BACKFILL_LOG =
+  process.env.FORGE_BACKFILL_LOG ??
+  "/var/log/forge/chat-linkage-backfill.log";
 
 /**
  * Write `origin_chat_id` into a project's metadata, once, ever.
@@ -381,10 +370,10 @@ const BACKFILL_LOG = path.join(
  * merges, so no other key is touched.
  *
  * Every actual write is logged twice: to the process log (visible in pm2) and
- * appended to `docs/plan/artifacts/phase300/backfill.log`, which is the list
+ * appended to `/var/log/forge/chat-linkage-backfill.log` (or FORGE_BACKFILL_LOG), which is the list
  * the phase's rollback line consumes.
  */
-async function backfillOriginChatId(
+export async function backfillOriginChatId(
   chatId: string,
   projectId: string,
 ): Promise<void> {
@@ -401,6 +390,7 @@ async function backfillOriginChatId(
   const line = `${new Date().toISOString()} backfill origin_chat_id chat=${chatId} project=${projectId}`;
   console.log(`[chat-linkage] ${line}`);
   try {
+    await mkdir(path.dirname(BACKFILL_LOG), { recursive: true });
     await appendFile(BACKFILL_LOG, `${line}\n`, "utf8");
   } catch (e) {
     // The row is already written; failing the caller's read would misreport a
