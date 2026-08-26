@@ -747,11 +747,29 @@ export const RESEARCH_INSTRUMENTS =
  *  states the reflex at the point of work, because "drive a browser" reads as
  *  an abstract permission until a role is told what its own unknowns look like.
  *  Deliberately shorter than RESEARCH_INSTRUMENTS: scout is a Haiku role and
- *  builder's prompt is already long. */
+ *  builder's prompt is already long.
+ *
+ *  aios-takeover-usable (2026-08-26) — the quoted invocation no longer names a
+ *  profile. It used to say `open scratch`, and that one word is why Konrad's
+ *  hand-typed logins kept landing in directories nothing reopened: eight
+ *  profile dirs on disk, six of them round-scoped throwaways (r3-takeover,
+ *  r5proof, r704-loginwall, r705-review, smoke-r701, scratch), every one
+ *  created because a run copied the example. The profile positional is now
+ *  optional and defaults to the ONE durable profile, `konrad-main`
+ *  (`RESEARCH_BROWSER_DEFAULT_PROFILE` overrides); a new name is refused
+ *  unless it comes with `--throwaway`, so an agent must ASK for disposability.
+ *  The sentence also names the end signal for a takeover session: `close`.
+ *  Nothing ends a session implicitly — the supervisor's clocks are a safety
+ *  net, not the plan — so the role that opened the browser is told, at the
+ *  point of work, what "done" looks like (the wall is gone: `status --probe`
+ *  reports authenticated) and what to run then. Costs no planner budget: this
+ *  block rides `drivesBrowser`, which the planner branch never satisfies. */
 export const BROWSER_FIRST =
   `BROWSER FIRST FOR UNKNOWNS. When a doc is missing, an API's behaviour is unclear, a page needs JS or a ` +
   `login, or a service exists only as a web app: open a real browser before you guess or ask. ` +
-  `\`scripts/research-browser.mjs open scratch --url <URL> --label <what-you-are-checking>\` (read its ` +
+  `\`scripts/research-browser.mjs open --url <URL> --label <what-you-are-checking>\` (the durable ` +
+  `konrad-main profile; add \`<name> --throwaway\` only for disposable work; when the login-wall work is ` +
+  `complete run \`scripts/research-browser.mjs close\` — that is the signal that ends the takeover; read its ` +
   `\`--help\` first; from another repo's worktree: /opt/forge-ai-os/scripts/) drives real Chrome with ` +
   `persistent logged-in profiles, and the \`playwright-skill\` covers a one-off page needing scripted ` +
   `interaction if you hold the Skill tool. A login wall is the one thing you do NOT solve yourself — the ` +

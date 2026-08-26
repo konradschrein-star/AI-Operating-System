@@ -976,16 +976,41 @@ describe("T18 escalation protocol", () => {
   });
 
   test("BROWSER_FIRST quotes a real invocation and forbids credential attempts", () => {
+    // aios-takeover-usable (2026-08-26): the invocation names NO profile. The
+    // old literal `open scratch` was the defect — every run that copied it
+    // created a throwaway user-data-dir nothing ever reopened, so a login
+    // Konrad typed by hand was gone by the next run. The durable default is
+    // `konrad-main`; disposability must be asked for with `--throwaway`; and
+    // the sentence names the takeover's end signal, `close`, because nothing
+    // ends a session implicitly.
     assert.ok(
-      BROWSER_FIRST.includes("scripts/research-browser.mjs open scratch --url"),
-      "an unrunnable example is worse than none",
+      BROWSER_FIRST.includes("scripts/research-browser.mjs open --url <URL> --label"),
+      "an unrunnable example is worse than none — and the example must not name a profile",
     );
+    assert.ok(
+      !/open scratch/.test(BROWSER_FIRST),
+      "BROWSER_FIRST quotes `open scratch` again — that literal is why logins landed in throwaway profiles",
+    );
+    for (const needle of ["konrad-main", "--throwaway", "scripts/research-browser.mjs close"]) {
+      assert.ok(
+        BROWSER_FIRST.includes(needle),
+        `BROWSER_FIRST no longer says ${JSON.stringify(needle)} — the durable default, the opt-in ` +
+          "throwaway and the end signal are the three facts a browser-driving role must carry",
+      );
+    }
     const help = execFileSync(
       process.execPath,
       [`${repoRoot}scripts/research-browser.mjs`, "--help"],
       { encoding: "utf8", timeout: 30_000 },
     );
-    for (const token of ["open <profile>", "--url", "--label", "scratch"]) {
+    // The help pin is on tokens that are true of the shipped script BEFORE and
+    // AFTER the `browser` workstream lands (its --help keeps `open <profile>`
+    // as the on-disk-name form, and adds `--throwaway` / `konrad-main`). The
+    // two new words are NOT pinned here on purpose: on main they do not exist
+    // until that workstream integrates, and a pin that is red on the commit
+    // that writes it proves nothing. The integration task owns adding
+    // "--throwaway" and "konrad-main" to this list, in the same commit.
+    for (const token of ["open <profile>", "close <profile>", "--url", "--label"]) {
       assert.ok(
         help.includes(token),
         `research-browser --help no longer contains ${JSON.stringify(token)}, quoted by BROWSER_FIRST`,
