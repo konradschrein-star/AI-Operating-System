@@ -180,10 +180,51 @@ gate "no-raw-colours.cjs (whole app)" node scripts/checks/no-raw-colours.cjs
 # forbidden for this project as well: none was authorised and none was touched
 # (the fix-chain default is passed at the project-tick CALL SITE for exactly
 # that reason).
+#
+# OPERATOR WAIVER 2026-08-26 — BRANCH-SCOPED to `project/0a0806d3`.
+# Scope: forge-control/src/lib/project-tick.ts (+ its .test.ts) and
+#        forge-control/src/db/projects.ts. Nothing else, no other branch.
+#
+# Authorised by the fleet supervisor, on the record in the vault at
+# "AI OS/Operator Decisions.md" (2026-08-26, "Gate 6 waiver for
+# project/0a0806d3, and the list that lives twice"). Project
+# aios-r70-transitive-and-idle-fleet-alarm is CHARTERED to change R70: the fleet
+# could not tell a working project from a finished one because
+# `closeFinishedProjects()` tested DIRECT `depends_on` membership where the
+# architect seeds a chain, so three projects with zero open tasks sat 'active'
+# and the stall detector reported nothing. R70 lives in exactly two places —
+# the SQL in `db/projects.ts` and its readable mirror `unintegratedWorkstreams()`
+# reached through `lib/project-tick.ts` — so a fix that cannot touch either file
+# cannot exist. The brief named both files before any code was written.
+#
+# THIS WAIVER EXTENDS THE 2026-08-25 SCOPE ABOVE RATHER THAN COPYING IT, and the
+# extension is deliberate, not drift. That waiver kept `db/projects.ts`
+# forbidden for its own project in terms ("cc-runner, executor.ts and db/projects
+# stay forbidden for this project as well"), and was right to: a default-tier lane
+# had no business in the close predicate. THIS lane's whole subject IS the close
+# predicate. Same gate, opposite answer, because the charter differs — narrow it
+# back for any lane that is not chartered there.
+#
+# `cc-runner` and `executor.ts` stay armed on every branch INCLUDING this one.
+# `lib/task-graph.ts` and `lib/project-reconcile.ts` are not matched by the
+# gate's pattern at all and need no waiver — the waiver is scoped to what the
+# gate actually catches, not to everything the lane touched.
+#
+# CROSS-REFERENCE — THE PAIR MOVES TOGETHER. The forbidden list lives TWICE:
+# here, and in `scripts/checks/guard.sh` (FORBIDDEN_RE, with its own branch
+# waiver block below it). They have already diverged once — commit `e0c388f`
+# waived `operator/agy-fix` HERE and never touched guard.sh. That commit is on
+# main but NOT an ancestor of this branch (merge base `48c34d7`), so it will
+# REAPPEAR at merge and re-diverge the two lists; reconcile both blocks in the
+# same commit at that point, and re-measure rather than trusting any snapshot of
+# main. A waiver applied to one instrument and not its twin is how the next lane
+# spends an hour rediscovering the divergence.
 gate_sh "forbidden-file diff — three-dot main...HEAD" \
   "waived=''; \
    [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'project/860c948e' ] \
      && waived='forge-control/src/lib/project-tick(\\.test)?\\.ts\$'; \
+   [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'project/0a0806d3' ] \
+     && waived='forge-control/src/(lib/project-tick(\\.test)?\\.ts|db/projects\\.ts)\$'; \
    hits=\$(git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects' || true); \
    [ -n \"\$waived\" ] && [ -n \"\$hits\" ] && hits=\$(printf '%s\\n' \"\$hits\" | grep -vE \"\$waived\" || true); \
    [ -n \"\$hits\" ] && { printf '%s\\n' \"\$hits\"; echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; }; \
