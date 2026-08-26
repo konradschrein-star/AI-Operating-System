@@ -31,7 +31,36 @@
 // no missing prerequisite is worked around. Every failure prints what actually happened, which
 // path or pid it happened on, and exits non-zero.
 //
-// usage: scripts/research-browser.mjs <open|status|takeover|close> <profile> [flags]
+// ONE DURABLE PROFILE (aios-takeover-usable, 2026-08-26). Before this round every agent run
+// invented a fresh profile name (r3-takeover, r5proof, smoke-r701, …) and Konrad's hand-typed
+// logins landed in directories nothing ever reopened. Now <profile> is OPTIONAL and defaults to
+// DEFAULT_PROFILE (`konrad-main`, or $RESEARCH_BROWSER_DEFAULT_PROFILE). A name that does not
+// exist on disk, is not the default and is not a SERVICES key is REFUSED (exit 3) unless
+// --throwaway is passed; then a `.throwaway` marker is written into the new profile dir and
+// `status`/`open` report `throwaway: true`. Every profile that already exists keeps working
+// exactly as before. See resolveProfileChoice().
+//
+// TAKEOVER SESSION LIFETIME IS OWNED HERE, BY THE SUPERVISOR — not by forge-control, which is
+// redeployed ~100× a month and takes every open takeover socket with it. forge-control only
+// records FACTS about viewer sockets in <STATE_ROOT>/<profile>/takeover-activity.json
+// ({connected, connects, first_connect_at, last_connect_at, last_disconnect_at, written_at};
+// absent file = nobody ever connected). Each supervisor tick reads that file and applies
+// computeTakeoverDeadlines(), pure and unit-tested:
+//   - a connected viewer is never idle; after the last socket closes, TAKEOVER_IDLE_GRACE_MS
+//     (default 30 min) must pass before an idle shutdown — the first idle tick only ARMS it;
+//   - TAKEOVER_MAX_SESSION_MS (default 2 h) from first_connect_at is the safety cap;
+//   - HARD_MAX_SESSION_MS (8 h from launch) stays the outer bound.
+// session.json carries takeover_started_at / takeover_deadline / connected so a page can show
+// the remaining time, and EVERY shutdown first writes <STATE_ROOT>/<profile>/last-shutdown.json
+// {reason, at, pid} so a viewer that polls after the fact learns WHY, never a blank.
+//
+// THE AGENT-SIDE END SIGNAL IS `research-browser.mjs close <profile>` — THE ONLY ONE. When an
+// agent judges the human's part done (a `status --probe` that comes back `authenticated: true`
+// after a login wall is the cue) it runs `close`; the Done button in the takeover page and the
+// clocks above reach the same shutdown() through the same stop file. There is no implicit
+// "the agent stopped talking so the session must be over".
+//
+// usage: scripts/research-browser.mjs <open|status|takeover|close> [profile] [flags]
 //        scripts/research-browser.mjs --help
 //
 // exit codes:
@@ -162,6 +191,69 @@ export const PROFILE_RE = /^[a-z0-9][a-z0-9-]{0,38}$/;
 
 export const profileDir = (profile) => join(PROFILES_ROOT, profile);
 export const stateDir = (profile) => join(STATE_ROOT, profile);
+
+// ---------------------------------------------------------------------------
+// Profile choice: one durable default, throwaways only on request
+// ---------------------------------------------------------------------------
+export const DEFAULT_PROFILE_ENV = 'RESEARCH_BROWSER_DEFAULT_PROFILE';
+/** Validated against PROFILE_RE in main() — importing this module must never exit. */
+export const DEFAULT_PROFILE = process.env[DEFAULT_PROFILE_ENV] ?? 'konrad-main';
+/** Inside the Chrome user-data-dir; Chrome ignores files it did not create. Holds an ISO time. */
+export const throwawayMarkerPath = (profile) => join(profileDir(profile), '.throwaway');
+
+/**
+ * Which profile a subcommand runs on, and whether it may. Pure so every branch is tested.
+ *
+ *   requested       the <profile> positional, or null when omitted
+ *   exists          this tool already knows the name (a profile dir OR a state dir is on disk)
+ *   marked          an existing profile already carries the .throwaway marker
+ *   defaultProfile  DEFAULT_PROFILE
+ *   serviceKeys     Object.keys(SERVICES) — a service profile may be created without ceremony
+ *   throwaway       --throwaway was passed
+ *
+ * Returns { profile, refusal, throwaway, create }. `refusal` is the usage message (exit 3)
+ * or null; `throwaway` is what the resulting profile IS (marker present or about to be
+ * written); `create` says the name is new and the caller must materialise it.
+ */
+export function resolveProfileChoice({
+  requested,
+  exists,
+  marked = false,
+  defaultProfile,
+  serviceKeys,
+  throwaway,
+}) {
+  const profile = requested === null || requested === undefined ? defaultProfile : requested;
+  const isDefault = profile === defaultProfile;
+
+  if (throwaway && isDefault) {
+    return {
+      profile,
+      refusal:
+        `profile "${profile}" is the durable default and cannot be a throwaway — drop ` +
+        `--throwaway, or name a different profile`,
+      throwaway: false,
+      create: false,
+    };
+  }
+  if (exists) {
+    // An existing profile is always accepted. --throwaway on one that is not yet marked
+    // ADOPTS it as disposable: the caller said so explicitly, and nothing here deletes anything.
+    return { profile, refusal: null, throwaway: marked || throwaway, create: false };
+  }
+  if (isDefault || serviceKeys.includes(profile)) {
+    return { profile, refusal: null, throwaway, create: true };
+  }
+  if (throwaway) return { profile, refusal: null, throwaway: true, create: true };
+  return {
+    profile,
+    refusal:
+      `profile "${profile}" does not exist — pass --throwaway to create a disposable one, ` +
+      `or omit the profile to use ${defaultProfile}`,
+    throwaway: false,
+    create: false,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Display and port allocation
@@ -781,13 +873,18 @@ function readJson(path) {
   }
 }
 
-function writeJsonAtomic(path, value) {
+/** Throwing variant, for the one caller (shutdown) that must keep going after a failed write. */
+function writeJsonAtomicOrThrow(path, value) {
   const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  // rename(2) is atomic within a filesystem: a reader never sees a half-written state file,
+  // which matters because session.json is polled by other processes while it is rewritten.
+  renameSync(tmp, path);
+}
+
+function writeJsonAtomic(path, value) {
   try {
-    writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-    // rename(2) is atomic within a filesystem: a reader never sees a half-written state file,
-    // which matters because session.json is polled by other processes while it is rewritten.
-    renameSync(tmp, path);
+    writeJsonAtomicOrThrow(path, value);
   } catch (err) {
     die(EXIT.RUNTIME, `cannot write ${path}: ${err.code ?? 'error'} ${err.message}`);
   }
@@ -1300,6 +1397,149 @@ export const LOGIN_IDLE_TIMEOUT_MS = 4 * 60 * 60 * 1000; // a human has to get t
 export const HARD_MAX_SESSION_MS = 8 * 60 * 60 * 1000;
 const POLL_MS = 250;
 
+// ---------------------------------------------------------------------------
+// Takeover clocks — the supervisor owns the session's lifetime (see the header)
+//
+// forge-control writes the FACTS (takeover-activity.json); this process turns them into
+// deadlines. The two are separate processes on purpose: forge-control is redeployed all day
+// and a deploy must not orphan an Xvfb/x11vnc/websockify trio with nobody holding its clock.
+// ---------------------------------------------------------------------------
+export const TAKEOVER_IDLE_GRACE_ENV = 'TAKEOVER_IDLE_GRACE_MS';
+export const TAKEOVER_MAX_SESSION_ENV = 'TAKEOVER_MAX_SESSION_MS';
+export const TAKEOVER_IDLE_GRACE_DEFAULT_MS = 30 * 60 * 1000;
+export const TAKEOVER_MAX_SESSION_DEFAULT_MS = 2 * 60 * 60 * 1000;
+/** Raw values as seen at import; parseTakeoverClockEnv() is what validates them. */
+export const TAKEOVER_IDLE_GRACE_MS = Number(process.env[TAKEOVER_IDLE_GRACE_ENV] ?? TAKEOVER_IDLE_GRACE_DEFAULT_MS);
+export const TAKEOVER_MAX_SESSION_MS = Number(process.env[TAKEOVER_MAX_SESSION_ENV] ?? TAKEOVER_MAX_SESSION_DEFAULT_MS);
+/** The activity file forge-control writes (contract with browser-takeover.ts, B2). */
+export const takeoverActivityPath = (profile) => join(stateDir(profile), 'takeover-activity.json');
+export const lastShutdownPath = (profile) => join(stateDir(profile), 'last-shutdown.json');
+/** session.json is polled by other processes; while a viewer is connected the idle deadline
+ *  advances every tick, and rewriting it 4×/s would be churn for nothing. */
+const SESSION_WRITE_QUANTUM_MS = 5_000;
+
+/**
+ * The two takeover clocks from the environment, validated. A bad value kills the supervisor
+ * at start with the variable's name — it must never launch a browser on a clock it cannot
+ * read, and it must never quietly fall back to a default the operator did not set.
+ */
+export function parseTakeoverClockEnv(env = process.env) {
+  const read = (name, fallback) => {
+    const raw = env[name];
+    const value = raw === undefined ? fallback : Number(raw);
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new CliError(
+        EXIT.USAGE,
+        `${name} must be a positive finite number of milliseconds, got ${JSON.stringify(raw)}`,
+      );
+    }
+    return value;
+  };
+  return {
+    idleGraceMs: read(TAKEOVER_IDLE_GRACE_ENV, TAKEOVER_IDLE_GRACE_DEFAULT_MS),
+    takeoverMaxMs: read(TAKEOVER_MAX_SESSION_ENV, TAKEOVER_MAX_SESSION_DEFAULT_MS),
+  };
+}
+
+/** ISO string → epoch ms, or null when absent; NaN (unparsable) is reported by the caller. */
+function parseIsoMs(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') return Number.NaN;
+  return Date.parse(value);
+}
+
+const hoursLabel = (ms) => `${ms / 3600000}h`;
+
+/**
+ * One supervisor tick's worth of clock arithmetic. Pure: epoch-ms in, epoch-ms out.
+ *
+ *   now            Date.now()
+ *   activity       parsed takeover-activity.json, or null (absent / unreadable / garbage)
+ *   idleDeadline   the supervisor's current idle deadline (ms) — only ever moved LATER here
+ *   hardDeadline   HARD_MAX_SESSION_MS from launch (ms) — the outer bound, never exceeded
+ *   config         { idleGraceMs, takeoverMaxMs }
+ *
+ * Rules, in the order they are applied:
+ *   1. connected > 0            → idleDeadline = max(idleDeadline, now + idleGraceMs), so a
+ *                                  connected viewer can NEVER idle out while ticks keep coming.
+ *   2. else last_disconnect_at  → idleDeadline = max(idleDeadline, last_disconnect_at + grace).
+ *                                  The first idle tick after a disconnect only ARMS the grace;
+ *                                  stepping away for a coffee does not kill the session.
+ *   3. first_connect_at         → takeoverDeadline = min(first_connect_at + takeoverMaxMs,
+ *                                  hardDeadline); now > takeoverDeadline → shutdownReason.
+ *   4. hardDeadline caps every deadline returned here. The hard-cap shutdown itself stays in
+ *      the loop, exactly as before this round.
+ * A malformed field never throws: it is ignored AND named in `warnings`, which the supervisor
+ * logs once. Silence would hide a broken writer; dying would kill a live session over a log.
+ */
+export function computeTakeoverDeadlines({ now, activity, idleDeadline, hardDeadline, config }) {
+  const { idleGraceMs, takeoverMaxMs } = config;
+  const warnings = [];
+  let nextIdle = idleDeadline;
+  let connected = 0;
+  let takeoverStartedAt = null;
+  let takeoverDeadline = null;
+  let shutdownReason = null;
+
+  if (activity !== null && (typeof activity !== 'object' || Array.isArray(activity))) {
+    warnings.push(`takeover-activity.json is ${Array.isArray(activity) ? 'an array' : typeof activity}, not an object — ignored`);
+  } else if (activity !== null) {
+    if (typeof activity.connected === 'number' && Number.isFinite(activity.connected)) {
+      connected = Math.max(0, activity.connected);
+    } else if (activity.connected !== undefined) {
+      warnings.push(`takeover-activity.json connected=${JSON.stringify(activity.connected)} is not a number — treated as 0`);
+    }
+
+    const lastDisconnect = parseIsoMs(activity.last_disconnect_at);
+    if (Number.isNaN(lastDisconnect)) {
+      warnings.push(`takeover-activity.json last_disconnect_at=${JSON.stringify(activity.last_disconnect_at)} is not an ISO time — ignored`);
+    }
+    if (connected > 0) {
+      nextIdle = Math.max(nextIdle, now + idleGraceMs);
+    } else if (lastDisconnect !== null && !Number.isNaN(lastDisconnect)) {
+      nextIdle = Math.max(nextIdle, lastDisconnect + idleGraceMs);
+    }
+
+    const firstConnect = parseIsoMs(activity.first_connect_at);
+    if (Number.isNaN(firstConnect)) {
+      warnings.push(`takeover-activity.json first_connect_at=${JSON.stringify(activity.first_connect_at)} is not an ISO time — no takeover cap can be applied`);
+    } else if (firstConnect !== null) {
+      takeoverStartedAt = firstConnect;
+      takeoverDeadline = Math.min(firstConnect + takeoverMaxMs, hardDeadline);
+      if (now > takeoverDeadline) shutdownReason = `takeover cap ${hoursLabel(takeoverMaxMs)}`;
+    }
+  }
+
+  return {
+    idleDeadline: Math.min(nextIdle, hardDeadline),
+    takeoverDeadline,
+    takeoverStartedAt,
+    connected,
+    shutdownReason,
+    warnings,
+  };
+}
+
+/**
+ * Read the activity file the way the supervisor needs it: absent → null; unreadable or
+ * garbage → null PLUS a one-line reason so the caller can log it ONCE. readJson() would die,
+ * and forge-control's half-written or corrupt file must not take a live browser down with it.
+ */
+function readTakeoverActivity(path) {
+  let raw;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return { activity: null, problem: null };
+    return { activity: null, problem: `cannot read ${path}: ${err.code ?? 'error'} ${err.message}` };
+  }
+  try {
+    return { activity: JSON.parse(raw), problem: null };
+  } catch (err) {
+    return { activity: null, problem: `${path} is not valid JSON (${err.message}) — ignored until it is` };
+  }
+}
+
 /**
  * How long a start.lock may exist without a readable pid file before it counts as stale.
  *
@@ -1732,6 +1972,9 @@ async function collectSignals(page, service) {
 }
 
 async function supervise(profile, displayNum) {
+  // FIRST, before any directory, display or browser: a clock this process cannot read is a
+  // configuration error, and it names the variable. (CliError → main's catch → exit 3.)
+  const clocks = parseTakeoverClockEnv();
   const ports = portsForDisplay(displayNum);
   const dir = stateDir(profile);
   ensureDir(dir, 0o700);
@@ -1776,10 +2019,18 @@ async function supervise(profile, displayNum) {
   });
 
   const page = context.pages()[0] ?? (await context.newPage());
+  const startedAt = new Date().toISOString();
   let idleDeadline = Date.now() + IDLE_TIMEOUT_MS;
   const hardDeadline = Date.now() + HARD_MAX_SESSION_MS;
+  // Takeover clock state, derived each tick from takeover-activity.json (epoch ms / count).
+  let takeoverStartedAt = null;
+  let takeoverDeadline = null;
+  let connected = 0;
+  let writtenIdleDeadline = null;
+  const isoOrNull = (ms) => (ms === null ? null : new Date(ms).toISOString());
 
-  const writeSessionFile = () =>
+  const writeSessionFile = () => {
+    writtenIdleDeadline = idleDeadline;
     writeJsonAtomic(sessionPath(profile), {
       pid: process.pid,
       profile,
@@ -1790,10 +2041,17 @@ async function supervise(profile, displayNum) {
       profile_dir: profileDir(profile),
       chrome: chromePath,
       playwright: playwrightPath,
-      started_at: new Date().toISOString(),
+      throwaway: isThrowaway(profile),
+      started_at: startedAt,
       idle_deadline: new Date(idleDeadline).toISOString(),
       hard_deadline: new Date(hardDeadline).toISOString(),
+      takeover_started_at: isoOrNull(takeoverStartedAt),
+      takeover_deadline: isoOrNull(takeoverDeadline),
+      connected,
+      takeover_idle_grace_ms: clocks.idleGraceMs,
+      takeover_max_session_ms: clocks.takeoverMaxMs,
     });
+  };
 
   writeSessionFile();
   rmSync(startLock(profile), { recursive: true, force: true }); // the session file is the proof now
@@ -1804,6 +2062,18 @@ async function supervise(profile, displayNum) {
     if (shuttingDown) return;
     shuttingDown = true;
     writeErr(`${SELF}[supervisor]: shutting down (${reason})\n`);
+    // The WHY, written before anything is torn down: a takeover page that polls after the
+    // session is gone must be able to say "ended: takeover cap 2h", never go blank. A failed
+    // write is reported and teardown continues — a missing record must never leak a stack.
+    try {
+      writeJsonAtomicOrThrow(lastShutdownPath(profile), {
+        reason,
+        at: new Date().toISOString(),
+        pid: process.pid,
+      });
+    } catch (err) {
+      writeErr(`${SELF}[supervisor]: cannot write ${lastShutdownPath(profile)}: ${err.code ?? 'error'} ${err.message}\n`);
+    }
     await context.close().catch((err) => writeErr(`${SELF}[supervisor]: context.close: ${err.message}\n`));
     removeIfPresent(sessionPath(profile));
     removeIfPresent(stopPath(profile));
@@ -1836,6 +2106,10 @@ async function supervise(profile, displayNum) {
     void shutdown('unhandled rejection', EXIT.RUNTIME);
   });
 
+  // Each distinct activity-file problem is logged ONCE, not 4×/s for as long as it persists.
+  let activityProblemLogged = null;
+  const activityWarningsLogged = new Set();
+
   for (;;) {
     // A signal handler can begin teardown between two iterations. Serving a request against a
     // context that is already closing would answer with a confusing playwright error instead
@@ -1846,7 +2120,53 @@ async function supervise(profile, displayNum) {
     }
     if (existsSync(stopPath(profile))) await shutdown('stop file');
     if (Date.now() > hardDeadline) await shutdown(`hard session cap ${HARD_MAX_SESSION_MS / 3600000}h`);
-    if (Date.now() > idleDeadline) await shutdown(`idle for ${IDLE_TIMEOUT_MS / 60000} min`);
+
+    // Takeover clocks: forge-control's socket facts → this process's deadlines. A viewer that
+    // is connected pushes the idle deadline ahead every tick, so it can never idle out; the
+    // grace after a disconnect and the cap from the first connect are applied here too.
+    const { activity, problem } = readTakeoverActivity(takeoverActivityPath(profile));
+    if (problem !== null && problem !== activityProblemLogged) {
+      writeErr(`${SELF}[supervisor]: ${problem}\n`);
+      activityProblemLogged = problem;
+    }
+    if (problem === null) activityProblemLogged = null;
+    const clock = computeTakeoverDeadlines({
+      now: Date.now(),
+      activity,
+      idleDeadline,
+      hardDeadline,
+      config: clocks,
+    });
+    for (const warning of clock.warnings) {
+      if (!activityWarningsLogged.has(warning)) {
+        activityWarningsLogged.add(warning);
+        writeErr(`${SELF}[supervisor]: ${warning}\n`);
+      }
+    }
+    const takeoverChanged =
+      clock.takeoverStartedAt !== takeoverStartedAt ||
+      clock.takeoverDeadline !== takeoverDeadline ||
+      clock.connected !== connected;
+    idleDeadline = clock.idleDeadline;
+    takeoverStartedAt = clock.takeoverStartedAt;
+    takeoverDeadline = clock.takeoverDeadline;
+    connected = clock.connected;
+    if (
+      takeoverChanged ||
+      writtenIdleDeadline === null ||
+      Math.abs(idleDeadline - writtenIdleDeadline) >= SESSION_WRITE_QUANTUM_MS
+    ) {
+      writeSessionFile();
+    }
+    if (clock.shutdownReason !== null) await shutdown(clock.shutdownReason);
+
+    if (Date.now() > idleDeadline) {
+      await shutdown(
+        takeoverStartedAt === null
+          ? `idle for ${IDLE_TIMEOUT_MS / 60000} min`
+          : `no viewer for ${clocks.idleGraceMs / 60000} min after the last takeover disconnect`,
+      );
+    }
 
     let names = [];
     try {
@@ -1873,9 +2193,13 @@ async function supervise(profile, displayNum) {
         writeErr(`${SELF}[supervisor]: request ${request.id} failed: ${err.stack ?? err.message}\n`);
       }
 
-      idleDeadline =
+      // max(): an agent request must never PULL the idle deadline back below what a connected
+      // viewer or a fresh disconnect grace already earned.
+      idleDeadline = Math.max(
+        idleDeadline,
         Date.now() +
-        (response?.payload?.login?.needs_login === true ? LOGIN_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS);
+          (response?.payload?.login?.needs_login === true ? LOGIN_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS),
+      );
       writeSessionFile();
       writeJsonAtomic(join(resDir(profile), `${request.id}.json`), { id: request.id, ...response });
     }
@@ -1991,7 +2315,7 @@ async function handleRequest({ profile, page, ports, request }) {
 // ---------------------------------------------------------------------------
 export const SUBCOMMANDS = ['open', 'status', 'takeover', 'close'];
 
-export const USAGE = `usage: ${SELF} <subcommand> <profile> [flags]
+export const USAGE = `usage: ${SELF} <subcommand> [profile] [flags]
        ${SELF} --help
 
 A persistent-profile browser harness for the research lane. Named profiles keep a logged-in
@@ -1999,19 +2323,22 @@ Chrome session across runs; a login wall triggers a noVNC takeover so a human ca
 by hand, and never again. NO PASSWORD IS EVER STORED, READ, OR TYPED BY THIS TOOL.
 
 subcommands:
-  open <profile> [--url URL] [--label L] [--run-id ID] [--service S] [--no-reminder]
+  open [profile] [--url URL] [--label L] [--run-id ID] [--service S] [--no-reminder] [--throwaway]
         Launch or attach a Chrome persistentContext on ${PROFILES_ROOT}/<profile>/,
         navigate, evaluate the login signals, screenshot, print JSON status.
         On a login wall: exit ${EXIT.LOGIN_REQUIRED}, browser LEFT RUNNING for takeover.
-  status <profile> [--probe] [--run-id ID]
-        Is a session live, is the profile authenticated, what is the takeover URL.
+  status [profile] [--probe] [--run-id ID]
+        Is a session live, is the profile authenticated, what is the takeover URL, how long
+        the takeover session has left, and why the last one ended.
         Cheap by default (reads the last recorded evaluation). --probe re-navigates to the
         service home through the live session for an authoritative answer.
-  takeover <profile>
+  takeover [profile]
         Ensure Xvfb + x11vnc + websockify are up for this profile's display; print the
         noVNC URL and the SSH tunnel command. Does not need a browser.
-  close <profile>
-        Tear down the browser and the whole takeover stack for this profile.
+  close [profile]
+        Tear down the browser and the whole takeover stack for this profile. THIS IS THE
+        AGENT'S END SIGNAL: run it when the human's part is done (a status --probe that
+        comes back authenticated after a login wall is the cue). Nothing ends implicitly.
 
 flags:
   --url URL        page to open (default: the resolved service's home; required for 'generic')
@@ -2023,16 +2350,32 @@ flags:
                    (default: inferred from --url's host, then from the profile name)
   --probe          'status' only: re-navigate and re-evaluate instead of reading cached state
   --no-reminder    'open' only: detect the wall and exit ${EXIT.LOGIN_REQUIRED} but queue no reminder
+  --throwaway      create a DISPOSABLE profile under a new name (writes <profile>/.throwaway).
+                   Without it a new name that is neither the default nor a service is refused.
   --help, -h       print this help and exit 0
   Flags accept either "--url X" or "--url=X".
 
 profiles:
+  [profile] is OPTIONAL and defaults to "${DEFAULT_PROFILE}" ($${DEFAULT_PROFILE_ENV} overrides),
+  the ONE durable profile every takeover-capable run shares, so a login Konrad types by hand is
+  still there for the next run. An existing profile is always accepted — open <profile>,
+  status <profile>, takeover <profile> and close <profile> on a name already on disk work
+  exactly as before. A NEW name is accepted only if it is the default, a service key
+  (${Object.keys(SERVICES).join(' ')}), or given with --throwaway. Nothing here ever deletes a profile.
   ${PROFILES_ROOT}/<profile>/
       Chrome user-data-dir, mode 0700. Session cookies and Chrome's own profile state,
-      NOTHING ELSE. No passwords, ever.
+      NOTHING ELSE. No passwords, ever. A .throwaway file marks a disposable one.
   ${STATE_ROOT}/<profile>/
-      this tool's pids, logs, display pin and last login evaluation.
+      this tool's pids, logs, display pin, last login evaluation, session.json (with
+      takeover_started_at / takeover_deadline / connected), takeover-activity.json (written
+      by forge-control: viewer socket facts) and last-shutdown.json ({reason, at, pid}).
   Profile names must match ${PROFILE_RE}.
+
+takeover clocks (supervisor-owned; env overrides, milliseconds, must be finite and > 0):
+  ${TAKEOVER_IDLE_GRACE_ENV}=${TAKEOVER_IDLE_GRACE_DEFAULT_MS}    a connected viewer is never idle; after the last
+                   viewer socket closes this much time passes before an idle shutdown
+  ${TAKEOVER_MAX_SESSION_ENV}=${TAKEOVER_MAX_SESSION_DEFAULT_MS}  safety cap from the FIRST viewer connect; the 8 h hard cap
+                   from launch stays the outer bound
 
 screenshots:
   ${UPLOADS_ROOT}/<run_id>/<compact-ISO8601>-<label>.png
@@ -2057,11 +2400,13 @@ exit codes:
      left running. Distinct on purpose: this means "needs Konrad", not "broke".
 
 examples:
+  ${SELF} open --url https://example.com --label smoke --run-id 0aa1fce7813c   (→ ${DEFAULT_PROFILE})
   ${SELF} open perplexity
-  ${SELF} open scratch --url https://example.com --label smoke --run-id 0aa1fce7813c
+  ${SELF} open scratch-r9 --throwaway --url https://example.com --label smoke
   ${SELF} status perplexity --probe
+  ${SELF} status                                                              (→ ${DEFAULT_PROFILE})
   ${SELF} takeover perplexity
-  ${SELF} close scratch
+  ${SELF} close scratch-r9
 `;
 
 export function parseArgs(argv) {
@@ -2074,10 +2419,11 @@ export function parseArgs(argv) {
     service: null,
     probe: false,
     reminder: true,
+    throwaway: false,
     help: false,
   };
   const takesValue = new Set(['--url', '--label', '--run-id', '--service']);
-  const boolFlags = new Set(['--probe', '--no-reminder']);
+  const boolFlags = new Set(['--probe', '--no-reminder', '--throwaway']);
   const positional = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -2095,6 +2441,7 @@ export function parseArgs(argv) {
       if (boolFlags.has(name)) {
         if (eq !== -1) throw new CliError(EXIT.USAGE, `flag ${name} takes no value`);
         if (name === '--probe') opts.probe = true;
+        else if (name === '--throwaway') opts.throwaway = true;
         else opts.reminder = false;
         continue;
       }
@@ -2127,13 +2474,12 @@ export function parseArgs(argv) {
       `unknown subcommand "${subcommand}"; expected one of: ${SUBCOMMANDS.join(' ')}`,
     );
   }
-  if (profile === undefined) {
-    throw new CliError(EXIT.USAGE, `subcommand "${subcommand}" requires a <profile> argument`);
-  }
   if (extra.length > 0) {
     throw new CliError(EXIT.USAGE, `unexpected extra argument(s): ${extra.join(' ')}`);
   }
-  if (!PROFILE_RE.test(profile)) {
+  // [profile] is optional: null here means "the durable default", resolved by main() against
+  // the disk (resolveProfileChoice) — parseArgs stays pure and filesystem-free.
+  if (profile !== undefined && !PROFILE_RE.test(profile)) {
     throw new CliError(
       EXIT.USAGE,
       `invalid profile name "${profile}" — must match ${PROFILE_RE} (lowercase letters, ` +
@@ -2148,9 +2494,48 @@ export function parseArgs(argv) {
   }
 
   opts.subcommand = subcommand;
-  opts.profile = profile;
+  opts.profile = profile ?? null;
   return opts;
 }
+
+/**
+ * Decide the profile for this invocation against the disk, or die with the refusal. Runs
+ * BEFORE any directory is created, so a refused name leaves no trace — a usage error must
+ * cost nothing. "exists" means this tool already knows the name: a Chrome profile dir OR a
+ * state dir (`takeover`-only profiles never get a Chrome dir, and `close` must still reach
+ * them).
+ */
+function chooseProfileOrDie(opts) {
+  const candidate = opts.profile ?? DEFAULT_PROFILE;
+  const choice = resolveProfileChoice({
+    requested: opts.profile,
+    exists: existsSync(profileDir(candidate)) || existsSync(stateDir(candidate)),
+    marked: existsSync(throwawayMarkerPath(candidate)),
+    defaultProfile: DEFAULT_PROFILE,
+    serviceKeys: Object.keys(SERVICES),
+    throwaway: opts.throwaway,
+  });
+  if (choice.refusal !== null) die(EXIT.USAGE, choice.refusal);
+  return choice;
+}
+
+/**
+ * Make the Chrome profile dir exist, and mark it disposable when asked. Called by the
+ * subcommands that are about to put a browser or a display on it — never by main(), so
+ * `open new-name --throwaway` with a bad --url still fails before anything is created.
+ */
+function materialiseProfile(profile, { throwaway }) {
+  ensureDir(profileDir(profile), 0o700);
+  if (throwaway && !existsSync(throwawayMarkerPath(profile))) {
+    try {
+      writeFileSync(throwawayMarkerPath(profile), `${new Date().toISOString()}\n`, { mode: 0o600 });
+    } catch (err) {
+      die(EXIT.RUNTIME, `cannot write ${throwawayMarkerPath(profile)}: ${err.message}`);
+    }
+  }
+}
+
+const isThrowaway = (profile) => existsSync(throwawayMarkerPath(profile));
 
 /** The URL an 'open'/'--probe' should navigate to, or a usage error explaining what is missing. */
 export function resolveTargetUrl(opts, service) {
@@ -2183,10 +2568,13 @@ function baseStatus(profile, subcommand, ports, runInfo) {
   };
 }
 
+const ensureStateDir = (profile) => ensureDir(stateDir(profile), 0o700);
+
 async function cmdOpen(opts) {
   const runInfo = resolveRunId(opts.runId);
   const service = resolveService({ service: opts.service, url: opts.url, profile: opts.profile });
   const url = resolveTargetUrl(opts, service);
+  ensureStateDir(opts.profile); // arguments are valid; side effects may begin
   const ports = assignDisplay(opts.profile);
 
   // Before anything is started: clear a stack whose supervisor died without cleaning up.
@@ -2195,6 +2583,7 @@ async function cmdOpen(opts) {
   // what state that window is in.
   const reaped = reapOrphanedTakeover(opts.profile);
 
+  materialiseProfile(opts.profile, { throwaway: opts.throwaway });
   await ensureSupervisor(opts.profile, ports);
   const response = await callSupervisor(opts.profile, {
     action: 'navigate',
@@ -2216,24 +2605,43 @@ async function cmdOpen(opts) {
   const session = readSession(opts.profile);
   return {
     status: { ...baseStatus(opts.profile, 'open', ports, runInfo), ...response.payload,
-      session: { live: session?.live === true, pid: session?.pid ?? null, started_at: session?.started_at ?? null },
+      throwaway: isThrowaway(opts.profile),
+      session: sessionSummary(session),
       reaped_orphan: reaped },
     exitCode: response.exit_code,
   };
 }
 
+/** The session.json fields a caller (or the takeover page, via forge-control) can act on. */
+function sessionSummary(session) {
+  return {
+    live: session?.live === true,
+    pid: session?.pid ?? null,
+    started_at: session?.started_at ?? null,
+    idle_deadline: session?.idle_deadline ?? null,
+    hard_deadline: session?.hard_deadline ?? null,
+    takeover_started_at: session?.takeover_started_at ?? null,
+    takeover_deadline: session?.takeover_deadline ?? null,
+    connected: session?.connected ?? null,
+    stale_state_file: session !== null && session.live === false,
+  };
+}
+
 async function cmdStatus(opts) {
   const runInfo = resolveRunId(opts.runId);
+  const service = resolveService({ service: opts.service, url: opts.url, profile: opts.profile });
+  const probeUrl = opts.probe ? resolveTargetUrl(opts, service) : null;
+  ensureStateDir(opts.profile); // arguments are valid; side effects may begin
   const ports = assignDisplay(opts.profile);
   // `status` is the only command a bystander runs on a box nobody is actively driving, which
   // makes it the last line of defence against an X/VNC stack outliving its dead supervisor.
   const reaped = reapOrphanedTakeover(opts.profile);
   const session = readSession(opts.profile);
   const takeover = readTakeover(opts.profile);
-  const service = resolveService({ service: opts.service, url: opts.url, profile: opts.profile });
 
   if (opts.probe) {
-    const url = resolveTargetUrl(opts, service);
+    const url = probeUrl;
+    materialiseProfile(opts.profile, { throwaway: opts.throwaway });
     await ensureSupervisor(opts.profile, ports);
     const response = await callSupervisor(opts.profile, {
       action: 'navigate',
@@ -2255,7 +2663,8 @@ async function cmdStatus(opts) {
         ...baseStatus(opts.profile, 'status', ports, runInfo),
         probe: 'live — navigated and re-evaluated just now',
         ...response.payload,
-        session: { live: after?.live === true, pid: after?.pid ?? null, started_at: after?.started_at ?? null },
+        throwaway: isThrowaway(opts.profile),
+        session: sessionSummary(after),
         reaped_orphan: reaped,
       },
       exitCode: response.exit_code,
@@ -2268,13 +2677,11 @@ async function cmdStatus(opts) {
       ...baseStatus(opts.profile, 'status', ports, runInfo),
       probe: 'cached — run `status <profile> --probe` for an authoritative answer',
       service: service.key,
-      session: {
-        live: session?.live === true,
-        pid: session?.pid ?? null,
-        started_at: session?.started_at ?? null,
-        idle_deadline: session?.idle_deadline ?? null,
-        stale_state_file: session !== null && session.live === false,
-      },
+      throwaway: isThrowaway(opts.profile),
+      session: sessionSummary(session),
+      // WHY the last session ended — only meaningful when none is live now. Read with the
+      // dying readJson: a corrupt record here is this tool's own bug, not a live-session risk.
+      last_shutdown: session?.live === true ? null : readJson(lastShutdownPath(opts.profile)),
       login: auth === null
         ? { authenticated: null, needs_login: null, checked_at: null,
             note: 'this profile has never been evaluated — run open or status --probe' }
@@ -2301,13 +2708,15 @@ async function cmdStatus(opts) {
 
 async function cmdTakeover(opts) {
   const runInfo = resolveRunId(opts.runId);
+  ensureStateDir(opts.profile);
   const ports = assignDisplay(opts.profile);
-  ensureDir(stateDir(opts.profile), 0o700);
+  materialiseProfile(opts.profile, { throwaway: opts.throwaway });
   const takeover = await ensureTakeover(opts.profile, ports);
   const session = readSession(opts.profile);
   return {
     status: {
       ...baseStatus(opts.profile, 'takeover', ports, runInfo),
+      throwaway: isThrowaway(opts.profile),
       takeover: {
         up: true,
         started_now: takeover.started,
@@ -2339,6 +2748,7 @@ async function cmdTakeover(opts) {
 
 async function cmdClose(opts) {
   const runInfo = resolveRunId(opts.runId);
+  ensureStateDir(opts.profile);
   const ports = assignDisplay(opts.profile);
   const session = readSession(opts.profile);
   const actions = [];
@@ -2411,9 +2821,21 @@ async function main(argv) {
     process.exit(EXIT.OK);
   }
 
+  // A misconfigured default is a configuration error, reported by name, before any disk work.
+  if (!PROFILE_RE.test(DEFAULT_PROFILE)) {
+    die(
+      EXIT.USAGE,
+      `$${DEFAULT_PROFILE_ENV}="${DEFAULT_PROFILE}" is not a valid profile name — must match ${PROFILE_RE}`,
+    );
+  }
+  const choice = chooseProfileOrDie(opts);
+  opts.profile = choice.profile;
+
   ensureDir(PROFILES_ROOT, 0o700);
   ensureDir(STATE_ROOT, 0o700);
-  ensureDir(stateDir(opts.profile), 0o700);
+  // The per-profile state dir is created by each handler once its own argument validation is
+  // through (ensureStateDir), not here: a state dir counts as "this tool knows the name", so
+  // `open typo-name --throwaway` failing on --url must not leave one behind.
 
   const handlers = { open: cmdOpen, status: cmdStatus, takeover: cmdTakeover, close: cmdClose };
   const { status, exitCode } = await handlers[opts.subcommand](opts);

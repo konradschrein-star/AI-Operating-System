@@ -22,6 +22,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 // The CONSUMER's idea of where the per-profile marker lives. Imported from
 // browser-takeover.ts on purpose: this file's job here is to pin a contract
@@ -70,7 +71,33 @@ interface ParsedArgs {
   service: string | null;
   probe: boolean;
   reminder: boolean;
+  throwaway: boolean;
   help: boolean;
+}
+
+interface ProfileChoice {
+  profile: string;
+  refusal: string | null;
+  throwaway: boolean;
+  create: boolean;
+}
+
+interface TakeoverActivity {
+  connected?: unknown;
+  connects?: number;
+  first_connect_at?: unknown;
+  last_connect_at?: string | null;
+  last_disconnect_at?: unknown;
+  written_at?: string;
+}
+
+interface TakeoverClock {
+  idleDeadline: number;
+  takeoverDeadline: number | null;
+  takeoverStartedAt: number | null;
+  connected: number;
+  shutdownReason: string | null;
+  warnings: string[];
 }
 
 interface ScreenshotRecord {
@@ -191,6 +218,40 @@ interface ResearchBrowser {
   CHROME_CANDIDATE_PATHS: string[];
   WM_CANDIDATE_PATHS: string[];
   findWindowManager(paths?: string[], exists?: (p: string) => boolean): string | null;
+  // aios-takeover-usable B3: one durable profile, throwaways on request
+  DEFAULT_PROFILE: string;
+  DEFAULT_PROFILE_ENV: string;
+  throwawayMarkerPath(profile: string): string;
+  resolveProfileChoice(input: {
+    requested: string | null;
+    exists: boolean;
+    marked?: boolean;
+    defaultProfile: string;
+    serviceKeys: string[];
+    throwaway: boolean;
+  }): ProfileChoice;
+  // aios-takeover-usable B3: supervisor-owned takeover clocks
+  IDLE_TIMEOUT_MS: number;
+  HARD_MAX_SESSION_MS: number;
+  TAKEOVER_IDLE_GRACE_ENV: string;
+  TAKEOVER_MAX_SESSION_ENV: string;
+  TAKEOVER_IDLE_GRACE_DEFAULT_MS: number;
+  TAKEOVER_MAX_SESSION_DEFAULT_MS: number;
+  TAKEOVER_IDLE_GRACE_MS: number;
+  TAKEOVER_MAX_SESSION_MS: number;
+  takeoverActivityPath(profile: string): string;
+  lastShutdownPath(profile: string): string;
+  parseTakeoverClockEnv(env?: Record<string, string | undefined>): {
+    idleGraceMs: number;
+    takeoverMaxMs: number;
+  };
+  computeTakeoverDeadlines(input: {
+    now: number;
+    activity: TakeoverActivity | unknown[] | string | null;
+    idleDeadline: number;
+    hardDeadline: number;
+    config: { idleGraceMs: number; takeoverMaxMs: number };
+  }): TakeoverClock;
 }
 
 const rb = (await import(SCRIPT_URL)) as ResearchBrowser;
@@ -199,7 +260,10 @@ const rb = (await import(SCRIPT_URL)) as ResearchBrowser;
  *  rather than against the script's opinion of it (forge-control/src/routes/uploads.ts). */
 const UPLOADS_ROUTE_ID_RE = /^[a-f0-9]{12}$/;
 
-function run(args: string[]): { status: number; stdout: string; stderr: string } {
+function run(
+  args: string[],
+  envExtra: Record<string, string | undefined> = {},
+): { status: number; stdout: string; stderr: string } {
   const res = spawnSync(process.execPath, [SCRIPT, ...args], {
     encoding: "utf8",
     // A usage error must never reach the network or a browser. Poisoning both resolution
@@ -208,11 +272,17 @@ function run(args: string[]): { status: number; stdout: string; stderr: string }
       ...process.env,
       PLAYWRIGHT_MODULE: "/nonexistent/playwright",
       RESEARCH_BROWSER_CHROME: "/nonexistent/chrome",
+      ...envExtra,
     },
   });
   if (res.error) throw res.error;
   return { status: res.status ?? -1, stdout: res.stdout, stderr: res.stderr };
 }
+
+/** A name no box has: every spawned usage-error case below must leave NO trace of it. */
+const UNKNOWN_PROFILE = "rbtest-unknown-zz";
+const noTraceOf = (profile: string) =>
+  !existsSync(rb.profileDir(profile)) && !existsSync(rb.stateDir(profile));
 
 /* ========================================================================== *
  * CLI contract: --help and the exit-code discipline
@@ -231,13 +301,21 @@ describe("CLI contract", () => {
   test("--help documents every subcommand and every exit code", () => {
     const { stdout } = run(["--help"]);
     for (const sub of rb.SUBCOMMANDS) {
-      assert.match(stdout, new RegExp(`^  ${sub} <profile>`, "m"), `${sub} missing from --help`);
+      // [profile] in brackets: optional for every subcommand since aios-takeover-usable.
+      assert.match(stdout, new RegExp(`^  ${sub} \\[profile\\]`, "m"), `${sub} missing from --help`);
     }
     for (const code of [0, 1, 2, 3, 4]) {
       assert.match(stdout, new RegExp(`^  ${code}  `, "m"), `exit ${code} missing from --help`);
     }
     assert.match(stdout, /NO PASSWORD IS EVER STORED/);
     assert.match(stdout, /127\.0\.0\.1 only|never (be )?expos/i);
+    // The durable default, the disposable flag, both clocks, and the agent's end signal are
+    // all part of the documented surface now.
+    assert.match(stdout, new RegExp(`defaults to "${rb.DEFAULT_PROFILE}"`));
+    assert.match(stdout, /--throwaway/);
+    assert.match(stdout, new RegExp(`${rb.TAKEOVER_IDLE_GRACE_ENV}=${rb.TAKEOVER_IDLE_GRACE_DEFAULT_MS}`));
+    assert.match(stdout, new RegExp(`${rb.TAKEOVER_MAX_SESSION_ENV}=${rb.TAKEOVER_MAX_SESSION_DEFAULT_MS}`));
+    assert.match(stdout, /THIS IS THE\s+AGENT'S END SIGNAL/);
   });
 
   test("--help wins over anything else on the line, including a bad subcommand", () => {
@@ -261,12 +339,66 @@ describe("CLI contract", () => {
     assert.match(r.stderr, new RegExp(rb.SUBCOMMANDS.join(" ")));
   });
 
-  test("a missing <profile> is a usage error for every subcommand", () => {
+  test("an omitted <profile> is the durable default, for every subcommand — no longer an error", () => {
+    // In-process: parseArgs leaves profile null and main() resolves it against the disk.
+    // (Not spawned: `status` on the default would create its state dir on this box.)
     for (const sub of rb.SUBCOMMANDS) {
-      const r = run([sub]);
-      assert.equal(r.status, rb.EXIT.USAGE, `${sub}: ${r.stderr}`);
-      assert.match(r.stderr, new RegExp(`"${sub}" requires a <profile>`));
+      assert.equal(rb.parseArgs([sub]).profile, null, `${sub} must accept no profile`);
     }
+    assert.equal(rb.DEFAULT_PROFILE, "konrad-main", "the shipped default; env overrides it");
+  });
+
+  test("a NEW profile name without --throwaway is refused (exit 3) and leaves no trace", () => {
+    for (const sub of rb.SUBCOMMANDS) {
+      const r = run([sub, UNKNOWN_PROFILE]);
+      assert.equal(r.status, rb.EXIT.USAGE, `${sub}: ${r.stderr}`);
+      assert.match(r.stderr, new RegExp(`profile "${UNKNOWN_PROFILE}" does not exist`));
+      assert.match(r.stderr, /pass --throwaway to create a disposable one/);
+      assert.match(r.stderr, new RegExp(`omit the profile to use ${rb.DEFAULT_PROFILE}`));
+      assert.equal(r.stdout, "");
+    }
+    assert.ok(noTraceOf(UNKNOWN_PROFILE), "a refused name must not get a profile or state dir");
+  });
+
+  test("--throwaway on the durable default is refused — it can never become disposable", () => {
+    const r = run(["status", "--throwaway"]);
+    assert.equal(r.status, rb.EXIT.USAGE, r.stderr);
+    assert.match(r.stderr, new RegExp(`"${rb.DEFAULT_PROFILE}" is the durable default and cannot be a throwaway`));
+    const explicit = run(["open", rb.DEFAULT_PROFILE, "--throwaway", "--url", "https://example.com"]);
+    assert.equal(explicit.status, rb.EXIT.USAGE, explicit.stderr);
+  });
+
+  test("an invalid $RESEARCH_BROWSER_DEFAULT_PROFILE dies by name before any disk work", () => {
+    const r = run(["status"], { [rb.DEFAULT_PROFILE_ENV]: "Not A Name" });
+    assert.equal(r.status, rb.EXIT.USAGE, r.stderr);
+    assert.match(r.stderr, new RegExp(`\\$${rb.DEFAULT_PROFILE_ENV}="Not A Name" is not a valid profile name`));
+    assert.ok(noTraceOf("Not A Name"));
+  });
+
+  test("a valid $RESEARCH_BROWSER_DEFAULT_PROFILE override is what an omitted profile resolves to", () => {
+    // Observed through the refusal text, which names the default — no state is created.
+    const r = run(["status", UNKNOWN_PROFILE], { [rb.DEFAULT_PROFILE_ENV]: "team-shared" });
+    assert.equal(r.status, rb.EXIT.USAGE, r.stderr);
+    assert.match(r.stderr, /omit the profile to use team-shared/);
+    assert.ok(noTraceOf("team-shared"));
+  });
+
+  test("an unreadable takeover clock kills the supervisor at start, by variable name, touching nothing", () => {
+    // The internal __supervise entry is the supervisor's main(); the env check is its first
+    // statement, so a bad clock exits 3 before a state dir, an X display or Chrome exists.
+    for (const [name, value] of [
+      [rb.TAKEOVER_MAX_SESSION_ENV, "abc"],
+      [rb.TAKEOVER_IDLE_GRACE_ENV, "0"],
+      [rb.TAKEOVER_IDLE_GRACE_ENV, "-5"],
+      [rb.TAKEOVER_MAX_SESSION_ENV, "Infinity"],
+      [rb.TAKEOVER_MAX_SESSION_ENV, ""],
+    ] as const) {
+      const r = run(["__supervise", UNKNOWN_PROFILE, "--display-num", "95"], { [name]: value });
+      assert.equal(r.status, rb.EXIT.USAGE, `${name}=${JSON.stringify(value)}: ${r.stderr}`);
+      assert.match(r.stderr, new RegExp(`${name} must be a positive finite number`));
+      assert.match(r.stderr, new RegExp(JSON.stringify(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    }
+    assert.ok(noTraceOf(UNKNOWN_PROFILE));
   });
 
   test("an invalid profile name is rejected before any browser or filesystem work", () => {
@@ -289,18 +421,23 @@ describe("CLI contract", () => {
   });
 
   test("an unknown --service is a usage error naming the known services", () => {
-    const r = run(["open", "p", "--service", "notaservice"]);
+    // "perplexity" is a SERVICES key, so the profile is accepted whether or not it is on disk
+    // and the failure is the --service one.
+    const r = run(["open", "perplexity", "--service", "notaservice"]);
     assert.equal(r.status, rb.EXIT.USAGE);
     assert.match(r.stderr, /unknown --service "notaservice"/);
     assert.match(r.stderr, /perplexity/);
   });
 
-  test("'generic' with no --url is a usage error, not a crash", () => {
-    // No SERVICES entry matches "scratch", so the fallback is generic, which has no home.
-    const r = run(["open", "scratch"]);
+  test("'generic' with no --url is a usage error, not a crash — and creates nothing", () => {
+    // No SERVICES entry matches the name, so the fallback is generic, which has no home.
+    // --throwaway gets the new name past the profile gate; the --url check must then fail
+    // BEFORE the profile or its state dir is materialised (a usage error costs nothing).
+    const r = run(["open", UNKNOWN_PROFILE, "--throwaway"]);
     assert.equal(r.status, rb.EXIT.USAGE, r.stderr);
     assert.match(r.stderr, /--url is required/);
     assert.match(r.stderr, /fell back to\s+"generic"/);
+    assert.ok(noTraceOf(UNKNOWN_PROFILE), "a --url usage error must not leave a state dir behind");
   });
 
   test("--probe and --no-reminder are rejected on the wrong subcommand", () => {
@@ -351,10 +488,25 @@ describe("parseArgs", () => {
   test("boolean flags take no value", () => {
     assert.equal(rb.parseArgs(["status", "p", "--probe"]).probe, true);
     assert.equal(rb.parseArgs(["open", "p", "--no-reminder"]).reminder, false);
-    assert.throws(
-      () => rb.parseArgs(["status", "p", "--probe=1"]),
-      (e: Error & { code?: number }) => e.name === "CliError" && e.code === rb.EXIT.USAGE,
-    );
+    assert.equal(rb.parseArgs(["open", "p", "--throwaway"]).throwaway, true);
+    assert.equal(rb.parseArgs(["open", "p"]).throwaway, false);
+    for (const argv of [["status", "p", "--probe=1"], ["open", "p", "--throwaway=yes"]]) {
+      assert.throws(
+        () => rb.parseArgs(argv),
+        (e: Error & { code?: number }) => e.name === "CliError" && e.code === rb.EXIT.USAGE,
+        `argv ${JSON.stringify(argv)}`,
+      );
+    }
+  });
+
+  test("the profile positional is optional; flags-only invocations parse with profile null", () => {
+    const opts = rb.parseArgs(["open", "--url", "https://example.com", "--throwaway"]);
+    assert.equal(opts.subcommand, "open");
+    assert.equal(opts.profile, null);
+    assert.equal(opts.throwaway, true);
+    // A second positional is still a profile, and still validated.
+    assert.equal(rb.parseArgs(["close", "scratch-r9"]).profile, "scratch-r9");
+    assert.throws(() => rb.parseArgs(["close", "BAD"]), /invalid profile name/);
   });
 
   test("flags may precede the positional arguments", () => {
@@ -365,7 +517,8 @@ describe("parseArgs", () => {
   });
 
   test("usage failures carry EXIT.USAGE, never a bare Error", () => {
-    for (const argv of [[], ["nope", "p"], ["open"], ["open", "BAD NAME"], ["open", "p", "--zzz"]]) {
+    // ["open"] alone is VALID since the profile became optional; an extra positional is not.
+    for (const argv of [[], ["nope", "p"], ["open", "p", "extra"], ["open", "BAD NAME"], ["open", "p", "--zzz"]]) {
       assert.throws(
         () => rb.parseArgs(argv),
         (e: Error & { code?: number }) =>
@@ -1274,5 +1427,285 @@ describe("prerequisite paths", () => {
   test("a box with NO window manager gets null, not a crash — the WM is optional", () => {
     assert.equal(rb.findWindowManager(rb.WM_CANDIDATE_PATHS, () => false), null);
     assert.equal(rb.findWindowManager([], () => true), null);
+  });
+});
+
+/* ========================================================================== *
+ * aios-takeover-usable B3 — one durable profile, throwaways only on request
+ *
+ * The defect: every agent run invented a new profile name, and Konrad's hand-typed logins
+ * landed in directories nothing reopened. resolveProfileChoice() is the whole gate.
+ * ========================================================================== */
+
+describe("resolveProfileChoice", () => {
+  const base = { defaultProfile: "konrad-main", serviceKeys: ["perplexity", "generic"] };
+
+  test("omitted → the durable default, accepted even before it exists on disk", () => {
+    const c = rb.resolveProfileChoice({ ...base, requested: null, exists: false, throwaway: false });
+    assert.deepEqual(c, { profile: "konrad-main", refusal: null, throwaway: false, create: true });
+    const later = rb.resolveProfileChoice({ ...base, requested: null, exists: true, throwaway: false });
+    assert.equal(later.create, false);
+    assert.equal(later.refusal, null);
+  });
+
+  test("the default named explicitly behaves exactly like omitting it", () => {
+    const a = rb.resolveProfileChoice({ ...base, requested: "konrad-main", exists: false, throwaway: false });
+    const b = rb.resolveProfileChoice({ ...base, requested: null, exists: false, throwaway: false });
+    assert.deepEqual(a, b);
+  });
+
+  test("an existing profile is always accepted — nothing Konrad already has is cut off", () => {
+    for (const name of ["os-ui", "r3-takeover", "smoke-r701", "scratch"]) {
+      const c = rb.resolveProfileChoice({ ...base, requested: name, exists: true, throwaway: false });
+      assert.equal(c.refusal, null, name);
+      assert.equal(c.profile, name);
+      assert.equal(c.create, false);
+      assert.equal(c.throwaway, false, "unmarked and not asked for: durable");
+    }
+  });
+
+  test("an existing profile that carries the marker reports throwaway without the flag", () => {
+    const c = rb.resolveProfileChoice({ ...base, requested: "r5proof", exists: true, marked: true, throwaway: false });
+    assert.equal(c.refusal, null);
+    assert.equal(c.throwaway, true);
+  });
+
+  test("--throwaway on an existing unmarked profile adopts it as disposable (explicit ask, no deletion)", () => {
+    const c = rb.resolveProfileChoice({ ...base, requested: "scratch", exists: true, throwaway: true });
+    assert.equal(c.refusal, null);
+    assert.equal(c.throwaway, true);
+    assert.equal(c.create, false);
+  });
+
+  test("a SERVICES key may be created without --throwaway — a service profile is durable by design", () => {
+    const c = rb.resolveProfileChoice({ ...base, requested: "perplexity", exists: false, throwaway: false });
+    assert.deepEqual(c, { profile: "perplexity", refusal: null, throwaway: false, create: true });
+  });
+
+  test("any other NEW name without --throwaway is refused with the two ways out", () => {
+    const c = rb.resolveProfileChoice({ ...base, requested: "r706-proof", exists: false, throwaway: false });
+    assert.equal(c.profile, "r706-proof");
+    assert.equal(c.create, false);
+    assert.equal(
+      c.refusal,
+      'profile "r706-proof" does not exist — pass --throwaway to create a disposable one, or omit the profile to use konrad-main',
+    );
+  });
+
+  test("a NEW name WITH --throwaway is created and marked", () => {
+    const c = rb.resolveProfileChoice({ ...base, requested: "r706-proof", exists: false, throwaway: true });
+    assert.deepEqual(c, { profile: "r706-proof", refusal: null, throwaway: true, create: true });
+  });
+
+  test("the default can never be a throwaway, omitted or named, existing or not", () => {
+    for (const requested of [null, "konrad-main"]) {
+      for (const exists of [false, true]) {
+        const c = rb.resolveProfileChoice({ ...base, requested, exists, throwaway: true });
+        assert.match(c.refusal ?? "", /is the durable default and cannot be a throwaway/, `${requested} exists=${exists}`);
+        assert.equal(c.create, false);
+      }
+    }
+  });
+
+  test("the refusal names the CONFIGURED default, not a literal", () => {
+    const c = rb.resolveProfileChoice({ ...base, defaultProfile: "team-shared", requested: "x1", exists: false, throwaway: false });
+    assert.match(c.refusal ?? "", /omit the profile to use team-shared$/);
+  });
+
+  test("the marker lives inside the Chrome user-data-dir, where Chrome ignores it", () => {
+    assert.equal(rb.throwawayMarkerPath("r706-proof"), "/opt/ai-os/browser-profiles/r706-proof/.throwaway");
+  });
+});
+
+/* ========================================================================== *
+ * aios-takeover-usable B3 — supervisor-owned takeover clocks
+ *
+ * forge-control writes socket FACTS to takeover-activity.json; the supervisor turns them into
+ * deadlines every tick. The rules under test are the ones Konrad hit: a session must not die
+ * while he is connected, must survive him stepping away, and must still have a hard cap.
+ * ========================================================================== */
+
+describe("computeTakeoverDeadlines", () => {
+  const MIN = 60_000;
+  const config = { idleGraceMs: 30 * MIN, takeoverMaxMs: 120 * MIN };
+  const T0 = Date.parse("2026-08-26T01:00:00.000Z");
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const activity = (over: TakeoverActivity = {}): TakeoverActivity => ({
+    connected: 1,
+    connects: 1,
+    first_connect_at: iso(T0),
+    last_connect_at: iso(T0),
+    last_disconnect_at: null,
+    written_at: iso(T0),
+    ...over,
+  });
+
+  test("no activity file (nobody ever connected) changes nothing — the agent-only clocks govern", () => {
+    const c = rb.computeTakeoverDeadlines({ now: T0, activity: null, idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.deepEqual(c, {
+      idleDeadline: T0 + 60 * MIN,
+      takeoverDeadline: null,
+      takeoverStartedAt: null,
+      connected: 0,
+      shutdownReason: null,
+      warnings: [],
+    });
+  });
+
+  test("a CONNECTED viewer is never idle: the idle deadline is pushed past `now` even when it had expired", () => {
+    // The agent's 1 h idle clock ran out 20 min ago; Konrad is in the session. No shutdown.
+    const expired = T0 - 20 * MIN;
+    const c = rb.computeTakeoverDeadlines({ now: T0, activity: activity(), idleDeadline: expired, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(c.connected, 1);
+    assert.equal(c.idleDeadline, T0 + 30 * MIN, "now + grace, so the loop's `now > idleDeadline` cannot fire");
+    assert.equal(c.shutdownReason, null);
+    // …and it keeps moving with every tick, never backwards.
+    const later = rb.computeTakeoverDeadlines({ now: T0 + 5 * MIN, activity: activity(), idleDeadline: c.idleDeadline, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(later.idleDeadline, T0 + 35 * MIN);
+  });
+
+  test("a later existing idle deadline is kept — max(), never a pull-back", () => {
+    const c = rb.computeTakeoverDeadlines({ now: T0, activity: activity(), idleDeadline: T0 + 240 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(c.idleDeadline, T0 + 240 * MIN, "LOGIN_IDLE 4 h outlives a 30 min grace");
+  });
+
+  test("after the last disconnect the grace ARMS from last_disconnect_at; the first idle tick does not kill", () => {
+    const left = T0 + 10 * MIN;
+    const gone = activity({ connected: 0, last_disconnect_at: iso(left) });
+    // The tick right after the socket closed: idle deadline was already past, still no shutdown.
+    const first = rb.computeTakeoverDeadlines({ now: left + 1, activity: gone, idleDeadline: T0 - MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(first.connected, 0);
+    assert.equal(first.idleDeadline, left + 30 * MIN, "armed: last_disconnect_at + grace");
+    assert.equal(first.shutdownReason, null);
+    assert.ok(first.idleDeadline > left + 1, "the loop's idle check cannot fire on this tick");
+    // 29 min later: still inside the grace.
+    const inside = rb.computeTakeoverDeadlines({ now: left + 29 * MIN, activity: gone, idleDeadline: first.idleDeadline, hardDeadline: T0 + 480 * MIN, config });
+    assert.ok(inside.idleDeadline > left + 29 * MIN);
+    // 31 min later: the deadline is behind `now` — the LOOP's idle check fires (not this function).
+    const after = rb.computeTakeoverDeadlines({ now: left + 31 * MIN, activity: gone, idleDeadline: first.idleDeadline, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(after.idleDeadline, left + 30 * MIN);
+    assert.ok(left + 31 * MIN > after.idleDeadline, "grace elapsed → idle shutdown is due");
+    assert.equal(after.shutdownReason, null, "idle is the loop's verdict; only the cap is decided here");
+  });
+
+  test("a reconnect within the grace cancels it — connected wins over last_disconnect_at", () => {
+    const back = activity({ connected: 1, last_disconnect_at: iso(T0 + 10 * MIN), last_connect_at: iso(T0 + 20 * MIN) });
+    const c = rb.computeTakeoverDeadlines({ now: T0 + 20 * MIN, activity: back, idleDeadline: T0 + 40 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(c.idleDeadline, T0 + 50 * MIN, "now + grace, not last_disconnect_at + grace");
+  });
+
+  test("the cap counts from first_connect_at and fires only once `now` is past it", () => {
+    const before = rb.computeTakeoverDeadlines({ now: T0 + 119 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(before.takeoverStartedAt, T0);
+    assert.equal(before.takeoverDeadline, T0 + 120 * MIN);
+    assert.equal(before.shutdownReason, null);
+    const at = rb.computeTakeoverDeadlines({ now: T0 + 120 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(at.shutdownReason, null, "the boundary itself is not past");
+    const past = rb.computeTakeoverDeadlines({ now: T0 + 120 * MIN + 1, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(past.shutdownReason, "takeover cap 2h");
+  });
+
+  test("the cap fires even while a viewer is connected — it is the safety cap, not an idle rule", () => {
+    const c = rb.computeTakeoverDeadlines({ now: T0 + 121 * MIN, activity: activity({ connected: 2 }), idleDeadline: T0, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(c.connected, 2);
+    assert.equal(c.shutdownReason, "takeover cap 2h");
+  });
+
+  test("the cap survives reconnects: later connects do not move first_connect_at", () => {
+    const re = activity({ connects: 6, last_connect_at: iso(T0 + 110 * MIN) });
+    const c = rb.computeTakeoverDeadlines({ now: T0 + 121 * MIN, activity: re, idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(c.takeoverDeadline, T0 + 120 * MIN);
+    assert.equal(c.shutdownReason, "takeover cap 2h");
+  });
+
+  test("the hard deadline is the outer bound for every deadline returned", () => {
+    const hard = T0 + 60 * MIN;
+    const c = rb.computeTakeoverDeadlines({ now: T0, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: hard, config });
+    assert.equal(c.takeoverDeadline, hard, "min(first_connect + cap, hard)");
+    assert.equal(c.idleDeadline, hard, "idle can never be scheduled past the hard cap");
+  });
+
+  test("the reason string carries the configured cap, not a literal", () => {
+    const c = rb.computeTakeoverDeadlines({ now: T0 + 31 * MIN, activity: activity(), idleDeadline: T0 + 600 * MIN, hardDeadline: T0 + 480 * MIN, config: { idleGraceMs: 30 * MIN, takeoverMaxMs: 30 * MIN } });
+    assert.equal(c.shutdownReason, "takeover cap 0.5h");
+  });
+
+  test("garbage fields are ignored AND named — never a throw, never silence", () => {
+    const bad = activity({ connected: "two", first_connect_at: "yesterday", last_disconnect_at: 42 });
+    const c = rb.computeTakeoverDeadlines({ now: T0, activity: bad, idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(c.connected, 0);
+    assert.equal(c.takeoverDeadline, null);
+    assert.equal(c.shutdownReason, null);
+    assert.equal(c.idleDeadline, T0 + 60 * MIN);
+    assert.equal(c.warnings.length, 3, c.warnings.join("\n"));
+    assert.match(c.warnings[0], /connected="two" is not a number/);
+    assert.match(c.warnings[1], /last_disconnect_at=42 is not an ISO time/);
+    assert.match(c.warnings[2], /first_connect_at="yesterday" is not an ISO time/);
+    // A file that is JSON but not an object is one warning and no effect.
+    for (const junk of [[1, 2], "connected"]) {
+      const j = rb.computeTakeoverDeadlines({ now: T0, activity: junk, idleDeadline: T0 + 60 * MIN, hardDeadline: T0 + 480 * MIN, config });
+      assert.equal(j.idleDeadline, T0 + 60 * MIN);
+      assert.equal(j.warnings.length, 1, JSON.stringify(junk));
+      assert.match(j.warnings[0], /not an object/);
+    }
+  });
+
+  test("a negative connected count is clamped to 0 — a decrement bug upstream must not pin the session open", () => {
+    const c = rb.computeTakeoverDeadlines({ now: T0, activity: activity({ connected: -1 }), idleDeadline: T0 - MIN, hardDeadline: T0 + 480 * MIN, config });
+    assert.equal(c.connected, 0);
+    assert.equal(c.idleDeadline, T0 - MIN, "not connected and never disconnected: nothing to arm");
+  });
+});
+
+describe("parseTakeoverClockEnv", () => {
+  test("defaults are 30 min grace and a 2 h cap, and match the exported constants", () => {
+    const c = rb.parseTakeoverClockEnv({});
+    assert.deepEqual(c, { idleGraceMs: 30 * 60 * 1000, takeoverMaxMs: 2 * 60 * 60 * 1000 });
+    assert.equal(c.idleGraceMs, rb.TAKEOVER_IDLE_GRACE_DEFAULT_MS);
+    assert.equal(c.takeoverMaxMs, rb.TAKEOVER_MAX_SESSION_DEFAULT_MS);
+    assert.equal(rb.TAKEOVER_IDLE_GRACE_ENV, "TAKEOVER_IDLE_GRACE_MS");
+    assert.equal(rb.TAKEOVER_MAX_SESSION_ENV, "TAKEOVER_MAX_SESSION_MS");
+  });
+
+  test("the module-level constants reflect THIS process's env (the documented Number(env ?? default) shape)", () => {
+    const expectGrace = Number(process.env.TAKEOVER_IDLE_GRACE_MS ?? rb.TAKEOVER_IDLE_GRACE_DEFAULT_MS);
+    const expectMax = Number(process.env.TAKEOVER_MAX_SESSION_MS ?? rb.TAKEOVER_MAX_SESSION_DEFAULT_MS);
+    assert.equal(rb.TAKEOVER_IDLE_GRACE_MS, expectGrace);
+    assert.equal(rb.TAKEOVER_MAX_SESSION_MS, expectMax);
+  });
+
+  test("env overrides parse as milliseconds, independently", () => {
+    assert.deepEqual(
+      rb.parseTakeoverClockEnv({ TAKEOVER_IDLE_GRACE_MS: "600000", TAKEOVER_MAX_SESSION_MS: "10800000" }),
+      { idleGraceMs: 600_000, takeoverMaxMs: 10_800_000 },
+    );
+    assert.equal(rb.parseTakeoverClockEnv({ TAKEOVER_MAX_SESSION_MS: "1e3" }).takeoverMaxMs, 1000);
+    assert.equal(rb.parseTakeoverClockEnv({ TAKEOVER_MAX_SESSION_MS: "1e3" }).idleGraceMs, rb.TAKEOVER_IDLE_GRACE_DEFAULT_MS);
+  });
+
+  test("an invalid value throws CliError(USAGE) naming the variable and quoting the value", () => {
+    for (const [name, value] of [
+      ["TAKEOVER_IDLE_GRACE_MS", "abc"],
+      ["TAKEOVER_IDLE_GRACE_MS", "0"],
+      ["TAKEOVER_MAX_SESSION_MS", "-1"],
+      ["TAKEOVER_MAX_SESSION_MS", "Infinity"],
+      ["TAKEOVER_MAX_SESSION_MS", ""],
+      ["TAKEOVER_MAX_SESSION_MS", "NaN"],
+    ]) {
+      assert.throws(
+        () => rb.parseTakeoverClockEnv({ [name]: value }),
+        (e: Error & { code?: number }) =>
+          e.name === "CliError" &&
+          e.code === rb.EXIT.USAGE &&
+          e.message.includes(name) &&
+          e.message.includes(JSON.stringify(value)),
+        `${name}=${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  test("the activity file and the shutdown record live in the profile's STATE dir, not the Chrome dir", () => {
+    assert.equal(rb.takeoverActivityPath("konrad-main"), "/opt/ai-os/browser-profiles/.state/konrad-main/takeover-activity.json");
+    assert.equal(rb.lastShutdownPath("konrad-main"), "/opt/ai-os/browser-profiles/.state/konrad-main/last-shutdown.json");
   });
 });
