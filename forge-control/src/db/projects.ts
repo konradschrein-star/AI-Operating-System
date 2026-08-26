@@ -146,6 +146,47 @@ function isTerminal(alias: string): string {
  *  window, which is the real budget. Always gemini-3.7-flash-high. */
 export type TaskTier = "fast" | "junior" | "standard" | "flagship" | "gemini";
 
+export const TASK_TIERS: readonly TaskTier[] = [
+  "fast",
+  "junior",
+  "standard",
+  "flagship",
+  "gemini",
+];
+
+/**
+ * A project's pinned engine, if it has one.
+ *
+ * ── Why this lives in the DB layer and not only in the route ───────────────
+ * `metadata.tier_pin` used to be read in exactly ONE place, `routes/projects.ts`,
+ * so it only bound tasks created through the HTTP API. Every row the fleet
+ * seeds for ITSELF — fix-cycle builders, re-review checkers — is created
+ * internally and never passes through that route, so the pin never reached the
+ * rows that make up most of a busy project's work.
+ *
+ * MEASURED 2026-08-25: after pinning five active projects to `gemini`, twelve
+ * new tasks were created on those projects and NOT ONE was gemini — seven
+ * `standard` (which maps to Opus) and five `junior`. The pin looked set, the UI
+ * showed it set, and it governed nothing that mattered.
+ *
+ * Resolved HERE, beside the rows it governs, with both callers sharing one
+ * definition rather than keeping two that drift.
+ */
+export function tierPinOf(metadata: unknown): TaskTier | undefined {
+  if (typeof metadata !== "object" || metadata === null) return undefined;
+  const raw = (metadata as { tier_pin?: unknown }).tier_pin;
+  return typeof raw === "string" && (TASK_TIERS as readonly string[]).includes(raw)
+    ? (raw as TaskTier)
+    : undefined;
+}
+
+/** `tierPinOf` for a project id — for the internal task-creation paths that
+ *  hold an id but no loaded project row. */
+export async function getProjectTierPin(id: string): Promise<TaskTier | undefined> {
+  const project = await getProject(id);
+  return project ? tierPinOf(project.metadata) : undefined;
+}
+
 export interface Project {
   id: string;
   name: string;

@@ -99,7 +99,29 @@ describe("the call site actually uses it", () => {
     // can see. Pin the wiring itself.
     assert.match(TICK_SRC, /import \{ inheritTier \} from "\.\/tier-inherit"/);
     assert.match(TICK_SRC, /const inheritedTier = inheritTier\(rows\)/);
-    assert.match(TICK_SRC, /tier: inheritedTier/);
+    /* The chain's tier is no longer `inheritedTier` verbatim: since 2026-08-26
+     * the PROJECT'S PIN outranks inheritance, and an unpinned chain is capped
+     * off Opus. Both still have to reach createFixChain, so the derivation is
+     * pinned as well as the hand-off — a `chainTier` that stopped reading
+     * `inheritedTier` would silently revert this file's whole point. */
+    assert.match(TICK_SRC, /const chainTier = pinnedTier \?\? cappedTier/);
+    assert.match(TICK_SRC, /inheritedTier === "standard"/);
+    assert.match(TICK_SRC, /tier: chainTier/);
+  });
+
+  test("the project pin outranks inheritance, and is read from the db layer", () => {
+    /* MEASURED 2026-08-25: five projects pinned to `gemini`, twelve fix-chain
+     * and re-check rows created afterwards, ZERO of them gemini — because the
+     * pin was only ever read in routes/projects.ts, and fix chains are created
+     * in project-tick. A pin that governs only the HTTP path governs almost
+     * nothing on a busy project, where most rows are the fleet talking to
+     * itself. */
+    assert.match(TICK_SRC, /const pinnedTier = await getProjectTierPin\(projectId\)/);
+    assert.match(
+      TICK_SRC,
+      /getProjectTierPin,/,
+      "must import the shared resolver from the db layer rather than re-reading metadata here",
+    );
   });
 
   test("the find-first version has not crept back", () => {
