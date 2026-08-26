@@ -334,6 +334,24 @@ gate_sh "check-browser-takeover-ticket.ts — the unauthenticated-by-design sock
 gate_sh "check-vm-keys.ts — keysym rules, viewer state, session clock strings" \
   "cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-vm-keys.ts | tail -2"
 
+# ── aios-takeover-usable B5 ────────────────────────────────────────────────
+# The instrument for the text-to-VM panel. Its FAST half runs here on every
+# invocation (~2 s, no browser): the keysym table the E2E relies on, a
+# comment-stripped scan of the five page modules for `console.` (that is where
+# passwords go), and the pure session-view shape + the exact header strings.
+# The browser half — typing through noVNC → front proxy → forge-control's
+# upgrade pipe → x11vnc → Chrome on Xvfb, a forge-control restart mid-session,
+# Done, and the no-log sweep — takes ~90 s and stands up its own stack, so it
+# sits behind --browser below with the other browser gates. BOTH are wired:
+# 38 of 66 files in scripts/checks/ are executed by nothing, and a 39th orphan
+# would be counted, green, and agreeing with its author.
+# Mutation-proved RED through this pipe (vm-keys.ts CRLF rule → two Returns;
+# TextToVM.tsx + a console.log) — transcripts in
+# docs/plan/aios-takeover-usable/evidence-text-input.md.
+gate_sh "check-takeover-text-input-e2e.ts — keysym table, no-console scan, session-view shape (fast)" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-takeover-text-input-e2e.ts | tail -3"
+
 # Needs a Postgres SERVER. It creates its own scratch database and issues no
 # statement against the one named in DATABASE_URL — but with no DSN at all there
 # is nothing to connect to, so it is SKIPPED rather than reported as passing.
@@ -416,6 +434,19 @@ if [ "$BROWSER" = "1" ]; then
   # pass. It shares check-chat-reference-navigation's harness and README.
   gate_sh "check-chat-tool-path.mjs — tool-row paths are openable, prose is not" \
     "node scripts/checks/check-chat-tool-path.mjs | tail -30"
+  # aios-takeover-usable B5. Two takeover E2Es, each standing up its OWN stack
+  # (ephemeral forge-control probe + next dev + nginx stand-in + a throwaway
+  # research-browser profile) — nothing live is touched and no phase800 harness
+  # is needed. Both were invoked by NOTHING before this round: the clipboard
+  # check passed on this box only because a stale .state dir happened to exist
+  # (fixed with --throwaway), and the text-input check is new. Each proved RED
+  # through this exact pipe before it was wired — evidence-text-input.md.
+  gate_sh "check-takeover-clipboard-e2e.ts — Paste/Copy buttons through the real noVNC iframe" \
+    "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+       --tsconfig ../tsconfig.checks.json ../scripts/checks/check-takeover-clipboard-e2e.ts | tail -3"
+  gate_sh "check-takeover-text-input-e2e.ts --browser — type through the real stack, restart-reconnect, Done, no-log" \
+    "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+       --tsconfig ../tsconfig.checks.json ../scripts/checks/check-takeover-text-input-e2e.ts --browser | tail -3"
 else
   skip "phase700/network-700.cjs (NFU3)" "browser harness not requested (--browser); run separately, results in README §8"
   skip "phase600/nav-walk.cjs — P1/P2/P3" "browser harness not requested (--browser); run separately, results in README §8"
