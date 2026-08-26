@@ -357,9 +357,20 @@ export async function resolveChatProject(
   };
 }
 
+/**
+ * Where the backfill ledger is appended. Deliberately OUT of the git tree: it
+ * is a runtime audit record, and while it lived at
+ * `docs/plan/artifacts/phase300/backfill.log` the engine dirtied a tracked file
+ * inside the live checkout as normal operation — which made the reviewer brief's
+ * "`git status --porcelain` empty is the only pass" unreachable. The in-tree
+ * file stays where it is, frozen, as committed history.
+ *
+ * `||`, not `??`: an empty `FORGE_BACKFILL_LOG` is a misconfiguration, and
+ * falling through to the real destination beats appending to "" and losing the
+ * ledger into the swallowed-error path below.
+ */
 export const BACKFILL_LOG =
-  process.env.FORGE_BACKFILL_LOG ??
-  "/var/log/forge/chat-linkage-backfill.log";
+  process.env.FORGE_BACKFILL_LOG || "/var/log/forge/chat-linkage-backfill.log";
 
 /**
  * Write `origin_chat_id` into a project's metadata, once, ever.

@@ -107,16 +107,34 @@ T3 deploy builder (junior, main)
 - **Title**: Deploy: commit live backfill audit line, merge project branch & restart forge-control
 - **Write Set**: `["docs/plan/artifacts/phase300/backfill.log", "deploy/aios-backfill-ledger-out-of-tree.md"]`
 - **Instructions**:
-  1. In the live checkout `/opt/forge-ai-os` (authorized by fleet supervisor):
-     - Check `git -C /opt/forge-ai-os status --porcelain`.
-     - Confirm the ONLY dirty file is `docs/plan/artifacts/phase300/backfill.log`. If anything else is dirty, stop and report immediately.
-     - Commit the file:
-       `git -C /opt/forge-ai-os add docs/plan/artifacts/phase300/backfill.log`
-       `git -C /opt/forge-ai-os commit -m "chore(audit): commit engine-written backfill line to clear live checkout dirt, appending moved out-of-tree"`
-     - Confirm `git -C /opt/forge-ai-os status --porcelain` is now EMPTY.
-  2. Merge `project/5b9b85e7` into `main` in `/opt/forge-ai-os`.
-  3. Restart `forge-control` via `pm2 restart forge-control` (or safe-restart).
-  4. Prove control:
-     - Verify `git -C /opt/forge-ai-os status --porcelain` remains EMPTY.
-     - Verify writing a backfill record writes to `/var/log/forge/chat-linkage-backfill.log` and leaves `/opt/forge-ai-os` completely clean.
+
+  **Order matters. The OLD code keeps appending in-tree until `forge-control` is
+  restarted, so any window between the dirt-clearing commit and the restart can
+  manufacture a fresh dirty line. Merge and restart FIRST, assert cleanliness
+  LAST.** Do not restart `forge-executor` — that kills every run in flight.
+
+  1. Merge `project/5b9b85e7` into `main` in `/opt/forge-ai-os`. (`PLAN.md`
+     conflicts with main's R70 lane and is resolved to this lane's plan; the
+     lane merged main in at round 2, so `project-tick.ts` resolves to main's
+     blob and gate 7 is green.)
+  2. Restart `forge-control` — `pm2 restart forge-control` (or safe-restart).
+     From this moment on, no code path appends inside the repository.
+  3. NOW clear the live-checkout dirt (authorised by the fleet supervisor, once,
+     for this one path only):
+     - `git -C /opt/forge-ai-os status --porcelain`
+     - Confirm the ONLY dirty path is `docs/plan/artifacts/phase300/backfill.log`.
+       If ANYTHING else is dirty, stop and report — do not sweep it in, and
+       never `git stash` in the live checkout (the stash stack is shared across
+       worktrees and carries other lanes' entries).
+     - `git -C /opt/forge-ai-os add docs/plan/artifacts/phase300/backfill.log`
+     - `git -C /opt/forge-ai-os commit -m "chore(audit): engine-written backfill audit line, committed once to clear live-checkout dirt — appending has moved out of the tree"`
+     - Never revert it: the line is a real audit record.
+  4. Prove control — BOTH halves, or it is not proven:
+     - `git -C /opt/forge-ai-os status --porcelain` is EMPTY.
+     - Exercise the write path (a real chat-originated project, or
+       `backfillOriginChatId` over a scratch DB from the live checkout) and show
+       the new line lands in `/var/log/forge/chat-linkage-backfill.log` **while
+       `git -C /opt/forge-ai-os status --porcelain` stays EMPTY**.
+     - If a new in-tree line appeared anyway, the restart did not take: re-check
+       `pm2 jlist` for the restart timestamp before re-committing the path.
   5. Write deploy record to `deploy/aios-backfill-ledger-out-of-tree.md`.

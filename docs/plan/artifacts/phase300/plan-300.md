@@ -28,7 +28,9 @@ Mitigation: 301 records the pre-change transcript BEFORE 302 exists; 302's own g
 **Rollback line:** `git checkout <round-301-commit> -- forge-control/src/routes/agents.ts && git rm forge-control/src/routes/agents-shared.ts` — agents.ts is otherwise untouched by this phase, so reverting it costs nothing downstream except re-doing 302.
 
 Second risk: **the 304 backfill UPDATE** — the only write in the phase.
-**Rollback line:** `UPDATE projects SET metadata = metadata - 'origin_chat_id' WHERE id IN (<ids listed in artifacts/phase300/backfill.log>);` (run only on instruction; the builder MUST log every id it writes).
+**Rollback line:** `UPDATE projects SET metadata = metadata - 'origin_chat_id' WHERE id IN (<ids listed in the backfill ledger>);` (run only on instruction; the builder MUST log every id it writes).
+
+> **Where the ledger lives (updated by `aios-backfill-ledger-out-of-tree`, 2026-08-26).** The ledger moved OUT of the git tree to **`/var/log/forge/chat-linkage-backfill.log`** (overridable with `FORGE_BACKFILL_LOG`), because appending to a tracked file dirtied the live checkout as normal engine operation and made the reviewer brief's "`git status --porcelain` empty is the only pass" unreachable. `artifacts/phase300/backfill.log` is **frozen at the relocation** and holds only the ids written before it: a rollback must read **both** files — the frozen one for the historical ids, `/var/log/forge/chat-linkage-backfill.log` for everything since.
 
 ## Facts established by the planner (use these, don't re-derive)
 
