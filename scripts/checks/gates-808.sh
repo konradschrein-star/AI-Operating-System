@@ -203,16 +203,52 @@ gate "no-raw-colours.cjs (whole app)" node scripts/checks/no-raw-colours.cjs
 # forbidden for this project as well: none was authorised and none was touched
 # (the fix-chain default is passed at the project-tick CALL SITE for exactly
 # that reason).
+# OPERATOR WAIVER 2026-08-26 — recorded the way the paragraph above requires.
+# Project aios-takeover-usable: B4 was assigned the BROWSER_FIRST prompt block
+# (PLAN.md:177), and that block is DEFINED in forge-control/src/lib/
+# project-tick.ts. The work cannot be done anywhere else, so this gate had again
+# become the toll the 2026-08-23 waiver describes: passable only by disobeying an
+# authorised brief, or by a builder widening a gate.
+#
+# WHY IT WAS WORTH WAIVING: the quoted invocation said `open scratch`, and that
+# one word is why Konrad's hand-typed logins kept landing in directories nothing
+# ever reopened — eight profile dirs on disk, six round-scoped throwaways, each
+# created because a run copied the example.
+#
+# I READ THE DIFF BEFORE WAIVING IT. Confined to the BROWSER_FIRST string and its
+# doc comment: 22 lines, no declaration added or removed, no tick logic touched.
+#
+# SCOPE: project-tick.ts and its .test.ts, on branch project/51ddfb27 ONLY.
+# SUSPENDED, not released — any other lane touching project-tick still goes red,
+# and this waiver expires with the branch. cc-runner, executor.ts and db/projects
+# stay forbidden here: none was authorised, none was touched.
+#
+# A PATH-SCOPED WAIVER IS NOT ENOUGH BY ITSELF. It would let any LATER commit on
+# this branch edit project-tick.ts unseen. The gate directly below closes that
+# half: under a waiver the CONTENT may change, the exported API may not.
 gate_sh "forbidden-file diff — three-dot main...HEAD" \
   "waived=''; \
    [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'project/860c948e' ] \
      && waived='forge-control/src/lib/project-tick(\\.test)?\\.ts\$'; \
    [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'operator/agy-fix' ] \
      && waived='forge-control/src/(lib/project-tick(\\.test)?\\.ts|db/projects\\.ts)\$'; \
+   [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'project/51ddfb27' ] \
+     && waived='forge-control/src/lib/project-tick(\\.test)?\\.ts\$'; \
    hits=\$(git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects' || true); \
    [ -n \"\$waived\" ] && [ -n \"\$hits\" ] && hits=\$(printf '%s\\n' \"\$hits\" | grep -vE \"\$waived\" || true); \
    [ -n \"\$hits\" ] && { printf '%s\\n' \"\$hits\"; echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; }; \
    echo 'clean — no unwaived engine/Files file differs'; exit 0"
+
+# Applies to EVERY branch, waived or not. A path waiver above suspends the
+# content ban for one branch; it cannot say "and only the part you were
+# authorised to change". This supplies that half: a prompt string may be
+# rewritten, an exported symbol may not appear or vanish.
+gate_sh "project-tick.ts exported surface identical to main (a waiver covers content, never API)" \
+  "a=\$(git show main:forge-control/src/lib/project-tick.ts 2>/dev/null | grep -oE '^export (async function|function|const|type|interface|class) [A-Za-z0-9_]+' | sort); \
+   b=\$(grep -oE '^export (async function|function|const|type|interface|class) [A-Za-z0-9_]+' forge-control/src/lib/project-tick.ts | sort); \
+   if [ \"\$a\" = \"\$b\" ]; then echo 'exported surface identical'; exit 0; fi; \
+   echo 'EXPORTED SURFACE CHANGED vs main:'; echo '--- main'; printf '%s\\n' \"\$a\"; echo '--- HEAD'; printf '%s\\n' \"\$b\"; exit 1"
+
 
 gate_sh "forge-control/ untouched by round 808's own commits" \
   "changed=\$(git diff --name-only 7b961b5..HEAD -- forge-control/ | wc -l); \
