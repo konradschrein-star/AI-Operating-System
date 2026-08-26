@@ -557,7 +557,7 @@ Q "select p.name,
 #                  FIRES     — every active project all-terminal: printed
 #                              "THE FLEET HAS NOTHING QUEUED — 0 open rows", exit 1.
 #                  SILENT    — one `pending` row added to one project: header
-#                              "== FLEET-WIDE OPEN WORK: 1 open rows across all
+#                              "== FLEET-WIDE OPEN WORK: 1 open row across all
 #                              active projects ==", body "none", alarm did not
 #                              fire.
 #                The second run is the control: a line that fires unconditionally
@@ -593,7 +593,8 @@ case "$out" in
     printf 'FATAL: this is a BROKEN DETECTOR, not an idle fleet — same reasoning as Q() exit 2.\n' >&2
     exit 2 ;;
 esac
-section "FLEET-WIDE OPEN WORK: $out open rows across all active projects"
+[ "$out" -eq 1 ] && row_word="row" || row_word="rows"
+section "FLEET-WIDE OPEN WORK: $out open $row_word across all active projects"
 if [ "$out" -eq 0 ]; then
   echo "THE FLEET HAS NOTHING QUEUED — 0 open rows (pending/ready/running) across every active project. Nothing is stalled because nothing is running; every section above is empty BY CONSTRUCTION, and a clear report here would have meant the opposite of what it says. Seed work or close finished projects."
   found=1
