@@ -21,8 +21,11 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { createServer, connect } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // The CONSUMER's idea of where the per-profile marker lives. Imported from
 // browser-takeover.ts on purpose: this file's job here is to pin a contract
@@ -120,6 +123,30 @@ interface DedupResult {
   skipped: { id: string | null; reason: string }[];
 }
 
+/** One line of a teardown report: a process action or a port verification. */
+interface TeardownAction {
+  what: string;
+  result: string;
+  pid?: number | null;
+  port?: number;
+  detail?: string;
+  exited_after_ms?: number;
+  after_ms?: number;
+}
+
+/** The shape of .state/<profile>/takeover.json, as teardownStack() reads it. */
+interface TakeoverStateRecord {
+  displayNum: number;
+  vncPort: number;
+  novncPort: number;
+  xvfb: { pid: number } | null;
+  wm: { pid: number; bin: string } | null;
+  autocutsel_clipboard: { pid: number } | null;
+  autocutsel_primary: { pid: number } | null;
+  x11vnc: { pid: number } | null;
+  websockify: { pid: number } | null;
+}
+
 interface ResearchBrowser {
   EXIT: Record<string, number>;
   CliError: new (code: number, message: string) => Error & { code: number };
@@ -214,6 +241,26 @@ interface ResearchBrowser {
     ownerAlive: boolean;
     anyProcessLive: boolean;
   }): { reap: boolean; stateOnly?: boolean; reason: string };
+  // aios-takeover-usable R8: teardown that waits, escalates and verifies the port
+  TERMINATE_GRACE_MS: number;
+  KILL_GRACE_MS: number;
+  PORT_RELEASE_TIMEOUT_MS: number;
+  terminateAndVerify(
+    pid: number,
+    token: string,
+    what: string,
+    opts?: { graceMs?: number; killGraceMs?: number },
+  ): Promise<TeardownAction>;
+  verifyPortReleased(port: number, what: string, opts?: { timeoutMs?: number }): Promise<TeardownAction>;
+  teardownIsComplete(actions: TeardownAction[]): boolean;
+  teardownStack(
+    state: TakeoverStateRecord,
+    opts?: { graceMs?: number; killGraceMs?: number; portTimeoutMs?: number },
+  ): Promise<{ actions: TeardownAction[]; complete: boolean }>;
+  teardownTakeoverAt(
+    path: string,
+    opts?: { graceMs?: number; killGraceMs?: number; portTimeoutMs?: number },
+  ): Promise<{ actions: TeardownAction[]; complete: boolean }>;
   PLAYWRIGHT_CANDIDATE_PATHS: string[];
   CHROME_CANDIDATE_PATHS: string[];
   WM_CANDIDATE_PATHS: string[];
@@ -1393,6 +1440,383 @@ describe("classifyTakeoverOwner", () => {
     const v = rb.classifyTakeoverOwner({ supervisorPid: 7, ownerAlive: false, anyProcessLive: false });
     assert.equal(v.reap, false, "there is nothing left to kill");
     assert.equal(v.stateOnly, true, "but the stale record must not linger");
+  });
+});
+
+/* ========================================================================== *
+ * aios-takeover-usable R8 — teardown must actually tear down
+ *
+ * B5 measured (2026-08-26, profile testtextinput, :129): after Done, x11vnc logged
+ * "caught signal: 15", ignored a second SIGTERM, and held :6029 for seven minutes in
+ * futex_wait until a SIGKILL. The old teardown sent one SIGTERM per pid, deleted
+ * takeover.json and returned — so every later open on the profile hung with no record
+ * of the orphan anywhere. These tests use REAL processes that really ignore SIGTERM;
+ * a cooperative stub would prove nothing about this bug.
+ * ========================================================================== */
+
+/**
+ * A stand-in for x11vnc/websockify/Xvfb: optionally ignores SIGTERM, optionally listens on a
+ * loopback port, and reports both its port and every SIGTERM it receives on stdout so the
+ * test can assert the signal ARRIVED and was ignored — not merely that the process survived.
+ * The extra argv tokens land in /proc/<pid>/cmdline, which is what pidCmdlineMatches reads.
+ */
+const STUB_SCRIPT = [
+  'const net = require("node:net");',
+  'const ignore = process.argv.includes("--ignore-sigterm");',
+  'process.on("SIGTERM", () => { process.stdout.write("TERM\\n"); if (!ignore) process.exit(0); });',
+  'if (process.argv.includes("--listen")) {',
+  '  const s = net.createServer();',
+  '  s.listen(0, "127.0.0.1", () => process.stdout.write("PORT " + s.address().port + "\\n"));',
+  '} else { process.stdout.write("PORT 0\\n"); }',
+  "setInterval(() => {}, 1 << 30);",
+].join("\n");
+
+interface Stub {
+  child: ChildProcess;
+  pid: number;
+  port: number;
+  token: string;
+  termReceivedAt: () => number | null;
+  exitedAt: () => number | null;
+  exit: () => Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+}
+
+async function spawnStub(token: string, opts: { ignoreSigterm: boolean; listen: boolean }): Promise<Stub> {
+  const args = ["-e", STUB_SCRIPT, "--", token];
+  if (opts.ignoreSigterm) args.push("--ignore-sigterm");
+  if (opts.listen) args.push("--listen");
+  const child = spawn(process.execPath, args, { stdio: ["ignore", "pipe", "inherit"] });
+  let termAt: number | null = null;
+  let exitAt: number | null = null;
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.on("exit", (code, signal) => {
+      exitAt = Date.now();
+      resolve({ code, signal });
+    });
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    let buf = "";
+    child.stdout!.on("data", (chunk: Buffer) => {
+      buf += String(chunk);
+      for (const line of buf.split("\n")) {
+        if (line === "TERM" && termAt === null) termAt = Date.now();
+        const m = /^PORT (\d+)$/.exec(line);
+        if (m) resolve(Number(m[1]));
+      }
+      buf = buf.endsWith("\n") ? "" : buf.slice(buf.lastIndexOf("\n") + 1);
+    });
+    child.on("error", reject);
+  });
+  if (child.pid === undefined) throw new Error("stub spawned without a pid");
+  return {
+    child,
+    pid: child.pid,
+    port,
+    token,
+    termReceivedAt: () => termAt,
+    exitedAt: () => exitAt,
+    exit: () => exited,
+  };
+}
+
+const pidAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const portOpen = (port: number): Promise<boolean> =>
+  new Promise((resolve) => {
+    const s = connect({ host: "127.0.0.1", port });
+    s.setTimeout(1000);
+    s.once("connect", () => {
+      s.destroy();
+      resolve(true);
+    });
+    s.once("timeout", () => {
+      s.destroy();
+      resolve(false);
+    });
+    s.once("error", () => resolve(false));
+  });
+
+/** A port nothing listens on right now (bind 0, read it back, release it). */
+const freePort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const s = createServer();
+    s.listen(0, "127.0.0.1", () => {
+      const addr = s.address();
+      if (addr === null || typeof addr === "string") return reject(new Error("no address"));
+      s.close(() => resolve(addr.port));
+    });
+  });
+
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Never leave a stub behind, whatever the assertion outcome. */
+function reapStub(stub: Stub): void {
+  try {
+    process.kill(stub.pid, "SIGKILL");
+  } catch {
+    /* already gone */
+  }
+}
+
+const byWhat = (actions: TeardownAction[], what: string): TeardownAction => {
+  const a = actions.find((x) => x.what === what);
+  if (a === undefined) throw new Error(`no action for ${what} in ${JSON.stringify(actions)}`);
+  return a;
+};
+
+describe("terminateAndVerify — SIGTERM, wait, SIGKILL", () => {
+  test("the B5 reproduction: a listener that ignores SIGTERM stays alive holding its port; the escalation SIGKILLs it and the port is released", async () => {
+    const stub = await spawnStub("rbtest-r8-stubborn", { ignoreSigterm: true, listen: true });
+    try {
+      // Step 1 — the defect, reproduced: one SIGTERM, delivered, ignored.
+      process.kill(stub.pid, "SIGTERM");
+      await sleepMs(300);
+      assert.ok(stub.termReceivedAt() !== null, "the stub must have RECEIVED the SIGTERM (not merely survived it)");
+      assert.equal(pidAlive(stub.pid), true, "still alive after SIGTERM — this is the x11vnc B5 measured");
+      assert.equal(await portOpen(stub.port), true, "and still holding its port");
+
+      // Step 2 — the fix: wait a bounded grace, then SIGKILL, then confirm.
+      const started = Date.now();
+      const action = await rb.terminateAndVerify(stub.pid, stub.token, "x11vnc", { graceMs: 500 });
+      const took = Date.now() - started;
+      assert.equal(action.result, "killed", JSON.stringify(action));
+      assert.match(action.detail ?? "", /ignored SIGTERM for 500 ms; SIGKILL ended it after \d+ ms/);
+      assert.ok(took >= 500 && took < 3000, `escalated after the grace, not before or much after: ${took} ms`);
+      const { signal } = await stub.exit();
+      assert.equal(signal, "SIGKILL", "the process died to SIGKILL, not on its own");
+      assert.equal(pidAlive(stub.pid), false);
+      assert.equal(await portOpen(stub.port), false, "the port is released");
+      const verdict = await rb.verifyPortReleased(stub.port, "VNC port");
+      assert.equal(verdict.result, "port-free", JSON.stringify(verdict));
+    } finally {
+      reapStub(stub);
+    }
+  });
+
+  test("a cooperative process exits on SIGTERM and is never SIGKILLed", async () => {
+    const stub = await spawnStub("rbtest-r8-cooperative", { ignoreSigterm: false, listen: true });
+    try {
+      const action = await rb.terminateAndVerify(stub.pid, stub.token, "websockify", { graceMs: 2000 });
+      assert.equal(action.result, "terminated", JSON.stringify(action));
+      assert.ok((action.exited_after_ms ?? Infinity) < 2000, "did not wait the whole grace for a process that left at once");
+      const { code, signal } = await stub.exit();
+      assert.equal(signal, null, "no SIGKILL was sent");
+      assert.equal(code, 0, "the stub's own SIGTERM handler exited it");
+      assert.equal(await portOpen(stub.port), false);
+    } finally {
+      reapStub(stub);
+    }
+  });
+
+  test("a pid whose cmdline lacks the recorded token is never signalled — pid reuse is the risk", async () => {
+    const stub = await spawnStub("rbtest-r8-someone-else", { ignoreSigterm: false, listen: false });
+    try {
+      const action = await rb.terminateAndVerify(stub.pid, "rbtest-r8-the-token-we-recorded", "x11vnc", { graceMs: 200 });
+      assert.equal(action.result, "skipped-pid-reuse", JSON.stringify(action));
+      await sleepMs(150);
+      assert.equal(stub.termReceivedAt(), null, "no SIGTERM reached it");
+      assert.equal(pidAlive(stub.pid), true);
+    } finally {
+      reapStub(stub);
+    }
+  });
+
+  test("the grace windows are the documented literals and fit inside Done's 15 s port assertion", () => {
+    // Literals on purpose: a fixture derived from the constants would move with a bug in them.
+    assert.equal(rb.TERMINATE_GRACE_MS, 3_000);
+    assert.equal(rb.KILL_GRACE_MS, 1_000);
+    assert.equal(rb.PORT_RELEASE_TIMEOUT_MS, 3_000);
+    // Worst case for one stack: clients overlap (one grace + one kill grace), then Xvfb (the
+    // same again), then two port checks. B5's check waits 15 s after Done for both ports, and
+    // endSession() gives `close` 30 s, of which up to 20 s is spent waiting on the supervisor.
+    assert.ok(2 * (3_000 + 1_000) + 2 * 3_000 <= 15_000);
+  });
+});
+
+describe("teardownStack — the whole recorded stack, verified by its ports", () => {
+  test("a stubborn x11vnc plus a pid the token guard refuses: x11vnc is killed, Xvfb waits for it, the refused pid's held port makes the verdict incomplete", async () => {
+    const displayNum = 977;
+    // websockify's recorded token is String(novncPort). This stub deliberately does NOT carry
+    // it on its cmdline — the pid-reuse guard must refuse to signal it, and the port check
+    // must then report the port it still holds. That is the honest outcome for a pid that
+    // no longer looks like what was recorded.
+    const websockify = await spawnStub("rbtest-r8-ws-no-token", { ignoreSigterm: false, listen: true });
+    const x11vnc = await spawnStub(`:${displayNum}`, { ignoreSigterm: true, listen: true });
+    const xvfb = await spawnStub(`:${displayNum}`, { ignoreSigterm: false, listen: false });
+    try {
+      const state: TakeoverStateRecord = {
+        displayNum,
+        vncPort: x11vnc.port,
+        novncPort: websockify.port,
+        xvfb: { pid: xvfb.pid },
+        wm: null,
+        autocutsel_clipboard: null,
+        autocutsel_primary: null,
+        x11vnc: { pid: x11vnc.pid },
+        websockify: { pid: websockify.pid },
+      };
+      const started = Date.now();
+      const result = await rb.teardownStack(state, { graceMs: 500, portTimeoutMs: 1_000 });
+      const { actions } = result;
+      assert.deepEqual(
+        actions.map((a) => a.what),
+        ["websockify", "x11vnc", "autocutsel-primary", "autocutsel-clipboard", "window manager", "Xvfb", "VNC port", "noVNC port"],
+        "clients first, then the X server, then the proof",
+      );
+      assert.equal(byWhat(actions, "websockify").result, "skipped-pid-reuse");
+      assert.equal(byWhat(actions, "x11vnc").result, "killed", JSON.stringify(byWhat(actions, "x11vnc")));
+      assert.equal(byWhat(actions, "Xvfb").result, "terminated");
+      assert.equal(byWhat(actions, "VNC port").result, "port-free");
+      // The websockify stub is still alive (refused), so its port is still held — and the
+      // verdict must say so rather than call the teardown complete.
+      assert.equal(byWhat(actions, "noVNC port").result, "port-still-held");
+      assert.equal(byWhat(actions, "noVNC port").pid, websockify.pid, "the holder is named by pid");
+      assert.equal(result.complete, false);
+      assert.equal(pidAlive(websockify.pid), true, "the refused pid was never signalled");
+
+      // Ordering: Xvfb received its SIGTERM only after the stubborn x11vnc was dead. x11vnc
+      // ignores SIGTERM for the whole 500 ms grace, so Xvfb's signal cannot arrive before that
+      // window has elapsed — the old one-shot teardown signalled it within a millisecond.
+      // (The parent's `exit` event is not usable as the reference: it fires a few ms AFTER the
+      // child is already a zombie, which is what the teardown's own liveness probe sees.)
+      await x11vnc.exit();
+      const xvfbTerm = xvfb.termReceivedAt();
+      assert.ok(xvfbTerm !== null, "Xvfb received a SIGTERM");
+      assert.ok(xvfbTerm - started >= 500, `Xvfb was signalled ${xvfbTerm - started} ms in — before x11vnc's grace could have run out`);
+      assert.equal(await portOpen(x11vnc.port), false);
+    } finally {
+      reapStub(websockify);
+      reapStub(x11vnc);
+      reapStub(xvfb);
+    }
+  });
+
+  test("with every recorded pid carrying its token the stack comes down complete and both ports read free", async () => {
+    // Spawn websockify LAST so its recorded token — the noVNC port it serves — can be put on
+    // its own cmdline, exactly as the real `websockify 127.0.0.1:<port> …` argv carries it.
+    const displayNum = 978;
+    const x11vnc = await spawnStub(`:${displayNum}`, { ignoreSigterm: true, listen: true });
+    const xvfb = await spawnStub(`:${displayNum}`, { ignoreSigterm: false, listen: false });
+    const novncPort = await freePort();
+    const websockify = await spawnStub(`127.0.0.1:${novncPort}`, { ignoreSigterm: false, listen: false });
+    try {
+      const result = await rb.teardownStack(
+        {
+          displayNum,
+          vncPort: x11vnc.port,
+          novncPort,
+          xvfb: { pid: xvfb.pid },
+          wm: null,
+          autocutsel_clipboard: null,
+          autocutsel_primary: null,
+          x11vnc: { pid: x11vnc.pid },
+          websockify: { pid: websockify.pid },
+        },
+        { graceMs: 500, portTimeoutMs: 1_000 },
+      );
+      assert.equal(result.complete, true, JSON.stringify(result.actions));
+      assert.equal(byWhat(result.actions, "websockify").result, "terminated");
+      assert.equal(byWhat(result.actions, "x11vnc").result, "killed");
+      assert.equal(byWhat(result.actions, "Xvfb").result, "terminated");
+      assert.equal(byWhat(result.actions, "VNC port").result, "port-free");
+      assert.equal(byWhat(result.actions, "noVNC port").result, "port-free");
+      for (const s of [x11vnc, xvfb, websockify]) assert.equal(pidAlive(s.pid), false, `${s.token} is gone`);
+    } finally {
+      reapStub(x11vnc);
+      reapStub(xvfb);
+      reapStub(websockify);
+    }
+  });
+
+  test("a FOREIGN holder of the VNC port is named by pid, never signalled, and makes the teardown incomplete", async () => {
+    const foreign = await spawnStub("rbtest-r8-foreign-holder", { ignoreSigterm: false, listen: true });
+    try {
+      const result = await rb.teardownStack(
+        {
+          displayNum: 979,
+          vncPort: foreign.port,
+          novncPort: await freePort(),
+          xvfb: null,
+          wm: null,
+          autocutsel_clipboard: null,
+          autocutsel_primary: null,
+          x11vnc: null,
+          websockify: null,
+        },
+        { graceMs: 200, portTimeoutMs: 300 },
+      );
+      const vnc = byWhat(result.actions, "VNC port");
+      assert.equal(vnc.result, "port-still-held", JSON.stringify(vnc));
+      assert.equal(vnc.pid, foreign.pid);
+      assert.match(vnc.detail ?? "", new RegExp(`held 300 ms after teardown by pid ${foreign.pid} \\(node\\)`));
+      assert.equal(byWhat(result.actions, "noVNC port").result, "port-free");
+      assert.equal(result.complete, false);
+      assert.equal(foreign.termReceivedAt(), null, "this tool signals only pids it recorded");
+      assert.equal(pidAlive(foreign.pid), true);
+    } finally {
+      reapStub(foreign);
+    }
+  });
+
+  test("teardownIsComplete: every 'gone' result passes, every survivor fails it", () => {
+    const gone = ["not-running", "terminated", "killed", "skipped-pid-reuse", "no-pid-recorded", "none-was-running", "port-free", "no-port-recorded"];
+    assert.equal(rb.teardownIsComplete(gone.map((result) => ({ what: "x", result }))), true);
+    for (const result of ["signal-failed", "kill-failed", "survived-sigkill", "port-still-held"]) {
+      assert.equal(rb.teardownIsComplete([{ what: "x", result: "terminated" }, { what: "y", result }]), false, result);
+    }
+    assert.equal(rb.teardownIsComplete([]), true);
+  });
+});
+
+describe("teardownTakeoverAt — takeover.json survives until the stack is proven gone", () => {
+  test("kept while a port is still held; removed once the teardown is complete", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rbtest-r8-"));
+    const path = join(dir, "takeover.json");
+    const foreign = await spawnStub("rbtest-r8-holder-for-state", { ignoreSigterm: false, listen: true });
+    try {
+      writeFileSync(
+        path,
+        JSON.stringify({
+          displayNum: 980,
+          display: ":980",
+          vncPort: foreign.port,
+          novncPort: await freePort(),
+          xvfb: null,
+          wm: null,
+          autocutsel_clipboard: null,
+          autocutsel_primary: null,
+          x11vnc: null,
+          websockify: null,
+          started_at: "2026-08-26T00:00:00.000Z",
+          supervisor_pid: null,
+        }),
+        { mode: 0o600 },
+      );
+      const first = await rb.teardownTakeoverAt(path, { graceMs: 200, portTimeoutMs: 300 });
+      assert.equal(first.complete, false);
+      assert.equal(existsSync(path), true, "the state file must outlive a teardown that did not happen");
+      assert.equal(byWhat(first.actions, "VNC port").pid, foreign.pid);
+
+      reapStub(foreign);
+      await foreign.exit();
+      const second = await rb.teardownTakeoverAt(path, { graceMs: 200, portTimeoutMs: 300 });
+      assert.equal(second.complete, true, JSON.stringify(second.actions));
+      assert.equal(existsSync(path), false, "gone only once the ports are proven free");
+
+      const third = await rb.teardownTakeoverAt(path);
+      assert.deepEqual(third, { actions: [], complete: true }, "no state file: nothing to do, and that is complete");
+    } finally {
+      reapStub(foreign);
+      if (existsSync(path)) unlinkSync(path);
+      rmdirSync(dir);
+    }
   });
 });
 

@@ -89,7 +89,7 @@ import {
   existsSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { connect } from 'node:net';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -943,6 +943,151 @@ function terminate(pid, token, what) {
 }
 
 // ---------------------------------------------------------------------------
+// Terminating for real: SIGTERM → wait → SIGKILL → wait → verify the port is free.
+//
+// R8 (aios-takeover-usable): terminate() above sends ONE SIGTERM and returns. Measured by B5
+// on 2026-08-26 (profile testtextinput, display :129): after a Done tap, x11vnc logged
+// "caught signal: 15" and then sat in futex_wait_queue for SEVEN MINUTES still holding
+// :6029 — it ignored a second SIGTERM and died only to SIGKILL. Every later `open` on that
+// profile spawned an x11vnc that logged "could not obtain listening port" and exited, while
+// websockify proxied to the zombie, so the takeover hung before ServerInit. Under the old
+// throwaway-per-run naming a leaked port was invisible (the next run picked another display);
+// with ONE durable profile it is cumulative: "Done today, hung takeover tomorrow". That is the
+// exact failure this project exists to stop, so a teardown that cannot prove the ports are
+// free is not a teardown.
+//
+// The combination that bites on day two is stated here because each half is reported as
+// something else: a teardown that leaks a live x11vnc (this) plus a takeover-cap origin that
+// outlives the session (computeTakeoverDeadlines, fixed to measure THIS supervisor) means a
+// durable profile fails twice, for two unrelated reasons, neither of which names itself.
+// ---------------------------------------------------------------------------
+export const TERMINATE_GRACE_MS = 3_000; // SIGTERM → SIGKILL
+export const KILL_GRACE_MS = 1_000; // SIGKILL → "still alive" (only an uninterruptible D-state process can do this)
+export const PORT_RELEASE_TIMEOUT_MS = 3_000; // the kernel frees a listening port at exit; this is slack
+const TEARDOWN_POLL_MS = 50;
+
+/**
+ * Alive AND still the process we recorded. A zombie answers kill(pid, 0) but has an empty
+ * cmdline, so it counts as gone here — its port is already released and its parent will
+ * reap it. A reused pid fails the token and counts as gone for the same reason.
+ */
+function recordedProcessLive(pid, token) {
+  return isPidAlive(pid) && pidCmdlineMatches(pid, token);
+}
+
+async function waitForExit(pid, token, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!recordedProcessLive(pid, token)) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(TEARDOWN_POLL_MS);
+  }
+}
+
+/**
+ * terminate(), then WAIT for the exit, then escalate to SIGKILL, then wait again. Every
+ * outcome is a distinct `result` so a caller can tell "exited on SIGTERM" from "had to be
+ * SIGKILLed" from "survived SIGKILL" — the last is a kernel-level problem worth naming, not
+ * something to average into "terminated".
+ *
+ * Verified 2026-08-26 against a stub that installs a no-op SIGTERM handler and listens on a
+ * loopback port: SIGTERM leaves it alive and the port held; this returns `killed` and the
+ * port is free (research-browser-cli.test.ts, "teardown").
+ */
+export async function terminateAndVerify(
+  pid,
+  token,
+  what,
+  { graceMs = TERMINATE_GRACE_MS, killGraceMs = KILL_GRACE_MS } = {},
+) {
+  const first = terminate(pid, token, what);
+  if (first.result !== 'terminated') return first;
+  const signalledAt = Date.now();
+  if (await waitForExit(pid, token, graceMs)) {
+    return { ...first, exited_after_ms: Date.now() - signalledAt };
+  }
+  // Re-check the token immediately before the hard kill: the grace window is exactly the
+  // kind of time in which a pid can die and be reused.
+  if (!pidCmdlineMatches(pid, token)) return { ...first, exited_after_ms: Date.now() - signalledAt };
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (err) {
+    if (err.code === 'ESRCH') return { ...first, exited_after_ms: Date.now() - signalledAt };
+    return {
+      pid,
+      what,
+      result: 'kill-failed',
+      detail: `ignored SIGTERM for ${graceMs} ms and SIGKILL could not be sent: ${err.code ?? 'error'} ${err.message}`,
+    };
+  }
+  const killedAt = Date.now();
+  if (await waitForExit(pid, token, killGraceMs)) {
+    return {
+      pid,
+      what,
+      result: 'killed',
+      detail: `ignored SIGTERM for ${graceMs} ms; SIGKILL ended it after ${Date.now() - killedAt} ms`,
+    };
+  }
+  return {
+    pid,
+    what,
+    result: 'survived-sigkill',
+    detail:
+      `still alive ${killGraceMs} ms after SIGKILL — an uninterruptible (D-state) process; ` +
+      `inspect /proc/${pid}/status and /proc/${pid}/stack`,
+  };
+}
+
+/** Who listens on 127.0.0.1:<port> (`ss -ltnp`), or null when nobody does. Root sees every pid. */
+function listeningHolder(port) {
+  let out;
+  try {
+    out = execFileSync('ss', ['-H', '-ltnp', `sport = :${port}`], { encoding: 'utf8', timeout: 5_000 });
+  } catch (err) {
+    return { pid: null, comm: null, detail: `ss failed: ${err.code ?? 'error'} ${err.message}` };
+  }
+  if (out.trim() === '') return null;
+  const m = /users:\(\("([^"]*)",pid=(\d+)/.exec(out);
+  return m
+    ? { pid: Number.parseInt(m[2], 10), comm: m[1], detail: out.trim() }
+    : { pid: null, comm: null, detail: out.trim() };
+}
+
+/**
+ * The proof that a teardown happened: the port is not accepting connections. A dead process
+ * cannot hold a listening socket, so a port that is still open after the recorded pids are
+ * gone is held by something the state file never knew about — named here by pid, never
+ * signalled: this tool kills only what it recorded (see pidCmdlineMatches).
+ */
+export async function verifyPortReleased(port, what, { timeoutMs = PORT_RELEASE_TIMEOUT_MS } = {}) {
+  if (!Number.isInteger(port) || port <= 0) {
+    return { port, what, result: 'no-port-recorded' };
+  }
+  const started = Date.now();
+  const deadline = started + timeoutMs;
+  for (;;) {
+    if (!(await tcpPortOpen(port))) {
+      return { port, what, result: 'port-free', after_ms: Date.now() - started };
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(TEARDOWN_POLL_MS);
+  }
+  const holder = listeningHolder(port);
+  return {
+    port,
+    what,
+    result: 'port-still-held',
+    pid: holder?.pid ?? null,
+    detail:
+      holder === null
+        ? `127.0.0.1:${port} still accepts connections ${timeoutMs} ms after teardown but ss lists no listener`
+        : `127.0.0.1:${port} is still held ${timeoutMs} ms after teardown by pid ${holder.pid ?? '?'} ` +
+          `(${holder.comm ?? 'unknown'}): ${holder.detail}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Display assignment (registry-backed, so the hash may collide harmlessly)
 // ---------------------------------------------------------------------------
 function assignDisplay(profile) {
@@ -1087,8 +1232,31 @@ function clearStaleXLock(displayNum) {
 
 const takeoverStatePath = (profile) => join(stateDir(profile), 'takeover.json');
 
+/**
+ * Refuse to spawn a listener onto a port something else already holds. Without this, x11vnc
+ * exits at once ("could not obtain listening port"), but waitUntilReady's tcpPortOpen() check
+ * is satisfied by the FOREIGN holder, so the stack is recorded as up with a dead x11vnc pid and
+ * the takeover hangs before ServerInit — B5's measured failure. Naming the holder here turns a
+ * hung viewer into a one-line diagnosis.
+ */
+async function assertPortFree(port, what) {
+  if (!(await tcpPortOpen(port))) return;
+  const holder = listeningHolder(port);
+  die(
+    EXIT.RUNTIME,
+    `cannot start ${what}: 127.0.0.1:${port} is already held` +
+      (holder === null ? ' (ss lists no listener)' : ` by pid ${holder.pid ?? '?'} (${holder.comm ?? 'unknown'}): ${holder.detail}`) +
+      `. This tool signals only processes it recorded; if that pid is a leftover x11vnc/websockify ` +
+      `from an earlier session, verify its cmdline and kill it by pid.`,
+  );
+}
+
 function readTakeover(profile) {
-  const state = readJson(takeoverStatePath(profile));
+  return readTakeoverAt(takeoverStatePath(profile));
+}
+
+function readTakeoverAt(path) {
+  const state = readJson(path);
   if (state === null) return null;
   const live = {
     xvfb: isPidAlive(state.xvfb?.pid) && pidCmdlineMatches(state.xvfb.pid, `:${state.displayNum}`),
@@ -1154,6 +1322,13 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
     supervisor_pid: supervisorPid ?? existing?.supervisor_pid ?? null,
   };
   const started = [];
+  // R8: RECORD BEFORE YOU WAIT. The state file used to be written once, at the end. Any die()
+  // between a spawn and that write — x11vnc never binding, a held port, Xvfb segfaulting —
+  // exited the supervisor with the processes it had already spawned alive and unrecorded,
+  // which is a leak nothing can reap. Measured 2026-08-26: a refused x11vnc start left Xvfb
+  // :139, openbox and both autocutsels running with no takeover.json. Persisting after every
+  // spawn means the next `open`/`status`/`close` sees them and reapOrphanedTakeover() ends them.
+  const persist = () => writeJsonAtomic(takeoverStatePath(profile), state);
 
   if (!existing?.live?.xvfb) {
     clearStaleXLock(ports.displayNum);
@@ -1172,6 +1347,7 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
       'tcp',
     ]);
     started.push('xvfb');
+    persist();
     await waitUntilReady({
       name: 'Xvfb',
       pid: state.xvfb.pid,
@@ -1200,6 +1376,7 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
         bin: wmBin,
       };
       started.push(`wm:${wmBin}`);
+      persist();
       await waitUntilReady({
         name: `window manager ${wmBin}`,
         pid: state.wm.pid,
@@ -1220,6 +1397,7 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
       ['-display', ports.display, '-selection', 'CLIPBOARD'],
     );
     started.push('autocutsel-clipboard');
+    persist();
   }
   if (!existing?.live?.autocutsel_primary) {
     state.autocutsel_primary = spawnDetached(
@@ -1229,8 +1407,10 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
       ['-display', ports.display, '-selection', 'PRIMARY'],
     );
     started.push('autocutsel-primary');
+    persist();
   }
   if (!existing?.live?.x11vnc) {
+    await assertPortFree(ports.vncPort, 'x11vnc');
     state.x11vnc = spawnDetached(profile, 'x11vnc', TAKEOVER_BINARIES.x11vnc, [
       '-display',
       ports.display,
@@ -1244,6 +1424,7 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
       '-quiet',
     ]);
     started.push('x11vnc');
+    persist();
     await waitUntilReady({
       name: 'x11vnc',
       pid: state.x11vnc.pid,
@@ -1253,6 +1434,7 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
     });
   }
   if (!existing?.live?.websockify) {
+    await assertPortFree(ports.novncPort, 'websockify');
     state.websockify = spawnDetached(profile, 'websockify', TAKEOVER_BINARIES.websockify, [
       '--web',
       NOVNC_WEB_ROOT,
@@ -1260,6 +1442,7 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
       `127.0.0.1:${ports.vncPort}`,
     ]);
     started.push('websockify');
+    persist();
     await waitUntilReady({
       name: 'websockify',
       pid: state.websockify.pid,
@@ -1269,37 +1452,104 @@ async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
     });
   }
 
-  writeJsonAtomic(takeoverStatePath(profile), state);
+  persist();
   return { ...state, started, novnc_url: novncUrl(ports.novncPort) };
 }
 
-function teardownTakeover(profile) {
-  const state = readTakeover(profile);
-  if (state === null) return [];
-  const actions = [
+/**
+ * Every action result that means "this part of the stack is gone". `skipped-pid-reuse` is
+ * here deliberately: our process is dead if its pid now belongs to something else, and the
+ * port checks are what catch a real survivor. Anything not listed — signal-failed,
+ * kill-failed, survived-sigkill, port-still-held — leaves the stack up.
+ */
+const TEARDOWN_DONE_RESULTS = new Set([
+  'not-running',
+  'terminated',
+  'killed',
+  'skipped-pid-reuse',
+  'no-pid-recorded',
+  'none-was-running',
+  'port-free',
+  'no-port-recorded',
+]);
+
+export function teardownIsComplete(actions) {
+  return actions.every((a) => TEARDOWN_DONE_RESULTS.has(a.result));
+}
+
+/**
+ * Tear down a recorded stack and PROVE it: two phases, then the ports.
+ *
+ *   1. The X server's clients — websockify, x11vnc, both autocutsels, the WM — all signalled
+ *      together, each waited for, each escalated to SIGKILL if it ignores SIGTERM.
+ *   2. Xvfb, only once its clients are gone. x11vnc's SIGTERM handler cleans up its X
+ *      connection; when Xvfb dies UNDER it during that cleanup it can deadlock in
+ *      futex_wait (B5's seven-minute orphan). Killing the server last removes that race
+ *      rather than relying on the escalation to win it.
+ *   3. The VNC and noVNC ports must be free. A dead process cannot hold a listening socket,
+ *      so a held port after phase 2 is a foreign holder — named by pid, never signalled.
+ *
+ * Pure with respect to the state file: it takes the recorded state and returns what it did,
+ * so a test can run it against stub processes. `complete` is the whole verdict.
+ */
+export async function teardownStack(state, { graceMs, killGraceMs, portTimeoutMs } = {}) {
+  const term = (pid, token, what) => terminateAndVerify(pid, token, what, { graceMs, killGraceMs });
+  const clients = [
     state.websockify?.pid
-      ? terminate(state.websockify.pid, String(state.novncPort), 'websockify')
-      : { what: 'websockify', result: 'no-pid-recorded' },
+      ? () => term(state.websockify.pid, String(state.novncPort), 'websockify')
+      : () => ({ what: 'websockify', result: 'no-pid-recorded' }),
     state.x11vnc?.pid
-      ? terminate(state.x11vnc.pid, `:${state.displayNum}`, 'x11vnc')
-      : { what: 'x11vnc', result: 'no-pid-recorded' },
+      ? () => term(state.x11vnc.pid, `:${state.displayNum}`, 'x11vnc')
+      : () => ({ what: 'x11vnc', result: 'no-pid-recorded' }),
     state.autocutsel_primary?.pid
-      ? terminate(state.autocutsel_primary.pid, 'autocutsel', 'autocutsel-primary')
-      : { what: 'autocutsel-primary', result: 'no-pid-recorded' },
+      ? () => term(state.autocutsel_primary.pid, 'autocutsel', 'autocutsel-primary')
+      : () => ({ what: 'autocutsel-primary', result: 'no-pid-recorded' }),
     state.autocutsel_clipboard?.pid
-      ? terminate(state.autocutsel_clipboard.pid, 'autocutsel', 'autocutsel-clipboard')
-      : { what: 'autocutsel-clipboard', result: 'no-pid-recorded' },
-    // The WM goes before Xvfb: it dies on its own when the display disappears, but ordering it
-    // first keeps the teardown deterministic instead of racing the X server's exit.
+      ? () => term(state.autocutsel_clipboard.pid, 'autocutsel', 'autocutsel-clipboard')
+      : () => ({ what: 'autocutsel-clipboard', result: 'no-pid-recorded' }),
     state.wm?.pid
-      ? terminate(state.wm.pid, state.wm.bin, `window manager (${state.wm.bin})`)
-      : { what: 'window manager', result: 'none-was-running' },
-    state.xvfb?.pid
-      ? terminate(state.xvfb.pid, `:${state.displayNum}`, 'Xvfb')
-      : { what: 'Xvfb', result: 'no-pid-recorded' },
+      ? () => term(state.wm.pid, state.wm.bin, `window manager (${state.wm.bin})`)
+      : () => ({ what: 'window manager', result: 'none-was-running' }),
   ];
-  removeIfPresent(takeoverStatePath(profile));
-  return actions;
+  // Signals go out in the listed order (each thunk sends its SIGTERM synchronously before the
+  // first await); the waits then overlap, so a stubborn x11vnc costs one grace window, not five.
+  const actions = await Promise.all(clients.map((start) => start()));
+  actions.push(
+    state.xvfb?.pid
+      ? await term(state.xvfb.pid, `:${state.displayNum}`, 'Xvfb')
+      : { what: 'Xvfb', result: 'no-pid-recorded' },
+  );
+  actions.push(
+    await verifyPortReleased(state.vncPort, 'VNC port', { timeoutMs: portTimeoutMs }),
+    await verifyPortReleased(state.novncPort, 'noVNC port', { timeoutMs: portTimeoutMs }),
+  );
+  return { actions, complete: teardownIsComplete(actions) };
+}
+
+/**
+ * takeover.json is removed ONLY when the stack is proven gone. A state file that survives a
+ * failed teardown is the one thing that lets the next `open`/`status` see what is still up
+ * and name it; deleting it on the way out — what this did before R8 — is how a leaked x11vnc
+ * became invisible and every later open on the profile hung with no diagnosis anywhere.
+ */
+export async function teardownTakeoverAt(path, opts = {}) {
+  const state = readTakeoverAt(path);
+  if (state === null) return { actions: [], complete: true };
+  const { actions, complete } = await teardownStack(state, opts);
+  if (complete) {
+    removeIfPresent(path);
+  } else {
+    const survivors = actions
+      .filter((a) => !TEARDOWN_DONE_RESULTS.has(a.result))
+      .map((a) => `${a.what}: ${a.result}${a.detail ? ` (${a.detail})` : ''}`)
+      .join('; ');
+    writeErr(`${SELF}: takeover stack is NOT fully down — keeping ${path} so the survivors stay visible: ${survivors}\n`);
+  }
+  return { actions, complete };
+}
+
+function teardownTakeover(profile) {
+  return teardownTakeoverAt(takeoverStatePath(profile));
 }
 
 /**
@@ -1332,7 +1582,7 @@ export function classifyTakeoverOwner({ supervisorPid, ownerAlive, anyProcessLiv
  * somehow outlives its X server would still hold the profile's SingletonLock, and the next
  * launch would fail loudly rather than silently share a profile.
  */
-function reapOrphanedTakeover(profile) {
+async function reapOrphanedTakeover(profile) {
   const state = readTakeover(profile);
   if (state === null) return null;
   const supervisorPid = state.supervisor_pid;
@@ -1357,11 +1607,13 @@ function reapOrphanedTakeover(profile) {
   }
   if (!verdict.reap) return null;
   writeErr(`${SELF}: reaping an orphaned takeover stack for "${profile}" — ${verdict.reason}\n`);
+  const { actions, complete } = await teardownTakeover(profile);
   return {
     reaped: true,
+    complete,
     supervisor_pid: supervisorPid,
     reason: verdict.reason,
-    actions: teardownTakeover(profile),
+    actions,
   };
 }
 
@@ -2075,9 +2327,19 @@ async function supervise(profile, displayNum) {
       writeErr(`${SELF}[supervisor]: cannot write ${lastShutdownPath(profile)}: ${err.code ?? 'error'} ${err.message}\n`);
     }
     await context.close().catch((err) => writeErr(`${SELF}[supervisor]: context.close: ${err.message}\n`));
+    // R8: the stack comes down BEFORE session.json goes. `close` treats a vanished session
+    // file as "the supervisor is finished", and teardown now takes real time (a stubborn
+    // x11vnc costs up to TERMINATE_GRACE_MS + KILL_GRACE_MS) — removing the file first would
+    // hand `close` a stack that is still being signalled and have two processes race for it.
+    const { actions, complete } = await teardownTakeover(profile);
+    // One line per teardown in supervisor.log: which process needed a SIGKILL is exactly what
+    // the next "the takeover hangs on this profile" investigation has to know first.
+    writeErr(
+      `${SELF}[supervisor]: teardown ${complete ? 'complete' : 'INCOMPLETE — takeover.json kept for the next open/status'}: ` +
+        `${actions.map((a) => `${a.what} ${a.result}${a.pid ? ` pid ${a.pid}` : ''}`).join(', ')}\n`,
+    );
     removeIfPresent(sessionPath(profile));
     removeIfPresent(stopPath(profile));
-    teardownTakeover(profile);
     process.exit(exitCode);
   };
 
@@ -2581,7 +2843,7 @@ async function cmdOpen(opts) {
   // Reaping rather than adopting is the deliberate choice — an orphaned stack still carries
   // the dead supervisor's Chrome, and a fresh 2 s launch is cheaper than reasoning about
   // what state that window is in.
-  const reaped = reapOrphanedTakeover(opts.profile);
+  const reaped = await reapOrphanedTakeover(opts.profile);
 
   materialiseProfile(opts.profile, { throwaway: opts.throwaway });
   await ensureSupervisor(opts.profile, ports);
@@ -2635,7 +2897,7 @@ async function cmdStatus(opts) {
   const ports = assignDisplay(opts.profile);
   // `status` is the only command a bystander runs on a box nobody is actively driving, which
   // makes it the last line of defence against an X/VNC stack outliving its dead supervisor.
-  const reaped = reapOrphanedTakeover(opts.profile);
+  const reaped = await reapOrphanedTakeover(opts.profile);
   const session = readSession(opts.profile);
   const takeover = readTakeover(opts.profile);
 
@@ -2776,19 +3038,25 @@ async function cmdClose(opts) {
     removeIfPresent(stopPath(opts.profile));
   }
 
-  // Whatever the supervisor did or did not clean up, the stack must be gone when this returns.
-  actions.push(...teardownTakeover(opts.profile));
+  // Whatever the supervisor did or did not clean up, the stack must be gone when this returns —
+  // and `close` must SAY when it is not. R8: an exit 0 with a live x11vnc behind it was how
+  // "Done today" became "hung takeover tomorrow" on a durable profile.
+  const teardown = await teardownTakeover(opts.profile);
+  actions.push(...teardown.actions);
   rmSync(startLock(opts.profile), { recursive: true, force: true });
 
   return {
     status: {
       ...baseStatus(opts.profile, 'close', ports, runInfo),
       actions,
-      note:
-        `the profile directory ${profileDir(opts.profile)} is NOT touched — its cookies are the ` +
-        `whole point of a persistent profile`,
+      teardown_complete: teardown.complete,
+      note: teardown.complete
+        ? `the profile directory ${profileDir(opts.profile)} is NOT touched — its cookies are the ` +
+          `whole point of a persistent profile`
+        : `the takeover stack is NOT fully down; ${takeoverStatePath(opts.profile)} is kept so ` +
+          `the survivors stay visible — see actions for what survived and who holds the port`,
     },
-    exitCode: EXIT.OK,
+    exitCode: teardown.complete ? EXIT.OK : EXIT.RUNTIME,
   };
 }
 
