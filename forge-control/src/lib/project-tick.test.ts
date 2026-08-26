@@ -1754,7 +1754,122 @@ describe("R70 a project may not close on an unmerged workstream branch", () => {
     assert.deepEqual(open, ["api"], "ui is integrated; api is not; the answer names only api");
   });
 
-  test("the SQL mirror in db/projects.ts carries R70's three quantifiers", () => {
+  // ════════════════════════════════════════════════════════════════════════
+  // TRANSITIVITY (2026-08-26). R70 asked whether one `main` task DIRECTLY
+  // named every task of W. Every case ABOVE this line keeps its expected value
+  // under both rules — all eleven were hand-evaluated, including the two that
+  // must stay red — so none of them can witness the change.
+  //
+  // WHICH MUTANT EACH CASE BELOW BITES ON, measured rather than asserted. Three
+  // mutants were run against this file (`cp`-restored and sha-verified after
+  // each, never `git checkout`):
+  //
+  //   M1  the walk replaced by the pre-change direct-membership set
+  //       -> RED: THE LIVE SHAPE, CYCLE INSIDE the workstream,
+  //               CYCLE AMONG `main` ROWS, DANGLING dependency
+  //   M2  coverage `every()` weakened to `some()` — the rule as a tautology
+  //       -> RED: covering only PART (above), REACHABILITY DOES NOT RESCUE
+  //   M3  BOTH cycle guards removed from `reachableFrom`
+  //       -> the two cycle cases never return
+  //
+  // The two preserved negatives are deliberately GREEN under M1: their whole
+  // job is to be unchanged by this fix. They are not vacuous — M2 is the mutant
+  // they exist to catch, and it kills them.
+  // ════════════════════════════════════════════════════════════════════════
+
+  test("THE LIVE SHAPE — an integrator naming the workstream's LAST task integrates the chain behind it", () => {
+    // aios-chat-reference-navigation's `markdown` lane, verbatim: round 5
+    // "Integrate workstream markdown" carries exactly ONE dependency, and the
+    // workstream chains internally behind it.
+    //
+    //     5:main -> 4:markdown -> 3:markdown -> 2:main
+    //
+    // Under direct membership this returned ["md"] — forever, and unfixably:
+    // the integration task was seeded before round 4 existed. This is the
+    // red-to-green case, and it is the reason the fleet had three `active`
+    // projects with zero open tasks between them.
+    const { open } = gate(
+      [t("2", "main", []), t("3", "md", ["2"]), t("4", "md", ["3"]), t("5", "main", ["4"])],
+      ["md"],
+    );
+    assert.deepEqual(open, [], "5 reaches 4 directly and 3 through it — the whole workstream");
+  });
+
+  test("a CYCLE INSIDE the workstream terminates and does not hold the project", () => {
+    // `depends_on` carries no acyclicity constraint (findCycle() exists because
+    // the graph can be seeded with one) and R70 runs on every tick, so a cycle
+    // must not hang it. `a` and `b` name each other; the integrator names `a`.
+    // The walk's `visited` set is what makes this return at all.
+    const { open } = gate([t("a", "ws", ["b"]), t("b", "ws", ["a"]), t("i", "main", ["a"])], ["ws"]);
+    assert.deepEqual(open, [], "a -> b -> a closes after two steps, and both members are reached");
+  });
+
+  test("a CYCLE AMONG `main` ROWS on the walk to the workstream terminates", () => {
+    // The cycle is not in W at all — it sits on the path the walk takes THROUGH
+    // `main` on its way to the workstream, so a guard that only deduplicated
+    // within W would still spin here.
+    //
+    //     i -> m1 -> m2 -> {m1, x2} -> x1        m1 <-> m2 is the cycle
+    //
+    // NO `main` ROW NAMES x1, which is what makes this red under direct
+    // membership too: a `main` row that named the whole of W directly would be
+    // an integrator under the old rule and the case would prove only that a
+    // cycle does not crash.
+    const { open } = gate(
+      [
+        t("i", "main", ["m1"]),
+        t("m1", "main", ["m2"]),
+        t("m2", "main", ["m1", "x2"]),
+        t("x1", "xs", []),
+        t("x2", "xs", ["x1"]),
+      ],
+      ["xs"],
+    );
+    assert.deepEqual(open, [], "x1 is reached past the cycle, and the walk still returns");
+  });
+
+  test("REACHABILITY DOES NOT RESCUE A PARTIAL INTEGRATION — the negative is preserved", () => {
+    // The companion to "covering only PART of the workstream" above, restated
+    // as a transitivity case so the weakening this fix could have introduced is
+    // named rather than hoped about: 4 reaches 2, and through 2 reaches 1, and
+    // never arrives at 3. Half a workstream merged still strands the rest.
+    const { open } = gate(
+      [t("1", "main", []), t("2", "ui", ["1"]), t("3", "ui", ["1"]), t("4", "main", ["2"])],
+      ["ui"],
+    );
+    assert.deepEqual(open, ["ui"], "4 -> 2 -> 1 is the whole reachable set, and 3 is not in it");
+  });
+
+  test("A WORKSTREAM NO `main` TASK REACHES AT ALL IS STILL OPEN", () => {
+    // aios-sidebar-live-sessions' `toggle`, measured 2026-08-26: four tasks in
+    // a clean internal chain, and no `main` row at any round names any of them.
+    // Not a traversal bug — a missing integration task, which is the case R70
+    // exists for. It must survive the fix or the rule has become a tautology.
+    const { open } = gate(
+      [
+        t("1", "main", []),
+        t("2", "main", ["1"]),
+        t("3", "tog", ["1"]),
+        t("4", "tog", ["3"]),
+      ],
+      ["tog"],
+    );
+    assert.deepEqual(open, ["tog"], "reachability from `main` never enters this workstream");
+  });
+
+  test("a DANGLING dependency id is a dead end, not a crash and not a free pass", () => {
+    // `depends_on` may name an id with no row — a hand-edit, a deleted task.
+    // The walk visits it and finds no outgoing edges, exactly as the SQL's
+    // recursive term finds no project_tasks row to join. It must not swallow
+    // the workstream member sitting beside it.
+    const { open } = gate(
+      [t("i", "main", ["ghost", "u2"]), t("u1", "ui", []), t("u2", "ui", ["u1"])],
+      ["ui"],
+    );
+    assert.deepEqual(open, [], "the ghost stops the walk that follows it and nothing else — u1 is still reached through u2");
+  });
+
+  test("the SQL mirror in db/projects.ts carries R70's quantifiers, now over a recursive CTE", () => {
     // The pure predicate above is the definition; the statement is its mirror.
     // A mirror that quietly lost a term would let the attack through while
     // every test on this page stayed green, so the statement's shape is
@@ -1767,15 +1882,68 @@ describe("R70 a project may not close on an unmerged workstream branch", () => {
     assert.match(fn, /w\.workstream <> 'main'/, "the workstream term");
     assert.match(fn, /i\.workstream = 'main'/, "the integrator must be a 'main' task");
     assert.match(fn, /i\.depends_on IS NOT NULL/, "a legacy row integrates nothing");
-    assert.match(fn, /NOT \(m\.id = ANY \(i\.depends_on\)\)/, "the coverage term");
+    // THE COVERAGE TERM, rewritten 2026-08-26. It read
+    // `NOT (m.id = ANY (i.depends_on))` — direct array membership — and this
+    // assertion pinned that string. Pinning the REPLACEMENT rather than
+    // deleting the pin is the point: the mirror still cannot quietly lose a
+    // quantifier, it just quantifies over the transitive closure now.
+    assert.doesNotMatch(
+      fn,
+      /m\.id = ANY \(i\.depends_on\)/,
+      "the direct-membership term is what this fix removes; its survival would mean two rules",
+    );
+    assert.match(
+      fn,
+      /NOT EXISTS \(\s*SELECT 1 FROM reach r\s+WHERE r\.project_id = p\.id\s+AND r\.src = i\.id\s+AND r\.dst = m\.id\s*\)/,
+      "the coverage term: every task of W must be REACHABLE from the integrator",
+    );
+    assert.match(fn, /WITH RECURSIVE reach\(project_id, src, dst\) AS \(/, "the closure itself");
+    // F6's trap, asserted rather than commented. Termination is finiteness plus
+    // dedup over (project_id, src, dst): a cycle re-derives pairs that already
+    // exist and the iteration reaches a fixed point. `UNION ALL` hangs, and a
+    // monotonic `depth` column makes every revisit a distinct tuple so `UNION`
+    // stops deduplicating — the guard added for safety would remove the
+    // guarantee. Both are cheap to add "to be safe" and both are fatal.
+    const cte = fn.slice(fn.indexOf("WITH RECURSIVE"), fn.indexOf("UPDATE projects p"));
+    assert.doesNotMatch(cte, /UNION ALL/, "UNION ALL over a cyclic depends_on does not terminate");
+    assert.match(cte, /\n\s+UNION\n/, "the dedup that IS the cycle guard");
+    assert.doesNotMatch(
+      cte,
+      /\bdepth\b/,
+      "a depth column defeats the UNION dedup and the cycle runs forever",
+    );
     assert.equal(
       (fn.match(/AND [a-z]\.project_id = p\.id/g) ?? []).length +
         (fn.match(/WHERE [a-z]\.project_id = p\.id/g) ?? []).length,
-      3,
-      "all three levels must be correlated on project_id, or another project's task can vouch for this one",
+      4,
+      "all four levels must be correlated on project_id, or another project's task can vouch for " +
+        "this one — three quantifiers (w, i, m) plus the `reach` lookup, which spans every active " +
+        "project and would otherwise carry an edge across the boundary",
+    );
+    // The closure's own levels are correlated too, on the row it walks from
+    // rather than on `p` — same precaution, different join.
+    assert.match(
+      fn,
+      /ON t2\.id = r\.dst AND t2\.project_id = r\.project_id/,
+      "the recursive term must not step from one project's task to another's",
     );
     // The refusal must be reported, not swallowed (NF1).
     assert.match(fn, /held: held\.rows/);
+  });
+
+  test("no line inside closeFinishedProjects() opens a block comment", () => {
+    // Both source-pin slices in this tree — this file's, and the one in
+    // r20-smoke-arming.test.ts:133, which is about `stillOpen()` and would
+    // never be found by searching for R70 — end at the first `\n/**` after the
+    // function starts. A block comment written inside the SQL truncates BOTH,
+    // and the shorter slice then passes over text that no longer contains what
+    // it claims to check. `--` comments only, and this is the guard.
+    const src = readFileSync(fileURLToPath(new URL("../db/projects.ts", import.meta.url)), "utf8");
+    const start = src.indexOf("export async function closeFinishedProjects(");
+    const fn = src.slice(start, src.indexOf("\n/**", start));
+    assert.match(fn, /RETURNING p\.id::text, p\.name/, "the slice must still reach the UPDATE's end");
+    assert.match(fn, /ORDER BY p\.updated_at ASC/, "and the held query's end after it");
+    assert.match(fn, /return \{ closed: r\.rows, held: held\.rows \};/, "and the function's own end");
   });
 
   test("the tick reports a held project loudly, once", () => {

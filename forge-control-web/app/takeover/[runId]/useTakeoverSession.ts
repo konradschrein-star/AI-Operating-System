@@ -23,6 +23,16 @@
  *     here; this hook only polls it (every 15 s) and renders it. When the
  *     route says `ended`, reconnecting stops for good — a viewer that keeps
  *     minting against a torn-down stack would just burn jtis.
+ *   - WHAT THE CLOCK SHOWS (B8). The header counts down to the session END:
+ *     `takeover_deadline` (the 2 h cap, armed at first connect), else
+ *     `hard_deadline`. It does NOT render the route's `remaining_ms`, which is
+ *     the EARLIEST of three deadlines — and while a socket is connected the
+ *     supervisor slides the 1 h idle deadline forward every tick, so that
+ *     minimum is the idle clock and it never arrives: B5 read "ends in 0:59:xx"
+ *     on a 2 h session. The idle deadline is rendered only when no socket is
+ *     connected (that is the only time it can fire), labelled as such. Both
+ *     are measured against the route's own `now`, so the phone's clock skew
+ *     cannot move them.
  *
  * Never logs anything. The ticket is a credential and never leaves `ticket`;
  * the bridge it hands out is the path passwords take into the VM.
@@ -69,7 +79,15 @@ export interface ReconnectState {
 export type ClockState =
   | { kind: "none" }
   | { kind: "loading" }
-  | { kind: "ok"; body: TakeoverSessionBody; remainingMs: number | null }
+  | {
+      kind: "ok";
+      body: TakeoverSessionBody;
+      /** ms until the session END (takeover cap, else hard cap); null when no cap is armed. */
+      remainingMs: number | null;
+      /** ms until the supervisor's idle deadline; null when the route carries none.
+       *  Rendered only while `body.connected_sockets === 0` — see the header comment. */
+      idleRemainingMs: number | null;
+    }
   | { kind: "ended"; reason: string; at: string }
   | { kind: "unavailable" }
   | { kind: "error"; message: string };
@@ -97,7 +115,8 @@ export interface TakeoverSession {
   reconnect: ReconnectState | null;
   /** Seconds since the current connection came up, or null. */
   connectedForS: number | null;
-  /** One line for the header: 'connected · ends in 1:52:10', 'reconnecting 2/5 · dropped after 118 s', … */
+  /** One line for the header: 'connected · ends in 1:52:10' (the cap),
+   *  'reconnecting 2/5 · dropped after 118 s · ends in 1:50:02 · idle: stack closes in 0:58:12 unless reconnected', … */
   statusLine: string;
   clock: ClockState;
   /** True when the clock should render in the warn colour. */
@@ -122,6 +141,38 @@ export function formatRemaining(ms: number): string {
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
   return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * ms from the route's `now` to an ISO deadline; null when the deadline is
+ * null. Throws (with the field named) on a value Date.parse cannot read — a
+ * clock that silently counted from NaN would be the bug this file exists to
+ * remove. Exported for the check script.
+ */
+export function msUntil(deadline: string | null, now: string, label: string): number | null {
+  if (deadline === null) return null;
+  const d = Date.parse(deadline);
+  const n = Date.parse(now);
+  if (Number.isNaN(d) || Number.isNaN(n)) {
+    throw new Error(`session route: ${label} ${JSON.stringify(deadline)} or now ${JSON.stringify(now)} is not an ISO timestamp`);
+  }
+  return d - n;
+}
+
+/**
+ * The session END as of `body.now`: the 2 h takeover cap once a connect has
+ * armed it, else the supervisor's hard cap; null when neither exists yet.
+ * Never `body.remaining_ms` — that is min(idle, cap, hard), i.e. the sliding
+ * idle deadline while connected (header comment). Exported for the check script.
+ */
+export function capRemainingAtFetch(body: TakeoverSessionBody): number | null {
+  if (body.takeover_deadline !== null) return msUntil(body.takeover_deadline, body.now, "takeover_deadline");
+  return msUntil(body.hard_deadline, body.now, "hard_deadline");
+}
+
+/** The supervisor's idle deadline as of `body.now`, or null. Exported for the check script. */
+export function idleRemainingAtFetch(body: TakeoverSessionBody): number | null {
+  return msUntil(body.idle_deadline, body.now, "idle_deadline");
 }
 
 /** Pure: the header line from the pieces, so the check script can pin it. */
@@ -151,7 +202,13 @@ export function composeStatusLine(input: {
   else head = viewer;
   let tail = "";
   if (clock.kind === "ok") {
+    // 'ends in' is the CAP — the moment the session really ends. The idle
+    // deadline slides while a socket is connected, so it is only shown when
+    // none is: then it is the moment the stack closes unless he reconnects.
     tail = clock.remainingMs === null ? " · no session clock armed" : ` · ends in ${formatRemaining(clock.remainingMs)}`;
+    if (clock.body.connected_sockets === 0 && clock.idleRemainingMs !== null) {
+      tail += ` · idle: stack closes in ${formatRemaining(clock.idleRemainingMs)} unless reconnected`;
+    }
   } else if (clock.kind === "unavailable") {
     tail = " · session clock unavailable — forge-control predates this build";
   } else if (clock.kind === "error") {
@@ -324,7 +381,10 @@ export function useTakeoverSession(dirId: string, options: TakeoverSessionOption
   }, [enabled, dirId, clearReconnectTimer]);
 
   /* ── 1 s display tick while a clock is armed ──────────────────────────── */
-  const clockArmed = poll?.kind === "ok" && poll.body.remaining_ms !== null && poll.body.ended === null;
+  const clockArmed =
+    poll?.kind === "ok" &&
+    poll.body.ended === null &&
+    (poll.body.takeover_deadline !== null || poll.body.hard_deadline !== null || poll.body.idle_deadline !== null);
   useEffect(() => {
     if (!clockArmed) return;
     const timer = setInterval(() => setNowTick(Date.now()), 1_000);
@@ -371,9 +431,23 @@ export function useTakeoverSession(dirId: string, options: TakeoverSessionOption
     if (poll.kind === "unavailable") return { kind: "unavailable" };
     if (poll.kind === "error") return { kind: "error", message: poll.message };
     if (poll.body.ended !== null) return { kind: "ended", reason: poll.body.ended.reason, at: poll.body.ended.at };
-    const remainingMs =
-      poll.body.remaining_ms === null ? null : Math.max(0, poll.body.remaining_ms - (nowTick - poll.fetchedAt));
-    return { kind: "ok", body: poll.body, remainingMs };
+    // Both clocks are anchored on the route's `now`, then aged by the time
+    // since the fetch — the phone's own clock never enters the arithmetic.
+    const elapsed = nowTick - poll.fetchedAt;
+    let capAtFetch: number | null;
+    let idleAtFetch: number | null;
+    try {
+      capAtFetch = capRemainingAtFetch(poll.body);
+      idleAtFetch = idleRemainingAtFetch(poll.body);
+    } catch (err) {
+      return { kind: "error", message: (err as Error).message };
+    }
+    return {
+      kind: "ok",
+      body: poll.body,
+      remainingMs: capAtFetch === null ? null : Math.max(0, capAtFetch - elapsed),
+      idleRemainingMs: idleAtFetch === null ? null : Math.max(0, idleAtFetch - elapsed),
+    };
   }, [localEnd, enabled, poll, nowTick]);
 
   const clockWarn = clock.kind === "ok" && clock.remainingMs !== null && clock.remainingMs < SESSION_WARN_UNDER_MS;

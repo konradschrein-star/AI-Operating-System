@@ -30,17 +30,81 @@ export const XK_RETURN = 0xff0d;
 export const XK_TAB = 0xff09;
 
 /**
- * Inter-key delay for "Type keys", in ms.
+ * Inter-key delay for "Type keys", in ms — for keysyms the VM's keymap
+ * ALREADY CARRIES (see `isInBaseKeymap`).
  *
  * R1 §2.3 swept {0,4,8,16,32} ms × 5 trials on the real Xvfb/x11vnc/Chrome-148
  * stack: 0 ms was already byte-exact 5/5 for both a 15-char umlaut+€ string
  * and a 300-char mixed string (and 3/3 for 1000- and 3000-char bursts). 4 ms
- * is the margin R1 §2.3 itself recommends for a loaded host ("a conservative
- * production default of a few ms"): ~1.2 s per 300 characters, invisible for
- * a password, and it also yields to the event loop between keys so the
- * 'typing N/M' counter can paint.
+ * is the margin R1 §2.3 itself recommends ("a conservative production default
+ * of a few ms"): ~1.2 s per 300 characters, invisible for a password, and it
+ * also yields to the event loop between keys so the 'sending N/M' counter can
+ * paint. Plain ASCII was never dropped in any measurement, idle or loaded.
  */
 export const KEY_DELAY_MS = 4;
+
+/**
+ * The gap around a keysym x11vnc has to ADD to the VM keymap first, in ms.
+ *
+ * Xvfb boots with the stock `us` map: printable ASCII, Return, Tab and the
+ * modifiers. Everything else — ä ö ü ß, U+20AC, emoji, every table hit — is
+ * absent, and x11vnc (`-add_keysyms`, its default) handles it by
+ * `XChangeKeyboardMapping` onto a spare keycode, `XFlush`, then the faked
+ * press; it never waits (x11vnc keyboard.c `add_keysym`). Chrome must process
+ * that MappingNotify before the KeyPress that follows it, or the keycode
+ * translates to nothing and the character is silently gone.
+ *
+ * Measured 2026-08-26 (B5, memory: takeover-type-keys-drops-a-key-under-cpu-
+ * contention): with a 63-process tsc storm beside the stack, `ß` in the
+ * umlaut+euro-sign sentinel was lost at the uniform 4 ms above while the panel
+ * still claimed success. R1's 0 ms and B1's 4 ms were both measured on an IDLE
+ * host; this machine runs deploys and 60-process type-checks all day. So a
+ * keysym outside the base map gets this gap on BOTH sides — before it, so the
+ * remap does not land on a Chrome still digesting the previous burst, and
+ * after it, so the next key cannot overtake the MappingNotify+KeyPress pair.
+ * ~50 ms per umlaut is invisible in a password and ~0.75 s in 300 chars of
+ * German text. x11vnc reuses an added keycode for a repeated keysym, so the
+ * later occurrences are over-protected, not under-protected.
+ *
+ * WHAT THIS GAP IS AND IS NOT (B8, measured under load — docs/plan/
+ * aios-takeover-usable/evidence-text-input.md §B8). It is BEST-EFFORT, not a
+ * fix. The MappingNotify and the KeyPress are emitted back-to-back INSIDE
+ * x11vnc (`add_keysym`: XChangeKeyboardMapping, XFlush, then the fake press —
+ * no XSync, no wait), so no delay taken in this browser can separate them; it
+ * can only stop the NEXT key from piling onto a Chrome still draining. B8's
+ * rig (fresh non-keymap code points per trial, fresh x11vnc every 3 trials,
+ * the same tsc storm B5 typed beside, loadavg 30–54 on 16 cores) lost keys
+ * in BOTH arms at the same rate — 4 ms uniform: 1 of 84; this gap: 1 of 84 —
+ * so the number here buys nothing measurable and is kept only because it is
+ * free and cannot hurt. The correctness fix is the WORDING in TextToVM.tsx:
+ * "sent N keys — arrival not verified", never "typed". The real cure is on the
+ * supervisor side and outside this file: give Xvfb a keymap that already
+ * carries Latin-1 (a `de` layout or an xmodmap pre-load), so ä ö ü ß never
+ * need a remap at all. Do NOT raise this constant on the strength of a green
+ * idle run — the drop does not reproduce on a quiet box.
+ */
+export const REMAP_KEY_DELAY_MS = 50;
+
+/**
+ * True when the VM's stock X keymap (Xvfb default `us`) already carries this
+ * keysym, so x11vnc fakes the key without changing the keyboard mapping first.
+ * Printable ASCII U+0020–U+007E, XK_Return, XK_Tab. Everything else (Latin-1
+ * high half, table hits, Unicode keysyms) goes through `-add_keysyms`.
+ */
+export function isInBaseKeymap(keysym: number): boolean {
+  return (keysym >= 0x20 && keysym <= 0x7e) || keysym === XK_RETURN || keysym === XK_TAB;
+}
+
+/**
+ * The pause to take AFTER sending `sent`, given the keysym that follows (null
+ * at the end of the text): REMAP_KEY_DELAY_MS if either side needs a keymap
+ * addition, else KEY_DELAY_MS. Pure; the send loop in TextToVM calls it per key.
+ */
+export function keyGapMs(sent: number, next: number | null): number {
+  if (!isInBaseKeymap(sent)) return REMAP_KEY_DELAY_MS;
+  if (next !== null && !isInBaseKeymap(next)) return REMAP_KEY_DELAY_MS;
+  return KEY_DELAY_MS;
+}
 
 export interface KeyEvent {
   keysym: number;

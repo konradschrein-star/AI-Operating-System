@@ -75,6 +75,7 @@ import {
   type VerdictInput,
   type VerdictRole,
 } from "./project-reconcile.ts";
+import { unintegratedWorkstreams, type CloseGateTask } from "./task-graph.ts";
 import {
   classifyUsageWall,
   parseResetAt,
@@ -3186,66 +3187,29 @@ async function goalHeartbeats(): Promise<void> {
   }
 }
 
-/** The three columns R70 decides over, and nothing else — the same narrowing
- *  `GraphTask` makes for the scheduler, for the same reason: a completion
- *  decision must not be able to start depending on a title, a status or a
- *  round. */
-export interface CloseGateTask {
-  id: string;
-  workstream: string;
-  depends_on: string[] | null;
-}
-
 /**
- * R70 — which workstreams of this project have NO integration task, and are
- * therefore holding it open. Empty means the project may close.
+ * R70's readable definition — which workstreams of this project have NO
+ * integration task, and are therefore holding it open — and the narrow row
+ * shape it decides over.
  *
- * The readable definition; `closeFinishedProjects()` in db/projects.ts carries
- * its set-based SQL mirror, and if the two disagree THIS ONE IS RIGHT.
+ * BOTH MOVED TO `lib/task-graph.ts` ON 2026-08-26 AND ARE RE-EXPORTED HERE.
+ * The rule is unchanged by the move; what changed in the same commit is that it
+ * tests TRANSITIVE reachability over `depends_on` instead of direct array
+ * membership, and the reasoning for both lives at the new site.
  *
- * R38 defines the integration task structurally — a `main` task that DEPENDS ON
- * EVERY TASK OF THE WORKSTREAM — so nothing here matches a title, reads a
- * naming convention or needs a column `project_tasks` does not have (there is no
- * `metadata` column on it; `TASK_COLS` in db/projects.ts is the whole list).
+ * Why it moved: `scripts/checks/check-close-gate.ts` has to call this predicate
+ * to pair it against the SQL mirror in `closeFinishedProjects()`, and importing
+ * THIS module to get it would drag `db/*` and `node:fs` into a harness that
+ * repoints `DATABASE_URL` for one pure function. `task-graph.ts` is the pure
+ * leaf that already owns `graphReady`, `findCycle`, `taskDepth` and
+ * `TERMINAL_TASK_STATUSES` — the same ownership inversion, for the same NF3
+ * reason.
  *
- * MEMBERSHIP: the integration task and its reviewer live in `main` (R38,
- * 02-architecture.md §4.4) because that is where the merge lands and where a
- * conflict must be visible. They are NOT members of W, so they are never
- * required to depend on themselves — get that wrong and no project with a
- * workstream could ever close, which is a worse bug than the one R70 fixes.
- *
- * LEGACY ROWS: `depends_on` is nullable and that IS the migration strategy
- * (02-architecture.md §2.2). A NULL names nothing, so a legacy `main` task can
- * never be an integrator; and a pre-graph project, every row of which is in
- * `main`, has no W at all and comes back empty. Every live project today is
- * such a project.
- *
- * COVERAGE IS ⊇, NOT =. The integration task may depend on more than W — R38's
- * reviewer chain and the planner's own ordering routinely add edges — so the
- * test is that W's ids are a SUBSET of what it names. Requiring equality would
- * make a correct integration task fail the moment anyone added an edge to it.
+ * Why the re-export rather than a deletion: `reportUnintegratedWorkstreams()`
+ * below is the caller, and every other importer names this module. A re-export
+ * adds no module edge.
  */
-export function unintegratedWorkstreams(tasks: readonly CloseGateTask[]): string[] {
-  const members = new Map<string, string[]>();
-  for (const t of tasks) {
-    if (t.workstream === MAIN_WORKSTREAM) continue;
-    const ids = members.get(t.workstream);
-    if (ids) ids.push(t.id);
-    else members.set(t.workstream, [t.id]);
-  }
-  if (members.size === 0) return [];
-
-  const integrators = tasks
-    .filter((t) => t.workstream === MAIN_WORKSTREAM && t.depends_on !== null)
-    .map((t) => new Set(t.depends_on as string[]));
-
-  const open: string[] = [];
-  for (const [workstream, ids] of members) {
-    const integrated = integrators.some((deps) => ids.every((id) => deps.has(id)));
-    if (!integrated) open.push(workstream);
-  }
-  return open.sort();
-}
+export { unintegratedWorkstreams, type CloseGateTask };
 
 /** Projects already escalated for R70, so a refusal that persists — and it
  *  persists until a human creates the missing task — pushes ONCE rather than

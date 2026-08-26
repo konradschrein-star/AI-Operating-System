@@ -105,6 +105,34 @@ import type { TaskStatus } from "../db/projects.ts";
 export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = ["done", "cancelled"];
 
 /* ------------------------------------------------------------------------- *
+ * The workstream vocabulary
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The workstream every task carries until a planner says otherwise — the
+ * schema default (`workstream text NOT NULL DEFAULT 'main'`, migration 0040)
+ * and the value every row written before that migration has.
+ *
+ * It is a NAMED CONSTANT rather than a bare literal because four unrelated
+ * rules key on "is this the default workstream?": `chainKeys`'s byte-identical
+ * historical form (R41), the notification's byte-identical historical text
+ * (R45), the log label, and R70's integrator test below. A future rename would
+ * have to move all four together, and a literal in four places is how two of
+ * them get missed.
+ *
+ * WHY IT MOVED HERE FROM `lib/project-reconcile.ts`, 2026-08-26. `unintegrated
+ * Workstreams()` — R70's readable definition — moved into this pure leaf so
+ * that a harness can pair it against the SQL mirror without dragging
+ * `project-tick.ts`'s `db/*` and `node:fs` imports into a process that repoints
+ * `DATABASE_URL`. The predicate reads this constant, so ownership INVERTS the
+ * same way `TERMINAL_TASK_STATUSES` did above rather than this module reaching
+ * upward: the pure leaf defines it and `project-reconcile.ts` RE-EXPORTS it.
+ * A re-export adds no module edge, and every existing importer keeps importing
+ * it from `./project-reconcile.ts` unchanged.
+ */
+export const MAIN_WORKSTREAM = "main";
+
+/* ------------------------------------------------------------------------- *
  * The row, as the scheduler sees it
  * ------------------------------------------------------------------------- */
 
@@ -817,6 +845,140 @@ export function selectClaimable(
   }
 
   return claimed;
+}
+
+/* ------------------------------------------------------------------------- *
+ * The close gate (R70)
+ * ------------------------------------------------------------------------- */
+
+/** The three columns R70 decides over, and nothing else — the same narrowing
+ *  `GraphTask` makes for the scheduler, for the same reason: a completion
+ *  decision must not be able to start depending on a title, a status or a
+ *  round. */
+export interface CloseGateTask {
+  id: string;
+  workstream: string;
+  depends_on: string[] | null;
+}
+
+/**
+ * R70 — which workstreams of this project have NO integration task, and are
+ * therefore holding it open. Empty means the project may close.
+ *
+ * The readable definition; `closeFinishedProjects()` in db/projects.ts carries
+ * its set-based SQL mirror, and if the two disagree THIS ONE IS RIGHT.
+ *
+ * R38 defines the integration task structurally — a `main` task from which
+ * EVERY TASK OF THE WORKSTREAM IS REACHABLE through `depends_on` — so nothing
+ * here matches a title, reads a naming convention or needs a column
+ * `project_tasks` does not have (there is no `metadata` column on it;
+ * `TASK_COLS` in db/projects.ts is the whole list).
+ *
+ * REACHABILITY, NOT DIRECT MEMBERSHIP — the 2026-08-26 fix, and the reason this
+ * function was rewritten. The test used to be `every id of W appears in the
+ * integrator's own depends_on array`. That is not the shape an architect seeds:
+ * it seeds ONE integration task depending on the workstream's LAST task, and
+ * the workstream's tasks form a chain among themselves. Measured on
+ * `aios-chat-reference-navigation`, whose round-5 "Integrate workstream
+ * markdown" names exactly one dependency:
+ *
+ *     5:main -> 4:markdown -> 3:markdown -> 2:main
+ *
+ * Round 5 covers both `markdown` tasks TRANSITIVELY and one of them DIRECTLY,
+ * so the old test failed forever and no later edit could satisfy it — the
+ * integration task was seeded before the workstream's later rounds existed. The
+ * correlation across the three then-active projects was perfect and is the
+ * control: every workstream of exactly ONE task passed the old test (direct and
+ * transitive coincide when W is a single node) and every workstream of two or
+ * more failed it, all eight of them.
+ *
+ * WHAT IT DOES NOT WEAKEN. Coverage is still over EVERY task of W, and it is
+ * still one integrator that must reach all of them: an integration task that
+ * merges half a workstream strands the rest, and reachability does not rescue
+ * it — `4:main -> 2:ui -> 1:main` never arrives at `3:ui`. A workstream that no
+ * `main` task reaches at all is still open, which is the case that actually
+ * occurred to a planner and the one R70 exists for.
+ *
+ * MEMBERSHIP: the integration task and its reviewer live in `main` (R38,
+ * 02-architecture.md §4.4) because that is where the merge lands and where a
+ * conflict must be visible. They are NOT members of W, so they are never
+ * required to depend on themselves — get that wrong and no project with a
+ * workstream could ever close, which is a worse bug than the one R70 fixes.
+ *
+ * LEGACY ROWS: `depends_on` is nullable and that IS the migration strategy
+ * (02-architecture.md §2.2). A NULL names nothing, so a legacy `main` task can
+ * never be an integrator; and a pre-graph project, every row of which is in
+ * `main`, has no W at all and comes back empty.
+ *
+ * COVERAGE IS ⊇, NOT =. The integration task may reach more than W — R38's
+ * reviewer chain and the planner's own ordering routinely add edges — so the
+ * test is that W's ids are a SUBSET of what it reaches. Requiring equality would
+ * make a correct integration task fail the moment anyone added an edge to it.
+ *
+ * CYCLES TERMINATE. `depends_on` carries no acyclicity constraint (`findCycle()`
+ * above exists precisely because the graph can be seeded with one), and R70 runs
+ * on every tick, so a cycle must not hang it. The walk below is an ordinary BFS
+ * with a `visited` set, which terminates by construction. Its SQL mirror gets
+ * the same guarantee from `UNION` over a finite pair space — see the comment on
+ * the recursive CTE in `closeFinishedProjects()`, and note the trap recorded
+ * there: adding a `depth` column to that CTE would DEFEAT the guard.
+ *
+ * A DANGLING ID IS A DEAD END, on both sides. `depends_on` may name an id with
+ * no row (a hand-edit, a deleted task); the walk visits it and finds no outgoing
+ * edges, exactly as the CTE's recursive term finds no `project_tasks` row to
+ * join. It is reachable, it reaches nothing further, and it is nobody's
+ * workstream member.
+ */
+export function unintegratedWorkstreams(tasks: readonly CloseGateTask[]): string[] {
+  const members = new Map<string, string[]>();
+  for (const t of tasks) {
+    if (t.workstream === MAIN_WORKSTREAM) continue;
+    const ids = members.get(t.workstream);
+    if (ids) ids.push(t.id);
+    else members.set(t.workstream, [t.id]);
+  }
+  if (members.size === 0) return [];
+
+  // The edge list, built once for every task of the project rather than per
+  // integrator: the walk below runs once per `main` row and would otherwise
+  // rebuild it each time.
+  const edges = new Map<string, readonly string[]>();
+  for (const t of tasks) edges.set(t.id, t.depends_on ?? []);
+
+  const integrators = tasks
+    .filter((t) => t.workstream === MAIN_WORKSTREAM && t.depends_on !== null)
+    .map((t) => reachableFrom(t.depends_on as string[], edges));
+
+  const open: string[] = [];
+  for (const [workstream, ids] of members) {
+    const integrated = integrators.some((reached) => ids.every((id) => reached.has(id)));
+    if (!integrated) open.push(workstream);
+  }
+  return open.sort();
+}
+
+/**
+ * Every task id reachable from `start` through `edges`, `start` itself excluded
+ * unless a cycle leads back to it. The `visited` set is the cycle guard: a task
+ * already expanded is never expanded again, so `a -> b -> a` closes after two
+ * steps instead of running forever.
+ *
+ * Not exported. It is R70's walk, and a second caller would be a second rule.
+ */
+function reachableFrom(
+  start: readonly string[],
+  edges: ReadonlyMap<string, readonly string[]>,
+): Set<string> {
+  const visited = new Set<string>();
+  const frontier = [...start];
+  while (frontier.length > 0) {
+    const id = frontier.pop() as string;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const next = edges.get(id);
+    if (next) for (const dep of next) if (!visited.has(dep)) frontier.push(dep);
+  }
+  return visited;
 }
 
 /* ------------------------------------------------------------------------- *

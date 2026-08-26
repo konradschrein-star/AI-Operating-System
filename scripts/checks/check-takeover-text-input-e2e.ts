@@ -226,6 +226,23 @@ function fastSections(): void {
     check(`${name}: no \`console.\` in code (${hits.length} hit${hits.length === 1 ? "" : "s"})`, hits.length === 0);
   }
 
+  /* (B8, static) the panel never claims arrival it cannot see. sendKey writes
+     a WebSocket frame; B5 lost a ß under load while the feedback said "typed
+     30 keys". The fast pipe pins the wording so the browser gate is not the
+     only thing standing between "sent" and a false "typed". Comments are
+     stripped first: the header may still narrate the old wording. */
+  section("6b. static — Type keys reports 'sent', never 'typed' (B8)");
+  {
+    const code = stripComments(fs.readFileSync(path.join(TAKEOVER_DIR, "TextToVM.tsx"), "utf8"));
+    const typedClaims = code.match(/["'`]typ(ed|ing)\b/g) ?? [];
+    check(`TextToVM.tsx: no string literal begins with 'typed'/'typing' (${typedClaims.length} hit${typedClaims.length === 1 ? "" : "s"})`, typedClaims.length === 0, typedClaims.join(" "));
+    check(
+      "TextToVM.tsx: the success line says 'sent ${total} key' and 'arrival not verified'",
+      /`sent \$\{total\} key/.test(code) && /arrival not verified/.test(code),
+    );
+    check("TextToVM.tsx: progress reads 'sending N/M'", /sending \$\{progress\.sent\}\/\$\{progress\.total\}/.test(code) && /sending \{progress\.sent\}\/\{progress\.total\}/.test(code));
+  }
+
   /* session-view shape + header strings */
   section("5s. session view shape (pure) + the header strings the page renders");
   const now = new Date("2026-08-26T10:00:00.000Z");
@@ -279,7 +296,7 @@ function fastSections(): void {
     ticket: "ready",
     viewer: "connected",
     reconnect: null,
-    clock: { kind: "ok", body: live, remainingMs: live.remaining_ms },
+    clock: { kind: "ok", body: live, remainingMs: live.remaining_ms, idleRemainingMs: null },
     bridgeError: null,
   });
   check("header: 'connected · ends in 1:50:00'", connectedLine === "connected · ends in 1:50:00", connectedLine);
@@ -1112,17 +1129,20 @@ async function e2e(): Promise<string[]> {
   check("panel textarea holds the sentinel verbatim after paste (tab and newline intact)", filled === SENTINEL, diffSummary(SENTINEL, filled));
   const expectedEvents = textToKeyEvents(SENTINEL).length;
   await send.tap();
+  // B8: the panel says "sent", never "typed" — it counts WebSocket frames it
+  // wrote, and nothing on the page can see what Chrome inside the VM received
+  // (B5 lost a ß under load while the old wording claimed "typed 30 keys").
   const typedMsg = await waitUntil(
-    "the 'typed N keys' feedback",
+    "the 'sent N keys' feedback",
     async () => {
       const t = (await page.locator("[data-text-to-vm-feedback]").first().textContent()) ?? "";
-      return /typed \d+ keys? into the VM/.test(t) ? t : null;
+      return /sent \d+ keys? to the VM/.test(t) ? t : null;
     },
     30_000,
     100,
   );
-  const typedCount = Number.parseInt(typedMsg.match(/typed (\d+)/)?.[1] ?? "-1", 10);
-  check(`panel reports 'typed ${expectedEvents} keys into the VM' (counts only, never the text)`, typedCount === expectedEvents, typedMsg);
+  const typedCount = Number.parseInt(typedMsg.match(/sent (\d+)/)?.[1] ?? "-1", 10);
+  check(`panel reports 'sent ${expectedEvents} keys to the VM' (counts only, never the text, never 'typed')`, typedCount === expectedEvents && !/typed/.test(typedMsg), typedMsg);
   const sentinelEcho = await waitForEcho(echo, SENTINEL, 20_000);
   check(
     "the VM textarea holds the sentinel byte-exact — umlauts, ß, €, Tab, newline",
