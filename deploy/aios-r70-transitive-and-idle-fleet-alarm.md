@@ -379,6 +379,42 @@ quiet"**, so this is a real failure mode, not a theoretical one.
    `main`**, rather than written directly on `main`, so that the reviewer's
    write-set comparison sees it on the branch it was declared against.
 
+---
+
+## 7. AMENDMENT, 03:37Z — the section did go to `none`, and NOT because R70 released it
+
+Four minutes after this task's close, `os-usable-for-work` and
+`aios-sidebar-live-sessions` both went `status='done'` at
+`2026-08-26 03:37:11Z` (`.596` and `.620` — one operator action, two rows).
+The fleet supervisor acted on finding §6.2 while this task was still running,
+taking the "retire them" option it named. So the detector's trajectory across
+the night reads **3 → 2 → 0**, and §4's claim that the section would stay
+permanently red is **superseded**.
+
+**It matters enormously HOW they closed, and the honest answer is: not by this
+fix.** Measured, not assumed:
+
+```
+-- any task row created or updated in those two projects after 03:30Z?
+(0 rows)                       -- no integration task added, no depends_on repaired
+
+-- the shipped closeFinishedProjects(), re-run afterwards:
+closed (0):
+held (0):
+```
+
+No task graph changed, and the shipped predicate does not name them even now —
+there is simply no candidate left, because their `status` is no longer
+`'active'`. **They were closed by a direct operator status write.** R70 closed
+exactly one project tonight: `aios-chat-reference-navigation`. A later reader
+who sees `FINISHED BUT STILL ACTIVE → none` and concludes the transitive fix
+released all three would be wrong, and §3(b) above is the measurement that
+settles it.
+
+That is a legitimate operator call — those two are genuinely unintegrated and
+retiring them is one of the two remedies §4 named. It is recorded here only so
+the fix's actual reach is not overstated by the board it cleaned up.
+
 ## Declared write-set
 
 `deploy/aios-r70-transitive-and-idle-fleet-alarm.md` — and that is the only
