@@ -138,7 +138,13 @@ test("a PGPASSWORD assignment still FAILS, and the password is not printed", () 
 
     assert.equal(r.status, 1, `expected exit 1, got ${r.status}`);
     assert.match(r.stdout, /^FAIL {2}.*pgpassword-fixture\.sh$/m);
-    assert.match(r.stdout, /^ +line 2 {2}PGPASSWORD {2}PGPASSWORD=\*\*\*$/m);
+    // Label is "password assignment", not "PGPASSWORD". The matcher was widened
+    // from `PGPASSWORD=` to any `*PASSWORD=` because the live content_forge
+    // credential is committed as `PG_PASSWORD="${PGPASSWORD:-…}"` — a line with
+    // no `PGPASSWORD=` substring at all, which the old pattern could not see.
+    // The contract THIS test guards is unchanged: the value is masked and the
+    // line number is right.
+    assert.match(r.stdout, /^ +line 2 {2}password assignment {2}PGPASSWORD=\*\*\*$/m);
 
     assert.ok(!r.stdout.includes(FIXTURE_PW), "stdout leaked the fixture password");
     assert.ok(!r.stderr.includes(FIXTURE_PW), "stderr leaked the fixture password");

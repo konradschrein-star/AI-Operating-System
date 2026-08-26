@@ -134,6 +134,30 @@ describe("listRunShots", () => {
     );
     assert.equal(shots.length, 3);
   });
+
+  test("a directory that does not exist yields no shots, it does not throw", async () => {
+    // The production failure this closes: computeAllRuns readdirs UPLOAD_DIR,
+    // then readdirs each child. A run dir deleted between those two calls threw
+    // ENOENT out of the whole sweep, so ONE vanished directory 500'd the entire
+    // run listing. forge-control's error log carried exactly this for
+    // /opt/ai-os/uploads/e2ec11b00001.
+    const gone = path.join(dir, "definitely-not-here");
+    assert.deepEqual(await listRunShots(gone), []);
+    assert.deepEqual(await listRunShots(gone, { include: "all" }), []);
+  });
+
+  test("a NON-ENOENT readdir failure still throws — this is not a blanket catch", async () => {
+    // Guards the fix against degrading into "swallow everything". A file is not
+    // a directory, so readdir fails with ENOTDIR, which must still surface.
+    const notADir = path.join(dir, "notes.txt");
+    await assert.rejects(
+      () => listRunShots(notADir),
+      (err: NodeJS.ErrnoException) => {
+        assert.notEqual(err.code, "ENOENT");
+        return true;
+      },
+    );
+  });
 });
 
 describe("ID_RE", () => {
