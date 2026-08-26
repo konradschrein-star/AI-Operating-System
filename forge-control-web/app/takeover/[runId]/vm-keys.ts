@@ -13,7 +13,7 @@
  *   - "\t" → XK_Tab (0xff09). R1 §2.2 case d: Tab MOVES FOCUS out of the field
  *     in the VM — useful for user⇥password, harmful inside a textarea.
  *   - U+0020–U+00FF → keysym = codepoint (Latin-1 is 1:1 in X11: ä ö ü ß).
- *   - other BMP → noVNC's keysymdef table hit (€ U+20AC → 0x20ac, XK_EuroSign)
+ *   - other BMP → noVNC's keysymdef table hit (the euro sign U+20AC → 0x20ac, XK_EuroSign)
  *     else the X11 Unicode keysym 0x01000000 | cp.
  *   - iterate BY CODE POINT, so an astral character (emoji) is ONE event
  *     (R1 §2.2 case e: 🙂 as 0x0101f642 arrived as one `input` event).
@@ -34,7 +34,7 @@ export const XK_TAB = 0xff09;
  * ALREADY CARRIES (see `isInBaseKeymap`).
  *
  * R1 §2.3 swept {0,4,8,16,32} ms × 5 trials on the real Xvfb/x11vnc/Chrome-148
- * stack: 0 ms was already byte-exact 5/5 for both a 15-char umlaut+€ string
+ * stack: 0 ms was already byte-exact 5/5 for both a 15-char umlaut+euro-sign string
  * and a 300-char mixed string (and 3/3 for 1000- and 3000-char bursts). 4 ms
  * is the margin R1 §2.3 itself recommends ("a conservative production default
  * of a few ms"): ~1.2 s per 300 characters, invisible for a password, and it

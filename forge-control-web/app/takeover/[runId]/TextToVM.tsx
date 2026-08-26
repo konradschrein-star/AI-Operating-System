@@ -25,7 +25,8 @@
  * ── WHAT WAS VERIFIED (R1, docs/plan/aios-takeover-usable/research-keysym.md,
  *    2026-08-26, one Xvfb/x11vnc 0.9.16/Chrome 148 stack on an idle VPS) ──
  *   ✓ ASCII incl. shifted symbols `Hello, World! @#$%^&*()` — byte-exact.
- *   ✓ Latin-1 umlauts and ß, and € via the keysym table: `Pässwörd ßÄÖÜ €`.
+ *   ✓ Latin-1 umlauts and ß, and the euro sign (U+20AC) via the keysym table:
+ *     `Pässwörd ßÄÖÜ` + U+20AC.
  *   ✓ "\n" as XK_Return inside a textarea: value byte-exact `line1\nline2`.
  *   ✓ "\r\n" → ONE Return (R1 §2.5); a lone "\r" is normalised the same way.
  *   ✓ Emoji 🙂 as the Unicode keysym 0x0101f642 — ONE input event, exact.
@@ -35,18 +36,18 @@
  *   ✓ "\t" as XK_Tab: it MOVES FOCUS to the next field (§2.2 d). Kept on
  *     purpose — `user⇥password` is the login case — and said so in the hint.
  *   ✓ B1 smoke (2026-08-26, real Chrome 390×844 → next dev → forge-control
- *     upgrade pipe → r1-keysym stack): `Pässwörd ßÄÖÜ €\nline2 🙂 Straße #7
+ *     upgrade pipe → r1-keysym stack): `Pässwörd ßÄÖÜ` U+20AC `\nline2 🙂 Straße #7
  *     (Köln) & Co.` — 46 code points — echoed back byte-exact from the VM
  *     textarea; Send ⏎ appended one newline; typing still works through the
  *     NEW iframe after a killed socket was re-minted.
  *   ✓ Clipboard mode is LATIN-1 ONLY on this stack (B1 clip-probe): Ä é ü ß
- *     land in the X CLIPBOARD as c4 e9 fc df; € became 0xac and 🙂 "=B"
+ *     land in the X CLIPBOARD as c4 e9 fc df; U+20AC became 0xac and 🙂 "=B"
  *     (noVNC 1.3.0 legacy ClientCutText; x11vnc 0.9.16 offers no extended-
  *     clipboard notify). So clipboard mode REFUSES text with any code point
  *     above U+00FF and points at Type keys, which carries all of them.
  *   ✓ UNDER LOAD (B5, then B8 — evidence-text-input.md §B8): with a 63-process
  *     tsc storm beside the stack (loadavg 30–54 on 16 cores) a keysym the VM
- *     keymap LACKS (ß, ä, €, …) is dropped roughly once per ~80 sent, at 4 ms
+ *     keymap LACKS (ß, ä, the euro sign, …) is dropped roughly once per ~80 sent, at 4 ms
  *     and at 50 ms alike — the race is inside x11vnc (`-add_keysyms`:
  *     XChangeKeyboardMapping then the fake press, no XSync) and no browser-
  *     side delay can split it. Plain ASCII was never dropped. Hence the
@@ -206,11 +207,11 @@ export function TextToVM({ getBridge, connected, extraActions, initiallyHidden =
     // is Latin-1 by protocol here. noVNC 1.3.0 falls back to the legacy
     // ClientCutText (low byte of each UTF-16 unit) because x11vnc 0.9.16 does
     // not advertise the extended-clipboard NOTIFY action; Ä é ü ß arrive
-    // byte-exact (c4 e9 fc df), € arrives as 0xac ("¬") and 🙂 as "=B".
+    // byte-exact (c4 e9 fc df), U+20AC arrives as 0xac ("¬") and 🙂 as "=B".
     // A silently mangled password is the worst outcome, so refuse instead.
     const outside = countOutsideLatin1(text);
     if (outside > 0) {
-      say(`${outside} character${outside === 1 ? "" : "s"} outside Latin-1 (€, emoji, …) cannot travel on the VNC clipboard — use Type keys`, true);
+      say(`${outside} character${outside === 1 ? "" : "s"} outside Latin-1 (the euro sign, emoji, …) cannot travel on the VNC clipboard — use Type keys`, true);
       return;
     }
     const live = liveRfb();
