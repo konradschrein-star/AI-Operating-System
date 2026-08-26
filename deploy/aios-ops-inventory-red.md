@@ -103,3 +103,73 @@ This deploy task's declared write-set is `deploy/aios-ops-inventory-red.md`. The
 in step 1 also updated `main`'s tip via the pre-existing branch commit `592f18a`
 (`scripts/ops/install-symlinks.sh`, already reviewed and merged in step 1) plus the merge
 commit itself — no new source file was authored by this deploy task beyond this record.
+
+---
+
+# Round 2 — what the next deploy must do and verify
+
+Round 2 answers the round-1 review's findings 2 and 3. The lane cannot verify
+the install half (`install-symlinks.sh` refuses to run from a worktree, by
+design), so that half is listed here for the deploy task.
+
+## What changed
+
+| commit | file | why |
+|---|---|---|
+| `e3f9eb8` | `scripts/checks/check-ops-scripts.sh` | finding 2: `EXPECTED_EXEC` gains the 5 unasserted scripts; finding 3: reverse-direction inventory assertion |
+| `e3f9eb8` | `scripts/ops/install-symlinks.sh` | `FILES` gains the 3 migrated scripts; `EXEC_MODE_FILES` gains the 2 cron-driven ones |
+| `e3f9eb8` | `scripts/ops/{next-build-drift-watchdog,usage-ceiling-throttle,verify-gemini-dispatch}.sh` | migrated from `/opt/ai-os/scripts`, byte-identical |
+| `e3f9eb8` | `scripts/ops/README.md` | Layout table gains the 5 previously undocumented entries |
+| `b1f88c0` | `scripts/checks/prove-ops-inventory-bites.sh` | the mutation control, 5 verdicts |
+| `8926c41` | `scripts/checks/check-ops-scripts.sh` | an unlistable `TARGET_DIR` must SKIP, not silently PASS |
+
+## Deploy steps
+
+1. Merge, then from `/opt/forge-ai-os` (NOT a worktree):
+
+       bash scripts/ops/install-symlinks.sh
+
+   Expect three `backing up real file before symlinking:` lines — for
+   `next-build-drift-watchdog.sh`, `usage-ceiling-throttle.sh` and
+   `verify-gemini-dispatch.sh`. Those are the real files being replaced by
+   symlinks; the originals land in `/opt/ai-os/backups/scripts/<f>.<stamp>-preinstall`.
+   Every other entry should say `ok (already linked)`.
+
+2. Verify all three now resolve into the repo:
+
+       ls -la /opt/ai-os/scripts/ | grep -E 'next-build|usage-ceiling|verify-gemini'
+
+   Each must be a symlink into `/opt/forge-ai-os/scripts/ops/`.
+
+3. Confirm the two cron jobs still resolve through the symlink — the crontab
+   lines are unchanged (`*/3` and `*/2` against `/opt/ai-os/scripts/...`) and end
+   in `>/dev/null 2>&1`, so a broken path would be **silent**. Do not skip this:
+
+       bash -n /opt/ai-os/scripts/next-build-drift-watchdog.sh && echo ok
+       bash -n /opt/ai-os/scripts/usage-ceiling-throttle.sh && echo ok
+       test -x /opt/ai-os/scripts/usage-ceiling-throttle.sh && echo executable
+
+   `usage-ceiling-throttle.sh` touches `/var/tmp/usage-throttle.stamp` on every
+   run, so `stat -c %y` on it a few minutes after the install is the liveness
+   proof that the cron still fires through the new symlink.
+
+4. `bash scripts/checks/check-ops-scripts.sh` → `PASS`, exit 0, and the line
+   `-- nothing unmanaged is living in /opt/ai-os/scripts (reverse direction)`
+   present with no `FAIL:` after it.
+
+## One race worth naming
+
+Between `rm -f "$dst"` and `ln -s` in `install-symlinks.sh` the cron path does
+not exist for a few milliseconds. If cron fires in that window, that one
+invocation is skipped — `*/2` and `*/3` schedules recover on the next tick, and
+neither watchdog carries state that a skipped run corrupts. Not worth a lock;
+worth knowing if the install log looks odd.
+
+## Still not fixed, and not this project's to fix
+
+`/opt/forge-ai-os` remains dirty on `docs/plan/artifacts/phase300/backfill.log`
+(round-1 finding 1). `forge-control`'s `chat-linkage.ts:405` appends to that
+git-tracked path at runtime, so every chat-originated project re-dirties it.
+Escalated as reminders `d246123a` (round 1) and `d663bcc5` (round 2); both
+unanswered. Do not revert the line — `plan-300.md`'s rollback command consumes
+it. The deploy task should expect this path in `git status` and attribute it.
