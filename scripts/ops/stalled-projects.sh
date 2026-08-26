@@ -362,6 +362,113 @@ Q "select p.name, t.status, count(*),
          order by p.name, t.status"
 [ -n "$out" ] && { echo "$out"; found=1; } || echo "none"
 
+section "FINISHED BUT STILL ACTIVE — every row terminal, the project still open"
+# Added 2026-08-26. The exact mirror of the section above: that one asks about a
+# project marked done whose rows are not; this one asks about a project marked
+# ACTIVE whose rows all are. Both are the same class of lie — the status is a
+# claim about the tasks, and nobody was checking it in either direction.
+#
+# EVERY OTHER SECTION IN THIS FILE STARTS FROM A NON-TERMINAL ROW. Read them: the
+# blocked/paused pair needs `pending/ready/running` or `failed`; WEDGED BY
+# POSITION needs `failed`/`blocked`; WEDGED DESPITE SATISFIED DEPENDENCIES needs
+# `pending`; LEGACY BARRIER needs `t.status <> 'done'` plus an open row above it;
+# ZOMBIE needs `running`; TWO LIVE SESSIONS needs `ready`/`running`; FAILED-WITH-
+# PENDING-SUCCESSOR needs both; the section below needs `queued > 0`. A project
+# whose every row is done or cancelled therefore matches NOTHING, by construction,
+# no matter how long it sits `active`. That is not an oversight in one query — it
+# is the shape of the whole file, and it is why this section had to be added
+# rather than a term relaxed somewhere.
+#
+# Cost, measured by the fleet supervisor on 2026-08-26: three projects sat
+# `active` with ZERO open rows between them and this script printed nothing at
+# all. A supervisor reading the board saw three active projects and concluded the
+# fleet was busy; it had had nothing to do since 2026-08-25 16:25Z. On 2026-08-24
+# the same blindness let the fleet run ONE task in twelve hours.
+#
+# THIS IS NOT A SECOND COPY OF R70. The current cause is R70's direct-membership
+# integration test in closeFinishedProjects() (fixed in this same project). Keep
+# this section anyway: it is stated in terms of the OBSERVABLE STATE, not the
+# mechanism, so it catches whatever holds a finished project open next time — a
+# new close precondition, a reconcile that skips a status, a hand-edited row.
+# Under a correct closer it is empty forever.
+#
+# AND THE R70 FIX DOES NOT EMPTY IT — do not expect it to, or a partial recovery
+# will read as a failed one. Operator ruling, 2026-08-26, recorded in the vault at
+# "AI OS/Operator Decisions.md" and re-measured against live rows before it was
+# made: transitive reachability closes aios-chat-reference-navigation and MUST NOT
+# close the other two. `os-usable-for-work` has rows in connections/surfaces/vault
+# that no main task reaches at all; `aios-sidebar-live-sessions` was never given
+# an integrator for its toggle workstream. Both are genuinely unintegrated, R70 is
+# correctly reporting a true structural fact, and both branches are 0 commits
+# ahead of main (`git rev-list --left-right --count main...project/fb3b5fb2` =
+# 151/0) so nothing is stranded. The supervisor closes those two BY HAND with the
+# git evidence. So the expected trajectory of this section is 3 rows -> 2 rows on
+# the R70 deploy -> 0 rows after the hand-close, and 2 rows in between is the
+# CORRECT reading, not a regression.
+#
+# CONTROLLED BY FILTER INVERSION on live data (this file's convention), measured
+# 2026-08-26 00:56Z against content_forge:
+#   NEGATIVE   — as written: 3 rows, and they are the three real ones:
+#                  aios-chat-reference-navigation|22|0|9h since last change
+#                  aios-sidebar-live-sessions|16|1|5h since last change
+#                  os-usable-for-work|88|0|146h since last change
+#                Real rows, not fixtures — the strong kind of positive. That
+#                transcript is PERISHABLE: it goes to 0 rows the moment the R70
+#                fix merges, which is the point of recording it here.
+#   POSITIVE B — drop `count(*) filter (where t.status not in ('done','cancelled'))
+#                = 0`: 4 rows — the three above plus
+#                `aios-r70-transitive-and-idle-fleet-alarm`, this very project,
+#                which had 2 done and 6 open at the time. Without that term the
+#                section reports every active project that has ever finished a
+#                task, i.e. all of them. The term is live.
+#   POSITIVE A — drop `count(*) filter (where t.status='done') > 0`: 3 rows,
+#                IDENTICAL to the negative. STATED PLAINLY BECAUSE IT IS THE WEAK
+#                ONE: on live data today this term excludes nothing, so the
+#                inversion proves nothing about it and a green run never will.
+#                What it is for: a project whose rows are ALL `cancelled` and
+#                none done never started — that is an abandonment, a decision,
+#                not a finished project held open, and this file's standing rule
+#                is that a detector which flags intended states gets ignored and
+#                then misses a real one. There is no live instance, so the term
+#                was proven in the constructed shape below instead.
+#   BITE PROOF — built in a scratch database via STALLED_PROJECTS_DB_URL (see the
+#                note at the top of this file) and the WHOLE SCRIPT run against
+#                it, 2026-08-26 01:0xZ — not the SQL re-typed by hand, which would
+#                test the copy:
+#                  REPORTED — scratch-finished-active|3|1|0h since last change
+#                             (active, 3 done + 1 cancelled, nothing open)
+#                  EXCLUDED — scratch-all-cancelled (active, 0 done, 2 cancelled):
+#                             absent. Re-run with the `done > 0` term deleted it
+#                             APPEARS — which is the control POSITIVE A could not
+#                             give on live rows.
+#                  EXCLUDED — scratch-still-working (active, 2 done, 1 pending):
+#                             absent. ✓
+#   RED/GREEN  — the live NEGATIVE above is also the red-to-green pair, because
+#                the same live fleet through the detector AS IT SHIPS ON main
+#                (`git show main:scripts/ops/stalled-projects.sh`) names none of
+#                those three projects anywhere in its output. It still exits 1 —
+#                on the documented permanent noise, zz-tierpin-verify — which is
+#                the sharpest form of the problem: the detector was exiting 1 for
+#                a row nobody acts on while three finished projects held the board
+#                open and it could not say a word about them.
+# `cancelled` counts as terminal here for the same reason it does everywhere else
+# in this file, and it is the ENGINE's definition, not a local one:
+# TERMINAL_TASK_STATUSES in forge-control/src/lib/task-graph.ts is exactly
+# ["done","cancelled"]. Keep this predicate and that constant in step — if a third
+# terminal status is ever added there, a project full of it becomes invisible here
+# again, in precisely the way this section exists to stop.
+Q "select p.name,
+                count(*) filter (where t.status='done') as done,
+                count(*) filter (where t.status='cancelled') as cancelled,
+                round(extract(epoch from (now()-max(t.updated_at)))/3600) || 'h since last change' as idle
+         from projects p join project_tasks t on t.project_id = p.id
+         where p.status = 'active'
+         group by p.id, p.name
+         having count(*) filter (where t.status not in ('done','cancelled')) = 0
+            and count(*) filter (where t.status='done') > 0
+         order by p.name"
+[ -n "$out" ] && { echo "$out"; found=1; } || echo "none"
+
 section "ACTIVE, work queued, but NOTHING running and nothing started recently"
 Q "select p.name,
                 count(*) filter (where t.status in ('pending','ready')) as queued,
@@ -373,6 +480,127 @@ Q "select p.name,
             and count(*) filter (where t.status in ('pending','ready')) > 0
             and max(t.updated_at) < now() - interval '30 minutes'"
 [ -n "$out" ] && { echo "$out"; found=1; } || echo "none"
+
+# NOTE: this section's header is printed AFTER its query, because the header
+# carries the count. See the consumer-contract paragraph below for why the number
+# cannot live in the body.
+# Added 2026-08-26, and it is deliberately NOT a per-project check. Every section
+# above starts from a PROJECT and asks what is wrong with it. An idle fleet has no
+# such project — that is not a gap in any one query, it is a consequence of the
+# quantifier. A stall detector needs a stalled project; an empty fleet has none,
+# so ten sections can all be honestly empty while nothing whatsoever is being
+# worked on. This line asks the only question that survives that: HOW MANY OPEN
+# ROWS EXIST AT ALL.
+#
+# WHY IT SETS found=1 AND EXITS 1, WHICH IS THE WHOLE DECISION AND IS NOT
+# OBVIOUS: exit 0 from this script means "clear — no silently stopped projects",
+# and a supervisor (human or cron wrapper) reading exit 0 concludes the fleet is
+# healthy. When the queue is empty that conclusion is exactly backwards, and it is
+# the precise failure this section exists to end — on 2026-08-24 this blindness
+# let the fleet run ONE task in twelve hours, and on 2026-08-25/26 it hid a fleet
+# that had had nothing to do since 16:25Z. An idle fleet is not a healthy fleet;
+# it is the most expensive state the fleet has, because nothing announces it and
+# every other alarm is silent by construction. So it must be loud AND it must
+# change the exit code, since half the readers of this script never see stdout.
+# The cost of the choice, stated rather than hidden: a legitimately drained fleet
+# — everything genuinely shipped, nothing queued yet — also exits 1. That is
+# correct. "Nothing is queued" is a state that always wants a human decision,
+# even when the reason is good news.
+#
+# It is also the BACKSTOP FOR THIS ENTIRE FILE. The section above it is stated in
+# terms of one specific shape (active + all rows terminal). This one is not stated
+# in terms of any shape at all, so it fires for causes nobody has thought of yet:
+# every project closed and none seeded, the dispatcher wedged, a promoter that
+# stopped promoting, or a bug of a kind this file has no section for.
+#
+# THE BODY CONVENTION IS NOT A STYLE RULE HERE — IT IS A CONSUMER CONTRACT, and
+# this section is shaped by it. `count(*)` always returns exactly one row, so
+# `out` is never empty and the alarm condition is the VALUE ZERO rather than the
+# absence of rows; the obvious body — printing "N open rows" every run — cannot be
+# used. scripts/ops/fleet-pulse.sh reads THIS SCRIPT'S STDOUT and walks it with
+# awk (`$0 == "none" { next }`), treating EVERY other body line under a `== ... ==`
+# header as a finding worth a Telegram escalation. Measured 2026-08-26 01:1xZ by
+# running fleet-pulse.sh's own awk over a healthy report:
+#   FLEET-WIDE OPEN WORK ... :: 7 open rows across active projects
+# — a false alarm, on a fleet with seven live rows, on EVERY pulse. A detector
+# that escalates on its good news gets muted, and then misses the real one. So:
+# the count goes in the SECTION HEADER (always visible when a human runs this
+# script, and in the log fleet-pulse appends verbatim), the body says "none" when
+# there is work, and the ONLY body line that ever appears is the alarm itself.
+#
+# For the same reason the alarm is ONE line, not three: fleet-pulse truncates the
+# finding list with `head -4 | cut -c1-110` before it builds the Telegram text, so
+# a three-line alarm would eat three of the four slots and push out whatever else
+# had gone wrong. Front-load it and let the rest of the sentence be cut.
+#
+# The non-numeric case is treated the way Q() treats a failed query — a broken
+# detector, exit 2, never a clean fleet.
+#
+# CONTROLLED BY FILTER INVERSION on live data (this file's convention), measured
+# 2026-08-26 00:56Z against content_forge:
+#   NEGATIVE   — as written: 7. Does not fire, correctly: this very project held
+#                6 open rows at the time and aios-takeover-usable held 1. NOTE
+#                WHAT THAT MEANS — the zero condition is NOT live-observable from
+#                inside a run of this project, because the run is itself open work.
+#                It was 0 at 2026-08-26 ~02:00Z as measured by the supervisor,
+#                before this lane was seeded. Hence the constructed proof below;
+#                a green run here is evidence of nothing on its own.
+#   POSITIVE A — drop `p.status = 'active'`: 8. One open row lives under a project
+#                that is not active, and counting it would mask an idle fleet with
+#                work that cannot possibly run (promoteReadyTasks() will not
+#                advance a non-active project). The term is live and load-bearing.
+#   POSITIVE B — drop `t.status in ('pending','ready','running')`: 144. Without it
+#                this counts every row the fleet has ever had, done ones included,
+#                and could never reach 0 while any project exists. The term is live.
+#   BITE PROOF — built in a scratch database via STALLED_PROJECTS_DB_URL and the
+#                WHOLE SCRIPT run against it, 2026-08-26 01:0xZ:
+#                  FIRES     — every active project all-terminal: printed
+#                              "THE FLEET HAS NOTHING QUEUED — 0 open rows", exit 1.
+#                  SILENT    — one `pending` row added to one project: header
+#                              "== FLEET-WIDE OPEN WORK: 1 open row across all
+#                              active projects ==", body "none", alarm did not
+#                              fire.
+#                The second run is the control: a line that fires unconditionally
+#                is indistinguishable from a typo.
+#   CONTRACT   — both runs also put through fleet-pulse.sh's OWN awk, since that
+#                is the real consumer and the reason for the shape above:
+#                  idle scratch fleet -> exactly ONE finding, the alarm, and it
+#                    still reads correctly after fleet-pulse's `cut -c1-110`.
+#                  live fleet, 7 open rows -> ZERO findings from this section.
+#                Re-run that pair after ANY edit to the body below. Getting it
+#                wrong does not break this script — it quietly turns the fleet's
+#                Telegram alarm into noise, which is worse.
+#   ISOLATION  — the run that matters most, same scratch fleet, arranged so that
+#                ALL ELEVEN other sections print `none` (two fixture projects
+#                closed, the third active with only cancelled rows so even the
+#                section above it is empty). Output: every section `none`, then
+#                this line firing, exit 1. found=1 came from HERE and nowhere else.
+#   RED/GREEN  — and the same idle scratch fleet through the detector AS IT SHIPS
+#                ON main (`git show main:scripts/ops/stalled-projects.sh`):
+#                  clear — no silently stopped projects.       EXIT 0
+#                That is the bug, reproduced on demand: a fleet with zero queued
+#                work reported as healthy, by a detector working exactly as
+#                designed. Re-run that pair before trusting any change to this
+#                section — it is the only evidence that distinguishes this line
+#                from decoration.
+Q "select count(*)
+         from projects p join project_tasks t on t.project_id = p.id
+         where p.status = 'active'
+           and t.status in ('pending','ready','running')"
+case "$out" in
+  ''|*[!0-9]*)
+    printf 'FATAL: fleet-open count returned "%s", which is not a number. The query shape changed.\n' "$out" >&2
+    printf 'FATAL: this is a BROKEN DETECTOR, not an idle fleet — same reasoning as Q() exit 2.\n' >&2
+    exit 2 ;;
+esac
+[ "$out" -eq 1 ] && row_word="row" || row_word="rows"
+section "FLEET-WIDE OPEN WORK: $out open $row_word across all active projects"
+if [ "$out" -eq 0 ]; then
+  echo "THE FLEET HAS NOTHING QUEUED — 0 open rows (pending/ready/running) across every active project. Nothing is stalled because nothing is running; every section above is empty BY CONSTRUCTION, and a clear report here would have meant the opposite of what it says. Seed work or close finished projects."
+  found=1
+else
+  echo "none"
+fi
 
 printf '\n'
 if [ "$found" -eq 1 ]; then

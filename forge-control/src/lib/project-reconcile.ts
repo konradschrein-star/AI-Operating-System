@@ -48,6 +48,7 @@
 import type { ProjectStatus, TaskRole, TaskStatus } from "../db/projects.ts";
 import type { RunStatus } from "../db/runs.ts";
 import type { GraphTask } from "./task-graph.ts";
+import { MAIN_WORKSTREAM } from "./task-graph.ts";
 
 /* ------------------------------------------------------------------------- *
  * Verdict roles
@@ -83,17 +84,22 @@ export function isVerdictRole(role: TaskRole): role is VerdictRole {
  * ------------------------------------------------------------------------- */
 
 /**
- * The workstream every task carries until a planner says otherwise — the
- * schema default (`workstream text NOT NULL DEFAULT 'main'`, migration 0040)
- * and the value every row written before that migration has.
+ * The workstream every task carries until a planner says otherwise.
  *
- * It is a NAMED CONSTANT rather than a bare literal because three unrelated
- * rules key on "is this the default workstream?": `chainKeys`'s byte-identical
- * historical form (R41), the notification's byte-identical historical text
- * (R45), and the log label. A future rename would have to move all three
- * together, and a literal in three places is how two of them get missed.
+ * IT IS DEFINED IN `lib/task-graph.ts` AND RE-EXPORTED HERE, 2026-08-26 — the
+ * reasoning is at its new site. In one line: R70's `unintegratedWorkstreams()`
+ * moved into that pure leaf so a harness can call it without `project-tick.ts`'s
+ * `db/*` and `node:fs` imports, it reads this constant, and `task-graph.ts` may
+ * not import upward for the same NF3 reason `TERMINAL_TASK_STATUSES` inverted.
+ *
+ * The re-export is deliberate rather than a courtesy: every caller in the tree
+ * imports `MAIN_WORKSTREAM` from THIS module (`project-tick.ts`,
+ * `project-tick.test.ts`, `cp2-reconciler-interaction.test.ts`, and the three
+ * title builders below), and moving a constant is not a reason to touch six
+ * files. A re-export adds no module edge — this module's only other reference to
+ * `task-graph.ts` is a type import, which erases.
  */
-export const MAIN_WORKSTREAM = "main";
+export { MAIN_WORKSTREAM };
 
 /**
  * The consolidation group key (R40) — the ONE place `(round, workstream)` is
