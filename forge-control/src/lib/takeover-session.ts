@@ -23,7 +23,8 @@
  * read-modify-write behind a per-profile queue and land by atomic rename, so
  * `first_connect_at` and `connects` survive a forge-control restart while
  * `connected` — which only this process can know — is rebuilt from the
- * in-memory set on the first write after boot.
+ * in-memory set at boot (`reconcileActivityAtBoot`, called from index.ts) and
+ * on every write after it.
  *
  * `stateRoot` is a parameter everywhere, resolved through `getStateRoot()` AT
  * CALL TIME. Never capture it at module scope: tests repoint STATE_ROOT, and a
@@ -43,7 +44,7 @@
  * this process pipes and never parses; this module sees jtis and timestamps.
  */
 
-import { promises as fs } from "node:fs";
+import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -309,6 +310,112 @@ export async function recordDisconnect(
     await writeActivityAtomic(filePath, next);
     return next;
   });
+}
+
+/* ---------------------------------------------------------------------------
+ * Boot reconcile — the ghost-socket reset.
+ * ------------------------------------------------------------------------- */
+
+export interface BootReconcileResult {
+  /** Profiles whose file claimed sockets this process does not hold; rewritten. */
+  reset: string[];
+  /** Profiles whose file already agreed with memory (or had no file); untouched. */
+  untouched: string[];
+  /** Profiles whose file could not be read or rewritten — named, never fatal. */
+  errors: { profile: string; message: string }[];
+}
+
+/**
+ * Called ONCE from index.ts right after the server starts listening.
+ *
+ * WHY THIS EXISTS. A process that has just started holds zero sockets by
+ * definition, but the activity file still says what the PREVIOUS process knew
+ * — `connected: 2` if two viewers were open when it died. recordConnect and
+ * recordDisconnect rebuild `connected` from memory, so the file corrects itself
+ * on the next write; but the reset is WRITE-triggered, not BOOT-triggered. If
+ * nobody reconnects there is no write, the ghost count lives forever, and the
+ * supervisor in research-browser.mjs keeps pushing the idle deadline against
+ * sockets that do not exist (its rule 1: connected > 0 ⇒ never idle). Only the
+ * 2 h cap from first_connect_at would end that session.
+ *
+ * This is not a rare edge case. pm2 shows forge-control at 114 restarts with
+ * `unstable_restarts=0` on every service — these are DELIBERATE DEPLOYS, not
+ * crashes, and every one of them resets every open takeover socket because
+ * the pipe lives in this process. It fires at deploy cadence, forever. The
+ * 2 h cap must be the backstop, never the primary path; this reconcile is
+ * what makes the idle clock the primary path again after a deploy.
+ *
+ * What it does, per profile directory under `stateRoot`:
+ *   - no activity file, or `connected` already equals this process's live
+ *     count → untouched (a file with connected:0 is left byte-identical).
+ *   - otherwise → rewrite with `connected` = live count (0 at boot, or the
+ *     truth if an upgrade already landed — the write sits in the same
+ *     per-file queue as recordConnect, so a race resolves in file order and a
+ *     socket accepted during the sweep is never zeroed), `written_at` = now,
+ *     and `last_disconnect_at` = now. The last is deliberate: the ghost
+ *     sockets DID disconnect — when the old process died, which is no later
+ *     than this boot — and the supervisor's rule 2 arms the idle grace from
+ *     `last_disconnect_at + grace`. Stamping boot time starts that grace now,
+ *     instead of leaving a null (no rule fires, the deadline stays wherever
+ *     the last tick pushed it) or a stale value from before the last connect.
+ *     `first_connect_at`, `last_connect_at` and `connects` are preserved: the
+ *     takeover cap's origin and the cumulative count outlive the restart.
+ *
+ * A directory that is not a profile (fails PROFILE_RE), a file that is
+ * malformed, or a write that fails is reported in `errors` and skipped — one
+ * bad profile must not stop the others being reconciled, and nothing here may
+ * ever prevent forge-control from booting. A missing `stateRoot` is an empty
+ * sweep, not an error: a box that never ran a takeover has no state tree.
+ *
+ * Activity files hold jtis-free counters and timestamps only; nothing here
+ * can see, and so nothing here logs, user-typed text.
+ */
+export async function reconcileActivityAtBoot(
+  options: ActivityOptions = {},
+): Promise<BootReconcileResult> {
+  const stateRoot = options.stateRoot ?? getStateRoot();
+  const nowIso = (options.now ?? new Date()).toISOString();
+  const result: BootReconcileResult = { reset: [], untouched: [], errors: [] };
+
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(stateRoot, { withFileTypes: true });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return result;
+    throw new Error(`cannot list ${stateRoot}: ${(err as Error).message}`);
+  }
+
+  const profiles = entries
+    .filter((e) => e.isDirectory() && PROFILE_RE.test(e.name))
+    .map((e) => e.name)
+    .sort();
+
+  await Promise.all(
+    profiles.map(async (profile) => {
+      const filePath = activityPath(profile, stateRoot);
+      try {
+        const outcome = await serialised(filePath, async (): Promise<"reset" | "untouched"> => {
+          const previous = await readActivity(profile, stateRoot);
+          if (previous === null) return "untouched";
+          const live = liveSocketCount(profile);
+          if (previous.connected === live) return "untouched";
+          const next: TakeoverActivity = {
+            ...previous,
+            connected: live,
+            last_disconnect_at: nowIso,
+            written_at: nowIso,
+          };
+          await writeActivityAtomic(filePath, next);
+          return "reset";
+        });
+        result[outcome].push(profile);
+      } catch (err: unknown) {
+        result.errors.push({ profile, message: (err as Error).message ?? String(err) });
+      }
+    }),
+  );
+
+  return result;
 }
 
 /* ---------------------------------------------------------------------------

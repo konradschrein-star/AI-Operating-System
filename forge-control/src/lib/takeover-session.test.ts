@@ -25,6 +25,7 @@ import {
   readActivity,
   recordConnect,
   recordDisconnect,
+  reconcileActivityAtBoot,
   liveSocketCount,
   liveSocketJtis,
   resetLiveSocketsForTests,
@@ -214,6 +215,99 @@ describe("recordConnect / recordDisconnect — the file shape contract", () => {
     await assert.rejects(() => recordDisconnect("p5", "never", { stateRoot, now: NOW }), /not recorded as connected/);
     await recordDisconnect("p5", "dup", { stateRoot, now: NOW });
     await assert.rejects(() => recordDisconnect("p5", "dup", { stateRoot, now: NOW }), /not recorded as connected/);
+  });
+});
+
+describe("reconcileActivityAtBoot — the ghost-socket reset is BOOT-triggered, not write-triggered", () => {
+  // The gap this closes: recordConnect/recordDisconnect rebuild `connected`
+  // from memory, but only when they run. After a deploy (every forge-control
+  // restart is one — 114 restarts, unstable_restarts=0) with nobody
+  // reconnecting, no write ever happens and the file's connected>0 is a ghost
+  // the supervisor treats as "never idle". Each case here does NO connect or
+  // disconnect between writing the file and asserting on it.
+  let stateRoot: string;
+  const BOOT = new Date("2026-08-26T04:00:00.000Z");
+  const stale: TakeoverActivity = {
+    connected: 2,
+    connects: 5,
+    first_connect_at: "2026-08-26T01:00:00.000Z",
+    last_connect_at: "2026-08-26T01:20:00.000Z",
+    last_disconnect_at: "2026-08-26T01:10:00.000Z",
+    written_at: "2026-08-26T01:20:00.000Z",
+  };
+  function seed(profile: string, activity: TakeoverActivity | string): void {
+    mkdirSync(path.join(stateRoot, profile), { recursive: true });
+    writeFileSync(activityPath(profile, stateRoot), typeof activity === "string" ? activity : JSON.stringify(activity));
+  }
+
+  before(() => {
+    stateRoot = mkdtempSync(path.join(tmpdir(), "takeover-session-boot-"));
+  });
+  after(() => rmSync(stateRoot, { recursive: true, force: true }));
+  beforeEach(() => resetLiveSocketsForTests());
+
+  test("connected:2 on disk, boot, no connect in between → connected:0; first_connect_at and connects unchanged", async () => {
+    seed("ghost", stale);
+    const result = await reconcileActivityAtBoot({ stateRoot, now: BOOT });
+    assert.deepEqual(result.reset, ["ghost"]);
+    assert.deepEqual(result.errors, []);
+    const file = readFile(activityPath("ghost", stateRoot));
+    assert.equal(file.connected, 0, "a process that just started holds zero sockets");
+    assert.equal(file.first_connect_at, stale.first_connect_at, "the takeover cap's origin survives");
+    assert.equal(file.connects, stale.connects, "the cumulative count survives");
+    assert.equal(file.last_connect_at, stale.last_connect_at);
+    // The ghosts DID disconnect — when the old process died, no later than
+    // boot — and the supervisor arms its idle grace from this timestamp.
+    assert.equal(file.last_disconnect_at, BOOT.toISOString(), "idle grace is armed from boot, not from a stale value");
+    assert.equal(file.written_at, BOOT.toISOString());
+    assert.deepEqual(Object.keys(file).sort(), ["connected", "connects", "first_connect_at", "last_connect_at", "last_disconnect_at", "written_at"]);
+  });
+
+  test("a file that already says connected:0 is left byte-identical; no file at all is untouched", async () => {
+    const clean = { ...stale, connected: 0 };
+    seed("quiet", clean);
+    mkdirSync(path.join(stateRoot, "never-connected"), { recursive: true });
+    const before = readFileSync(activityPath("quiet", stateRoot), "utf8");
+    const result = await reconcileActivityAtBoot({ stateRoot, now: BOOT });
+    assert.ok(result.untouched.includes("quiet"));
+    assert.ok(result.untouched.includes("never-connected"));
+    assert.ok(!result.reset.includes("quiet"));
+    assert.equal(readFileSync(activityPath("quiet", stateRoot), "utf8"), before, "no churn on a clean file");
+    assert.equal(existsSync(activityPath("never-connected", stateRoot)), false, "reconcile never creates a file");
+  });
+
+  test("an upgrade accepted while the sweep runs is never zeroed — the write shares recordConnect's queue", async () => {
+    seed("racing", stale);
+    const sweep = reconcileActivityAtBoot({ stateRoot, now: BOOT });
+    const connect = recordConnect("racing", "boot-jti", { stateRoot, now: new Date(BOOT.getTime() + 5) });
+    await Promise.all([sweep, connect]);
+    const file = readFile(activityPath("racing", stateRoot));
+    assert.equal(file.connected, 1, "the live socket survives the boot reset");
+    assert.equal(file.connects, stale.connects + 1);
+    assert.equal(file.first_connect_at, stale.first_connect_at);
+    await recordDisconnect("racing", "boot-jti", { stateRoot, now: BOOT });
+  });
+
+  test("one malformed file is named in errors and does not stop the others being reset; boot never throws", async () => {
+    seed("broken", "{not json");
+    seed("also-ghost", stale);
+    const result = await reconcileActivityAtBoot({ stateRoot, now: BOOT });
+    assert.ok(result.reset.includes("also-ghost"));
+    assert.equal(result.errors.length, 1);
+    assert.equal(result.errors[0].profile, "broken");
+    assert.match(result.errors[0].message, /broken\/takeover-activity\.json is not JSON/);
+    assert.equal(readFile(activityPath("also-ghost", stateRoot)).connected, 0);
+  });
+
+  test("a state root that does not exist yet is an empty sweep, not an error", async () => {
+    const result = await reconcileActivityAtBoot({ stateRoot: path.join(stateRoot, "no-such-tree"), now: BOOT });
+    assert.deepEqual(result, { reset: [], untouched: [], errors: [] });
+  });
+
+  test("index.ts calls it at boot — a reconcile nothing invokes is the write-triggered gap all over again", () => {
+    const indexSource = readFileSync(path.resolve(process.cwd(), "src/index.ts"), "utf8");
+    assert.match(indexSource, /import \{ reconcileActivityAtBoot \} from "\.\/lib\/takeover-session\.ts"/);
+    assert.match(indexSource, /^reconcileActivityAtBoot\(\)/m, "must be called at module top level, not inside a handler");
   });
 });
 
