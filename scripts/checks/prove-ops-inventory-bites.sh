@@ -125,9 +125,33 @@ echo "$out2d" | grep -q "SKIP: no $SCRATCH/nowhere" || \
 [ "$code2d" = 0 ] || inert "a missing TARGET_DIR should skip, not fail (exit $code2d)"
 
 echo
+echo "-- 2e. the LISTING itself fails — must SKIP loudly, never pass silently"
+# This box runs everything as root, so an unreadable directory is unreachable:
+# root reads it anyway. Left uncontrolled, the branch that handles a failed
+# listing would be an assertion nobody can reach — the same defect the loud
+# SKIP exists to avoid. So reach it the other way the comment names: a `find`
+# that is not GNU find, or not there at all. A stub earlier in PATH exits 3;
+# every other tool the check uses still resolves normally.
+STUBBIN="$SCRATCH/stubbin"
+mkdir -p "$STUBBIN"
+printf '#!/usr/bin/env bash\necho "find: simulated failure" >&2\nexit 3\n' > "$STUBBIN/find"
+chmod 755 "$STUBBIN/find"
+printf '#!/usr/bin/env bash\necho rogue\n' > "$SCRATCH/rogue-watchdog.sh"
+out2e="$(PATH="$STUBBIN:$PATH" FORGE_OPS_TARGET_DIR="$SCRATCH" "$CHECK" 2>&1)"; code2e=$?
+echo "$out2e" | grep -E 'SKIP: could not list' || true
+echo "EXIT=$code2e"
+echo "$out2e" | grep -q 'SKIP: could not list .* the reverse-inventory question was NOT answered' || \
+  inert "a failed listing did not SKIP loudly — an unlistable TARGET_DIR reports PASS for a directory nobody looked in"
+echo "$out2e" | grep -q 'unmanaged regular file' && \
+  inert "a failed listing still claimed to have inspected the directory"
+rm -f "$SCRATCH/rogue-watchdog.sh"
+rm -rf "$STUBBIN"
+
+echo
 if [ "$verdict" = 0 ]; then
   echo "BITES — a lost exec bit FAILs, an unmanaged regular file in TARGET_DIR FAILs and is named,"
-  echo "        an installed symlink and a *.bak-* backup do not, and a missing TARGET_DIR SKIPs loudly."
+  echo "        an installed symlink and a *.bak-* backup do not, and a TARGET_DIR that is missing"
+  echo "        or cannot be listed SKIPs loudly instead of passing."
 else
   echo "INERT — at least one assertion did not discriminate; see the lines above."
 fi

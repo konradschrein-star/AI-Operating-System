@@ -175,14 +175,24 @@ elif [ -f "$OPS/install-symlinks.sh" ]; then
   # made them in place by hand (check-vps2-backup.sh.bak-20260806-premonitorkey,
   # safe-restart.sh.bak-20260818). Allow the suffix, not arbitrary names, so a
   # dropped script still has to be named like a backup to hide here.
+  # If the listing itself fails (unreadable dir, no GNU find) we cannot answer
+  # the question — say so loudly. Swallowing find's stderr and iterating an
+  # empty list would report PASS for a directory nobody actually looked in,
+  # which is the failure this whole assertion exists to end.
+  listing="$(find "$TARGET_DIR" -maxdepth 1 -type f -printf '%f\n' 2>&1 | sort)"
+  find_rc=$?
   unmanaged=""
+  if [ "$find_rc" != 0 ]; then
+    skip "could not list $TARGET_DIR (find exited $find_rc) — the reverse-inventory question was NOT answered: $listing"
+  else
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in
       *.bak-*|*-preinstall|*.bak) continue ;;
     esac
     printf '%s\n' "$managed" | grep -qxF "$f" || unmanaged="$unmanaged $f"
-  done <<< "$(find "$TARGET_DIR" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort)"
+  done <<< "$listing"
+  fi
   if [ -n "$unmanaged" ]; then
     bad "unmanaged regular file(s) in $TARGET_DIR — present on this box but in no commit, so backed up by nothing:$unmanaged"
     echo "       fix: copy each into scripts/ops/, add it to install-symlinks.sh FILES, then re-run install-symlinks.sh from the live checkout" >&2
