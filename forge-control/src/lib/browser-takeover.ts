@@ -16,6 +16,10 @@ import { createConnection } from "node:net";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import pg from "pg";
+// Cycle with takeover-session.ts (it imports getStateRoot/isPidAlive/PROFILE_RE
+// back). Safe only because both sides use the other's exports inside function
+// bodies, never at module scope — see the header comment there.
+import { recordConnect, recordDisconnect } from "./takeover-session.ts";
 
 import {
   verifyTakeoverTicket,
@@ -112,12 +116,33 @@ export interface ProfileTakeover {
   supervisor_pid?: number | null;
 }
 
+/**
+ * `.state/<profile>/session.json`, written by the supervisor in
+ * research-browser.mjs. The deadlines are ISO strings on disk (the old
+ * `number` type here was never what the file held). `takeover_deadline`,
+ * `takeover_started_at` and `connected` are added by the browser workstream;
+ * absent means "supervisor predates them" and every reader treats that as null.
+ */
 export interface ProfileSession {
   pid?: number;
   display?: string;
   displayNum?: number;
   started_at?: string;
-  idle_deadline?: number;
+  idle_deadline?: string | number | null;
+  hard_deadline?: string | number | null;
+  takeover_deadline?: string | number | null;
+  takeover_started_at?: string | null;
+  connected?: number;
+}
+
+/** ISO string or epoch ms → epoch ms; null for absent or unparseable. */
+export function deadlineToMs(value: string | number | null | undefined): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
 }
 
 export interface BrowserState {
@@ -450,7 +475,8 @@ export async function resolveBrowserState(
 
   let sessionLive = false;
   if (profileSession) {
-    sessionLive = isPidAlive(profileSession.pid) || (profileSession.idle_deadline !== undefined && profileSession.idle_deadline > Date.now());
+    const idleMs = deadlineToMs(profileSession.idle_deadline);
+    sessionLive = isPidAlive(profileSession.pid) || (idleMs !== null && idleMs > Date.now());
   }
 
   // Check screenshot labels in upload directory for login wall indicators
@@ -888,13 +914,40 @@ export function resolveTakeoverUpgradeTarget(
  * nginx carries `/api/browser-takeover/ws/` straight to 127.0.0.1:7700 from its
  * own `location` block, bypassing Next entirely. See PLAN.md.
  */
+/**
+ * Which half of the pipe went away first, by TCP: the first FIN, reset or
+ * error names the side. That is exact for an abrupt loss — a phone's browser
+ * vanishing, a forge-control deploy resetting websockify — which is the case
+ * tonight's forensics needed. It is NOT the WebSocket-level initiator: a
+ * graceful close handshake started by the client ends with websockify closing
+ * TCP first, so that reads `by=upstream`. Naming the true initiator would
+ * mean parsing the frames this process deliberately never parses.
+ */
+export type TakeoverCloseSide = "client" | "upstream";
+
+export interface ProxyTakeoverUpgradeHooks {
+  /**
+   * Fired EXACTLY ONCE, the first time either socket ends, closes or errors,
+   * or the upstream handshake fails outright. Never receives payload bytes.
+   */
+  onClose?: (by: TakeoverCloseSide) => void;
+}
+
 export function proxyTakeoverUpgrade(
   req: IncomingMessage,
   clientSocket: Duplex,
   head: Buffer,
   targetPort: number,
   subpath: string,
+  hooks: ProxyTakeoverUpgradeHooks = {},
 ): void {
+  let closed = false;
+  const closeOnce = (by: TakeoverCloseSide): void => {
+    if (closed) return;
+    closed = true;
+    hooks.onClose?.(by);
+  };
+
   const cleanSubpath = subpath.replace(/^\/+/, "") || "websockify";
   const rawUrl = req.url ?? "/";
   const qIndex = rawUrl.indexOf("?");
@@ -927,8 +980,21 @@ export function proxyTakeoverUpgrade(
     if (proxyHead && proxyHead.length > 0) clientSocket.write(proxyHead);
     if (head && head.length > 0) proxySocket.write(head);
 
-    proxySocket.on("error", () => clientSocket.destroy());
-    clientSocket.on("error", () => proxySocket.destroy());
+    proxySocket.on("error", () => {
+      closeOnce("upstream");
+      clientSocket.destroy();
+    });
+    clientSocket.on("error", () => {
+      closeOnce("client");
+      proxySocket.destroy();
+    });
+    // 'end' (peer FIN) precedes 'close', and 'close' follows 'error', so
+    // closeOnce's guard decides the side: whichever event arrived first names
+    // the culprit. pipe() forwards one side's end to the other, which is why
+    // the originating side's 'end' has to be the one that counts. The client's
+    // own listeners are registered once, below, for every phase.
+    proxySocket.on("end", () => closeOnce("upstream"));
+    proxySocket.on("close", () => closeOnce("upstream"));
     proxySocket.pipe(clientSocket);
     clientSocket.pipe(proxySocket);
   });
@@ -938,8 +1004,14 @@ export function proxyTakeoverUpgrade(
       `[browser-takeover] upgrade proxy to 127.0.0.1:${targetPort} failed:`,
       (err as Error).message ?? err,
     );
+    closeOnce("upstream");
     clientSocket.destroy();
   });
+
+  // The client can hang up while the upstream handshake is still in flight;
+  // without this the record would stay "connected" until proxyReq times out.
+  clientSocket.on("end", () => closeOnce("client"));
+  clientSocket.on("close", () => closeOnce("client"));
 
   proxyReq.end();
 }
@@ -1011,6 +1083,37 @@ export async function handleBrowserTakeoverUpgrade(
     return true;
   }
 
+  // The record comes BEFORE the pipe. The supervisor's idle and cap clocks
+  // read takeover-activity.json; a socket opened without a record is a session
+  // nothing will ever end, which is the silent death this whole change is
+  // about. So an unwritable state dir refuses the socket — 503, and the
+  // operator sees it in the error log. The jti was consumed by
+  // resolveTakeoverUpgradeTarget above and stays consumed: the client re-mints,
+  // which is what it does on every reconnect anyway.
+  const stateRoot = getStateRoot();
+  const acceptedAt = Date.now();
+  try {
+    await recordConnect(target.profile, target.jti, { stateRoot, now: new Date(acceptedAt) });
+  } catch (err: unknown) {
+    console.error(
+      `[browser-takeover] activity_unwritable profile=${target.profile} jti=${target.jti}:`,
+      (err as Error).message ?? err,
+    );
+    logTakeoverUpgrade("rejected", {
+      runId: target.runId,
+      profile: target.profile,
+      port: target.targetPort,
+      jti: target.jti,
+      reason: "activity_unwritable",
+      status: 503,
+    });
+    socket.end(
+      `HTTP/1.1 503 ${UPGRADE_STATUS_TEXT[503]}\r\n` +
+        `Content-Type: text/plain\r\nConnection: close\r\n\r\nTakeover activity record is unwritable`,
+    );
+    return true;
+  }
+
   logTakeoverUpgrade("accepted", {
     runId: target.runId,
     profile: target.profile,
@@ -1020,6 +1123,22 @@ export async function handleBrowserTakeoverUpgrade(
   // Fixed subpath: the ticket route carries no path of its own, and websockify
   // is the only endpoint an upgrade ever needs. vnc.html and its assets are
   // plain HTTP and stay behind NextAuth via /api/proxy.
-  proxyTakeoverUpgrade(req, socket, head, target.targetPort, "websockify");
+  proxyTakeoverUpgrade(req, socket, head, target.targetPort, "websockify", {
+    onClose: (by) => {
+      const seconds = Math.round((Date.now() - acceptedAt) / 1000);
+      // One line per closed socket, jti only — the ticket is the credential
+      // and the bytes that crossed are Konrad's keystrokes. Neither is logged.
+      console.log(
+        `[browser-takeover] upgrade closed run=${target.runId} profile=${target.profile} ` +
+          `port=${target.targetPort} jti=${target.jti} seconds=${seconds} by=${by}`,
+      );
+      recordDisconnect(target.profile, target.jti, { stateRoot }).catch((err: unknown) => {
+        console.error(
+          `[browser-takeover] activity record failed on close profile=${target.profile} jti=${target.jti}:`,
+          (err as Error).message ?? err,
+        );
+      });
+    },
+  });
   return true;
 }
