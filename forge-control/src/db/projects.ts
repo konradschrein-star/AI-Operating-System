@@ -15,7 +15,8 @@
  * lib/task-graph.ts:
  *
  *  - `depends_on IS NOT NULL` — the GRAPH rule. Ready when every id it names
- *    belongs to a `done` task OF THE SAME PROJECT. `'{}'` names nothing, is
+ *    belongs to a TERMINAL task (`TERMINAL_TASK_STATUSES`: `done` or
+ *    `cancelled` — see `stillOpen()`) OF THE SAME PROJECT. `'{}'` names nothing, is
  *    trivially satisfied, and promotes immediately: an explicit root. `round` is
  *    not consulted, which is the entire point — a reviewer's 32 minutes no
  *    longer hold seven builders that never depended on it.
@@ -96,26 +97,26 @@ export type TaskStatus =
   | "cancelled";
 
 /**
- * The statuses that END a task's life. Written once, here, because until
- * 2026-08-25 it was written six times in SQL and every one of them said only
- * `'done'`.
- *
- * `cancelled` is terminal but is NOT success. The distinction is the whole
- * point of the status existing: a cancelled row must stop holding the graph
- * back (that is terminality), and must never be counted as work that happened
- * (that is not-success). So the two claims of achievement in this file —
+ * The statuses that END a task's life — DEFINED in lib/task-graph.ts and
+ * re-exported here, unchanged, so every importer that learned this name from
+ * this module keeps working. Read the reasoning there: `cancelled` is terminal
+ * but is NOT success, which is why the two claims of achievement in THIS file —
  * closeFinishedProjects() and roundIsComplete() — additionally require that at
- * least one row actually finished. A project whose every task was cancelled is
- * abandoned, not done, and saying "🏁 round complete" for a group nobody
- * carried is the same lie one scope down.
+ * least one row actually finished, on top of the not-still-open test.
  *
- * Before 0046_task_status_cancelled.sql the status was unwritable (the CHECK
- * constraint predated the type), so operators retired duplicate rows by setting
- * them `blocked` and renaming the title to `[RETIRED as duplicate] …`. A
- * `blocked` row is NOT terminal, so each one silently wedged every round above
- * it — `aios-goals-day-system` and `os-usable-for-work` both died that way.
+ * WHY THE DEFINITION MOVED DOWN (2026-08-25). It was born here, beside the SQL
+ * that consumes it, and `graphReady()` in lib/task-graph.ts went on comparing
+ * against the bare string `"done"` — so the promoter treated a cancelled
+ * dependency as satisfied while the pure rule DECLARED AUTHORITATIVE over it
+ * (see promoteReadyTasks()'s SQL MIRROR note) treated it as blocking. The two
+ * had to read one definition, and it could not be this one: lib/task-graph.ts
+ * may not value-import `db/*` (NF3 — a value import opens a pg Pool in a test
+ * process that runs with Postgres stopped), and since this module already
+ * value-imports `selectClaimable` from there over a module-scope `new Pool`,
+ * the reverse import would close a runtime ESM cycle. So the pure leaf owns it
+ * and this is a re-export: one definition, and NO new module edge.
  */
-export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = ["done", "cancelled"];
+export { TERMINAL_TASK_STATUSES } from "../lib/task-graph.ts";
 
 /** SQL predicate for "this row is still open", optionally table-qualified.
  *

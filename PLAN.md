@@ -1,81 +1,77 @@
-# aios-guardrail-hardening — plan (round 0)
+# aios-takeover-clipboard-bridge — plan (round 0)
 
-**Goal.** The PreToolUse(Bash) guard wired on 2026-08-25 must be under version control,
-tested against real fleet commands, closed to the quiet bypasses found in
-`docs/plan/aios-guardrail-hardening/00-findings.md`, and readable by Konrad when it fires.
+**Goal.** Provide two buttons in the takeover toolbar ("Paste to VM" and "Copy from VM") in `forge-control-web/app/takeover/[runId]/TakeoverClient.tsx` so Konrad can seamlessly move text between his local machine and the virtual desktop, with honest error handling and zero server routes. Additionally, make VM clipboard synchronization (`autocutsel`) and window manager ergonomics (openbox `menu.xml`) durable in `scripts/research-browser.mjs`.
 
 ## Recommendation
 
-Keep the architecture exactly as it is — a local classifier that asks the control plane,
-failing open — and fix the four things that make it a speed bump today:
+Implement a 100% client-side clipboard bridge inside `TakeoverClient.tsx` utilizing the same-origin noVNC iframe DOM, and harden the VM environment in `research-browser.mjs`:
 
-1. **Close the quiet door next to the loud one.** The ACK path pings Konrad; the
-   rule-toggle endpoint, the config-poisoning branch and trip self-resolve do not. Engine:
-   `enabled` means blocked whatever the config says; every rule change and trip resolve
-   writes `guardrail_rule_changes` and queues a Telegram line. Hook: an agent's curl at
-   `/api/autonomy/rules` or `/trips/*/resolve` is a local hard block — the console is
-   Konrad's surface.
-2. **One tokeniser, transparent wrappers, real paths.** `shlex` with `punctuation_chars`
-   replaces the regex split; `bash -c`/`sh -c`/`eval`/`xargs`/`nice`/`timeout`/`nohup`/
-   `docker exec`/`ssh <host>` are stepped through; git global options are parsed so
-   `git -C … push --force origin main` resolves to `main`, not `origin`; `+refspec`,
-   `--delete`, `--mirror`, `pm2 del`, docker volume verbs are added. Interpreter bodies,
-   redirections, `mv`, `git reset --hard` are rejected on purpose and written down.
-3. **Stop blocking the builder's own scratch.** Five of ten trips in 24h were false
-   positives and one left a scratch database behind. Routine = any routine path
-   *component*, relative targets under a routine cwd, inside-own-worktree paths,
-   `/opt/ai-os/scratch/`, self-created `mktemp -d`/`CREATE DATABASE` scratch, and
-   scratch-named databases. `/opt/ai-os/uploads/` and every worktree *root* stay guarded.
-4. **Make the audit log a thing someone reads.** `fleet-pulse.sh` gains a guardrail
-   section (trips, fail-opens, ACKs, hook registration per enabled account); logrotate
-   for the hook log; `agent` attributed by run role.
+1. **Local to Remote ("Paste to VM")**:
+   - Button click reads Konrad's local clipboard via `navigator.clipboard.readText()`.
+   - Directly sets value of `#noVNC_clipboard_text` textarea in `iframe.contentDocument`.
+   - Dispatches a bubbling `change` event on the textarea, triggering noVNC's `UI.clipboardSend()` -> `UI.rfb.clipboardPasteFrom(text)` without needing access to any unexported ES module globals.
+   - Provides clear feedback on success confirming character count: `"Pasted N chars to VM"`.
+   - **Honest error handling**: If `readText()` is denied or unsupported (e.g. Firefox or non-secure context), renders a visible small fallback textarea/popover where the user can paste manually and inject into the VM, or displays the exact permission error rather than silently failing.
 
-Plus what the findings make unavoidable: the hooks move into `scripts/ops/` behind the
-existing `install-symlinks.sh` pattern; the `/tmp` harness becomes
-`scripts/ops/test-guard-autonomy.py` (in-process classifier matrix + stub-API contract
-tests, never the live API) and a `gates-808.sh` line; an `install-hooks.sh` registers the
-hooks in every enabled `claude_accounts.config_dir`, because Claude Code reads
-`settings.json` from `CLAUDE_CONFIG_DIR` and today only `/root/.claude` carries them.
-A narrow PreToolUse(Write|Edit|MultiEdit) hook protects the guard's own live files and
-`settings.json` — the one non-Bash tool path a blocked agent would reach for first.
+2. **Remote to Local ("Copy from VM")**:
+   - Button click reads `#noVNC_clipboard_text` value from `iframe.contentDocument`.
+   - **Empty clipboard guard**: If textarea is empty, displays `"nothing in the VM clipboard yet"` and **never** overwrites Konrad's local clipboard with `""`.
+   - If non-empty: writes to local clipboard via `navigator.clipboard.writeText(value)` and confirms character count: `"Copied N chars from VM"`.
+   - Handles write permission denials gracefully.
 
-## What owns state · what dispatches · what fails how · how Konrad sees it
+3. **Zero Server Routes Added**:
+   - Strictly enforces the invariant that `/api/browser-takeover/` mounts nothing new. All clipboard bridge logic is contained entirely within the client-side component and iframe DOM.
 
-- State: `guardrail_rules` (Konrad's console) and `guardrail_trips` +
-  `guardrail_rule_changes` (append-only) in `content_forge`; the hook owns nothing.
-- Dispatch: Claude Code invokes both hooks in parallel before every Bash call of every
-  claude-code run; `agy` runs are **not covered** (research task decides what is possible;
-  GitHub branch protection on `main` is the recommended backstop regardless).
-- Failure: the hook fails open on every path (measured, table in the findings), logs
-  `fail-open`, and the pulse counts those lines — a control plane under load no longer
-  fails open in silence. Exit codes are 0/2 only.
-- Visibility: block → the agent's stderr and a trip row; ACK/rule change/trip resolve →
-  Telegram within a minute + inbox row; fleet pulse → daily counts and a registration check.
+4. **Session Quality & VM Durability**:
+   - `autocutsel`: Add to `TAKEOVER_BINARIES` (`/usr/bin/autocutsel`) and require in `assertTakeoverPrereqs()` (exit code 2 if missing). In `ensureTakeover()`, launch two detached instances per display (`-selection CLIPBOARD` and `-selection PRIMARY`), track PIDs in `takeover.json`, and clean up in `teardownTakeover()`.
+   - Openbox `menu.xml`: Ship `scripts/config/openbox/menu.xml` in repo and automatically install/sync to `~/.config/openbox/menu.xml` during session startup before Openbox launches.
 
-## Rejected alternatives
+## What owns state · What dispatches · What fails how · How Konrad sees it
 
-- Enforce inside forge-control instead of a hook — the API never sees a Bash command.
-- Block Write/Edit broadly (`/opt/forge-ai-os/**`) — a design decision for Konrad; asked
-  in the manager chat, default is the guard's own files only.
-- Inspect `python -c`/`node -e`/`psql -f` bodies — unbounded, and the false positives would
-  get the guard switched off, which the brief ranks as the larger risk.
-- Reintroduce any spend rule — forbidden by the brief.
-- A separate `guardrail_changes` UI surface — out of scope; the API field is additive.
+- **State**:
+  - Local clipboard: Browser runtime (`navigator.clipboard`).
+  - Remote clipboard: X11 selection buffer synced via `autocutsel` <-> `x11vnc` <-> `noVNC_clipboard_text` textarea in iframe.
+  - Toolbar state: React state in `TakeoverClient.tsx` (action status, feedback message, fallback prompt).
+- **Dispatch**:
+  - User click triggers async clipboard operations and DOM events across parent and iframe.
+- **Failures & Defenses**:
+  - Unloaded iframe / missing DOM: guarded with null checks on `contentDocument` and `#noVNC_clipboard_text`, displaying `"Viewer not ready"`.
+  - Browser permission denial / insecure context / Firefox: caught in try/catch, surfaces explicit error message and renders fallback paste box.
+  - Empty remote buffer: checks string length, reports `"nothing in the VM clipboard yet"`, leaves local clipboard intact.
+  - Missing `autocutsel` binary: `research-browser.mjs` exits code 2 naming missing binary.
+- **Visibility**:
+  - Character count confirmations appear inline in the toolbar upon successful transfers.
+  - Failures and fallback prompts appear directly in the toolbar.
+  - Verification screenshots captured in real browser harness and read back into chat.
 
-## Task graph
+## Rejected Alternatives
+
+- **Server-side clipboard proxy endpoint**: Rejected — violates security policy on `/api/browser-takeover/` and adds unnecessary server attack surface.
+- **Accessing `window.UI`**: Rejected — noVNC `app/ui.js` is an ES module (`export default UI`) and does not attach `UI` to `window`.
+- **Automatic background polling of clipboard**: Rejected — triggers continuous browser permission prompts and races user gestures.
+- **Overwriting local clipboard with empty string**: Rejected — corrupts user's existing clipboard contents.
+- **`autocutsel -fork`**: Rejected — breaks supervisor PID tracking and cleanup in `research-browser.mjs`.
+
+## Task Graph
 
 ```
-T1 researcher  agy/Gemini hook options + backstops                 depends []           junior   main
-T2 builder     test-guard-autonomy.py (RED on evasions at HEAD)     depends []           junior   main
-T5 builder     engine: default-branch, rule-change audit + ping     depends []           standard engine
-T3 builder     hooks into scripts/ops + hardened classifier +
-               guard-protected-paths + install-hooks + gate line    depends [T2]         standard main
-T6 builder     fleet-pulse guardrail section + logrotate            depends [T3]         junior   main
-T5i builder    integrate engine → main (stop on conflict)           depends [T5,T6]      junior   main
-T7 reviewer    whole diff: claims checked, tests proven to bite     depends [T1,T2,T3,T5,T5i,T6]  standard
-T8 builder     deploy: symlinks, hooks in every account dir,
-               migration, forge-control restart, live verify,
-               resolve stale test trips                             depends [T7]         standard main
+T1 builder (standard, main) ──┐
+  takeover-ui: clipboard      │
+  bridge in TakeoverClient    ├─► T3 builder (junior, main) ─────► T4 reviewer (standard, main)
+                              │     harness: E2E automated         review: diff review, gates,
+T2 builder (standard, main) ──┘     verification & screenshots     and visual evidence check
+  session-quality: autocutsel
+  & openbox menu.xml
 ```
 
-Evidence for every claim above: `docs/plan/aios-guardrail-hardening/00-findings.md`.
+1. **T1 (Builder, tier: standard, workstream: main)**:
+   - `write_set`: `["forge-control-web/app/takeover/[runId]/TakeoverClient.tsx"]`
+   - Implement "Paste to VM" and "Copy from VM" toolbar buttons, same-origin iframe communication, empty check guards, and honest error fallback UI.
+2. **T2 (Builder, tier: standard, workstream: main)**:
+   - `write_set`: `["scripts/research-browser.mjs", "scripts/config/openbox/menu.xml"]`
+   - Add `autocutsel` dual-selection startup, lifecycle tracking, exit 2 prereq check, and ship/install `menu.xml`.
+3. **T3 (Builder, tier: junior, workstream: main, depends_on: [T1, T2])**:
+   - `write_set`: `["scripts/checks/check-takeover-clipboard-e2e.ts"]`
+   - Implement automated Playwright E2E harness covering Paste, Copy, empty guard, permission fallback, and capture/read back screenshots.
+4. **T4 (Reviewer, tier: standard, workstream: main, depends_on: [T1, T2, T3])**:
+   - Review entire diff against requirements, zero-server-route invariant, typecheck, gates, and evidence.

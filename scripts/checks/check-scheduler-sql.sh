@@ -23,7 +23,15 @@
 #   10 — CROSS-PROJECT IDS. Neither dependency subquery was correlated on
 #        `project_id`, so another project's `done` row satisfied a dependency and
 #        another project's `pending` row stalled one forever, silently.
-# Every one of the four also asserts THE MIRROR (02-architecture.md §1.2): the
+# ROUND 2026-08-26 ADDED CASES 11 AND 11b (TERMINAL_TASK_STATUSES divergence):
+#   11  — CANCELLED DEPENDENCY (R11). `db/projects.ts` moved stillOpen() to
+#         exclude 'cancelled' rows as terminal; `graphReady()` previously checked
+#         only status !== "done". A candidate with a cancelled dependency promotes
+#         in SQL, and the mirror agrees.
+#   11b — CANCELLED LOWER ROUND (R69 straddle term). A graph_frozen candidate over
+#         a cancelled lower-round row is released by stillOpen() in SQL and by
+#         the pure mirror.
+# Every one of the cases also asserts THE MIRROR (02-architecture.md §1.2): the
 # `mirror` driver step loads the project's rows and calls the real `graphReady()`
 # on the same row, so "the pure side and the SQL agree" is a measurement here and
 # not a doc-comment's promise.
@@ -148,13 +156,14 @@ cd "$REPO_ROOT"
 
 # Every assertion this file defines. Kept in sync by hand and enforced at the
 # end: if the counter comes in lower, probes were skipped and the run FAILS.
-EXPECTED_ASSERTIONS=93
+EXPECTED_ASSERTIONS=106
 ASSERTIONS_RUN=0
 # Every row the seed inserts: 3 + 2 + 2 + 3 + 2 + 4 across cases 1–7, plus
-# 2 + 2 + 2 + 2 + 2 for cases 8, 8b, 9, 10 and case 10's foreign project.
+# 2 + 2 + 2 + 2 + 2 for cases 8, 8b, 9, 10 and case 10's foreign project, plus
+# 2 + 3 for cases 11 and 11b.
 # T3_GHOST and T8_GHOST are NOT among them — they are the ids cases 3 and 8 name
 # and nobody inserts. Guard against failure mode (a).
-SEED_EXPECTED_ROWS=30
+SEED_EXPECTED_ROWS=35
 
 pass() {
   ASSERTIONS_RUN=$((ASSERTIONS_RUN + 1))
@@ -332,6 +341,8 @@ P8B='00000000-0000-4000-8000-0000000000cb'  # R14 via an out-of-band 'ready' wri
 P9='00000000-0000-4000-8000-0000000000c9'   # R14, duplicated ids
 P10='00000000-0000-4000-8000-0000000000ca'  # R14/R27, cross-project ids
 P10F='00000000-0000-4000-8000-0000000000cf' # the FOREIGN project cases 10 names
+P11='00000000-0000-4000-8000-0000000000cc'  # R11 cancelled dep (round 2026-08-26)
+P11B='00000000-0000-4000-8000-0000000000cd' # R69 cancelled lower round (round 2026-08-26)
 
 T1_LOW='00000000-0000-4000-8000-00000000110a'   # graph, undrained, lower round
 T1_DEP='00000000-0000-4000-8000-00000000110b'   # graph, done, the real dependency
@@ -365,6 +376,11 @@ T10_CAND='00000000-0000-4000-8000-000000001a0c'   # names a FOREIGN done row
 T10_CAND2='00000000-0000-4000-8000-000000001a0d'  # names a FOREIGN pending row
 T10F_DONE='00000000-0000-4000-8000-000000001f0a'
 T10F_PENDING='00000000-0000-4000-8000-000000001f0b'
+T11_DEP='00000000-0000-4000-8000-000000001b0a'
+T11_CAND='00000000-0000-4000-8000-000000001b0c'
+T11B_LOW='00000000-0000-4000-8000-000000001c0a'
+T11B_DEP='00000000-0000-4000-8000-000000001c0b'
+T11B_CAND='00000000-0000-4000-8000-000000001c0c'
 
 psql_run -q >/dev/null <<SQL
 INSERT INTO projects (id, name, brief, repo, status) VALUES
@@ -381,6 +397,9 @@ INSERT INTO projects (id, name, brief, repo, status) VALUES
   ('$P8B','case8b-R14-outofband','synthetic','ai-os','paused'),
   ('$P9','case9-R14-duplicate','synthetic','ai-os','paused'),
   ('$P10','case10-R27-crossproject','synthetic','ai-os','paused'),
+  -- Cases 11 & 11b start PAUSED and activate in section 10.
+  ('$P11','case11-R11-cancelled-dep','synthetic','ai-os','paused'),
+  ('$P11B','case11b-R69-cancelled-straddle','synthetic','ai-os','paused'),
   -- Never activated: it exists only to own the rows case 10 points at from
   -- another project. Its own rows must not promote and must not be swept.
   ('$P10F','case10-foreign-project','synthetic','ai-os','paused');
@@ -490,9 +509,26 @@ INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, de
   ('$T10F_PENDING','$P10F',100,'builder','c10 foreign pending row','x','pending','{}','main','{}'),
   ('$T10_CAND','$P10',200,'reviewer','c10 candidate naming a foreign DONE row','x','pending','{$T10F_DONE}','main','{}'),
   ('$T10_CAND2','$P10',200,'reviewer','c10 candidate naming a foreign PENDING row','x','pending','{$T10F_PENDING}','main','{}');
+
+-- CASE 11 (R11 on CANCELLED dependency). The candidate's ONLY dependency has
+-- status 'cancelled'. The SQL promoter's stillOpen() treats 'cancelled' as
+-- terminal (NOT IN ('done','cancelled')), so the row promotes to ready.
+-- graphReady() mirrors this by checking TERMINAL_TASK_STATUSES.
+INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
+  ('$T11_DEP','$P11',100,'builder','c11 cancelled dependency','x','cancelled','{}','main','{}'),
+  ('$T11_CAND','$P11',200,'reviewer','c11 candidate with cancelled dep','x','pending','{$T11_DEP}','main','{}');
+
+-- CASE 11b (R69 straddle term over CANCELLED lower round). The candidate is
+-- graph_frozen with a done dependency at round 150, and a strictly lower-round
+-- row at round 100 is 'cancelled'. In SQL, stillOpen() does not hold on cancelled
+-- rows; graphReady()'s straddle loop likewise skips terminal rows.
+INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set, graph_frozen) VALUES
+  ('$T11B_LOW','$P11B',100,'builder','c11b lower-round cancelled row','x','cancelled','{}','main','{}',false),
+  ('$T11B_DEP','$P11B',150,'builder','c11b done dependency','x','done','{}','main','{}',false),
+  ('$T11B_CAND','$P11B',200,'reviewer','c11b frozen candidate over cancelled lower round','x','pending','{$T11B_DEP}','main','{}',true);
 SQL
 SEEDED="$(q 'SELECT count(*) FROM project_tasks')"
-echo "  seeded rows        : $SEEDED across 11 projects"
+echo "  seeded rows        : $SEEDED across 13 projects"
 assert_eq 'seed inserted exactly the rows the cases name' "$SEED_EXPECTED_ROWS" "$SEEDED"
 echo
 
@@ -918,6 +954,48 @@ assert_eq 'no corrupt row anywhere reached running' '0' \
 echo
 
 # ---------------------------------------------------------------------------
+# 10. CASES 11 & 11b — CANCELLED DEPENDENCIES AND STRADDLE (TERMINAL_TASK_STATUSES).
+#     Cases 11 and 11b are activated now, so every assertion above was measured
+#     against the same eleven-project world it was written for.
+# ---------------------------------------------------------------------------
+echo '--- 10. cases 11+11b: activate the two cancelled-status projects ----------------'
+psql_run -q >/dev/null <<SQL
+UPDATE projects SET status = 'active' WHERE id IN ('$P11','$P11B');
+SQL
+
+assert_eq 'case 11 premise: dependency is cancelled' 'cancelled' "$(st "$T11_DEP")"
+assert_eq 'case 11 premise: candidate is pending' 'pending' "$(st "$T11_CAND")"
+assert_eq 'case 11b premise: lower-round row is cancelled' 'cancelled' "$(st "$T11B_LOW")"
+assert_eq 'case 11b premise: candidate dependency is done' 'done' "$(st "$T11B_DEP")"
+assert_eq 'case 11b premise: candidate is pending and frozen' 'pending|true' \
+  "$(q "SELECT status || '|' || graph_frozen FROM project_tasks WHERE id = '$T11B_CAND'")"
+
+# THE MIRROR PROBES ARE TAKEN BEFORE THE TICK while candidate rows are still pending.
+MIRROR11="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T11_CAND" 2>/dev/null)"
+MIRROR11B="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T11B_CAND" 2>/dev/null)"
+
+snapshot "$WORK/s6.txt"
+DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" promote | sed 's/^/  | /'
+snapshot "$WORK/s7.txt"
+PROMOTED4="$(promoted "$WORK/s6.txt" "$WORK/s7.txt")"
+echo "  promoted on tick 4 : ${PROMOTED4:-<none>}"
+echo
+
+echo '--- 10. case 11 — R11: cancelled dependency satisfies the candidate ------------'
+assert_eq 'case 11: candidate with cancelled dependency PROMOTED' 'yes' "$(inset "$T11_CAND" "$PROMOTED4")"
+assert_eq 'case 11: candidate is now ready' 'ready' "$(st "$T11_CAND")"
+assert_has 'case 11 MIRROR: candidate took the graph branch' "$MIRROR11" 'MIRROR_RULE=graph'
+assert_has 'case 11 MIRROR: graphReady() releases candidate with cancelled dep' "$MIRROR11" 'MIRROR=true'
+echo
+
+echo '--- 10. case 11b — R69: cancelled lower-round row does not hold frozen candidate -'
+assert_eq 'case 11b: frozen candidate over cancelled lower round PROMOTED' 'yes' "$(inset "$T11B_CAND" "$PROMOTED4")"
+assert_eq 'case 11b: frozen candidate is now ready' 'ready' "$(st "$T11B_CAND")"
+assert_has 'case 11b MIRROR: frozen candidate took the graph branch' "$MIRROR11B" 'MIRROR_RULE=graph'
+assert_has 'case 11b MIRROR: graphReady() releases frozen candidate with cancelled lower round' "$MIRROR11B" 'MIRROR=true'
+echo
+
+# ---------------------------------------------------------------------------
 # 8. Did every probe actually fire? A sweep whose probes miss must fail, never
 #    certify itself (standing rule 3).
 # ---------------------------------------------------------------------------
@@ -950,4 +1028,6 @@ echo "       (R16/R17). Round 204: no route into 'running' survives a corrupt"
 echo "       depends_on — not promote, not retryTask, not an out-of-band 'ready'"
 echo "       write — a duplicated id is refused by BOTH sides, and a cross-project"
 echo "       id resolves to nothing in the SQL as well as in graphReady() (R27)."
+echo "       Round 2026-08-26: cancelled dependencies (R11) and lower-round cancelled"
+echo "       rows (R69 straddle) are recognized as terminal by SQL promoter and graphReady() (cases 11, 11b)."
 echo "       git $HEAD_SHA · sha256(projects.ts)=${SUBJECT_SHA256:0:16}… · db=$DB_NAME · schema=$SCHEMA"
