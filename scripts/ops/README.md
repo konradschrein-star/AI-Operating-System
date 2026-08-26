@@ -26,6 +26,11 @@ This directory is that history from now on.
 | `canvas` | CLI (Node) for scripted edits to Konrad's Excalidraw canvas via `forge-control`'s patch API. |
 | `deploy-goal-mode.sh`, `deploy-retier.sh` | One-shot deploy scripts from past rounds; kept for the record, safe to delete once their payload has long since shipped. |
 | `rebuild-web.sh` | Rebuilds + redeploys `forge-control-web` detached from the calling turn, so an interrupted turn can't leave `.next` half-written. |
+| `assert-merge-scope.sh` | Read-only: refuses a project merge that carries paths belonging to another lane, by checking `git diff base...head`. Never merges, checks out, or writes. |
+| `recover-stuck-task.sh` | Marks a `project_tasks` row done when it is capped at the attempt limit but its work is verifiably committed — the case `retry`/`unwedge` get wrong by re-running paid work. Dry-run by default; `--apply` is explicit and per-id. |
+| `next-build-drift-watchdog.sh` | Every 3 min: restarts `forge-control-web` when `.next/BUILD_ID` is newer than the running server, which otherwise serves chunk hashes that no longer exist on disk (`Loading chunk NNNN failed`). |
+| `usage-ceiling-throttle.sh` | Every 2 min: keeps the 5-hour usage window near its ceiling — pauses the lowest-priority lanes at 95%, resumes at 80%, and only ever resumes lanes it paused itself. |
+| `verify-gemini-dispatch.sh` | One-shot: waits for `forge-executor`'s pid to change, then proves on a probe chat which engine actually answered. Reports to Konrad's inbox either way. Kept for the record like the `deploy-*.sh` pair. |
 | `goal-*.json` | Seed payloads the deploy scripts above POST to forge-control. |
 | `guard-service-restart.py` | PreToolUse(Bash) hook. Blocks a `pm2 restart`/`stop` of a live service from inside a run — locally, without any API call — and points at `safe-restart.sh` instead. |
 | `guard-autonomy.py` | PreToolUse(Bash) hook. Classifies the command (`fs.destructive`, `git.force_push`, `comm.outbound`) and asks `POST /api/autonomy/check` whether this run may do it. Also carries one purely-local rule, `autonomy.self_edit`. |

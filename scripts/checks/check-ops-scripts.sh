@@ -5,12 +5,13 @@
 # in scripts/ops/, and safe-restart.sh still carries the two guards that were
 # built and measured the hard way (self-exclusion, single-instance lock).
 #
-# This checks the REPO'S copies only. The one exception is the permission check
-# below, which READS (never writes) the symlink at $TARGET_DIR to decide whether
-# this checkout is the installed one — a single `readlink`, no mutation, safe
-# from a build task under the worktree-only policy. Verifying the actual host
-# install (symlinks in place, safe-restart.sh run against a real pm2 service)
-# is still a deploy/verify-task job.
+# This checks the REPO'S copies only, with two READ-ONLY exceptions at
+# $TARGET_DIR: the permission check `readlink`s one symlink to decide whether
+# this checkout is the installed one, and the reverse-inventory check `find`s
+# the directory for regular files nothing manages. Both read, neither writes —
+# safe from a build task under the worktree-only policy. Verifying the actual
+# host install (symlinks in place, safe-restart.sh run against a real pm2
+# service) is still a deploy/verify-task job.
 #
 # Usage:  scripts/checks/check-ops-scripts.sh
 # Env:    FORGE_OPS_TARGET_DIR — where install-symlinks.sh puts its symlinks.
@@ -41,7 +42,8 @@ EXPECTED_EXEC=(
   deploy-goal-mode.sh deploy-retier.sh rebuild-web.sh install-symlinks.sh
   guard-service-restart.py guard-autonomy.py guard-protected-paths.py
   test-guard-service-restart.py test-guard-autonomy.py test-guard-protected-paths.py
-  install-hooks.sh
+  install-hooks.sh assert-merge-scope.sh recover-stuck-task.sh
+  next-build-drift-watchdog.sh usage-ceiling-throttle.sh verify-gemini-dispatch.sh
 )
 EXPECTED_NONEXEC=(
   goal-engine-v2.json goal-files-pane.json goal-manager-split.json
@@ -128,6 +130,63 @@ if [ -f "$OPS/install-symlinks.sh" ]; then
   fi
 else
   bad "missing: scripts/ops/install-symlinks.sh"
+fi
+
+note "nothing unmanaged is living in $TARGET_DIR (reverse direction)"
+# The parity check above is one-directional: repo -> installer. It cannot see a
+# script that exists ONLY at $TARGET_DIR and in no commit on any branch, which
+# is the more dangerous direction — that file is backed up by nothing, and if
+# cron runs it, it is load-bearing.
+#
+# It was not hypothetical. On 2026-08-26 this directory held three real files
+# tracked nowhere: next-build-drift-watchdog.sh (cron */3), usage-ceiling-
+# throttle.sh (cron */2) and verify-gemini-dispatch.sh. Two of them ran every
+# few minutes for a day while the check that exists to catch exactly this
+# reported PASS, because nobody had ever asked the question in this direction.
+#
+# WHY THIS ONE IS NOT LOCATION-GATED, unlike the 750 mode assertion above.
+# That assertion is FALSE BY CONSTRUCTION in a checkout install-symlinks.sh has
+# never run against — git cannot store 750, so demanding it there asserts
+# something git made impossible. This question is EQUALLY TRUE from any
+# checkout: "is $TARGET_DIR holding a regular file that FILES does not manage"
+# has the same answer whoever asks it, because FILES is the same array in every
+# checkout of this repo. Gating it on "am I the installed copy" would make it
+# fire only from /opt/forge-ai-os, where nobody runs the gate suite — an
+# assertion nobody reaches (memory: unreachable-guard-needs-its-own-control).
+#
+# The cost accepted knowingly: a new unmanaged file on the box turns this gate
+# red for EVERY lane, not just the one that put it there. That is the intended
+# signal and the fix is two lines (copy into scripts/ops/, add to FILES), not a
+# reason to soften. A lane that forked before someone else's FILES addition
+# sees the ordinary stale-merge-base red — resolve it with `git merge-tree`
+# (memory: inherited-gate-red-may-be-a-stale-allowlist), do not delete the
+# assertion.
+if [ ! -d "$TARGET_DIR" ]; then
+  skip "no $TARGET_DIR on this host — install-symlinks.sh has never run here, so there is no installed inventory to compare against"
+elif [ -f "$OPS/install-symlinks.sh" ]; then
+  managed="$(sed -n '/^FILES=(/,/^)/p' "$OPS/install-symlinks.sh" | grep -oE '^\s*[A-Za-z0-9._-]+\s*$' | tr -d ' ' | sort)"
+  # -type f is the whole discriminator: an installed entry is a SYMLINK, so a
+  # regular file here is either a pre-install leftover or something someone
+  # dropped by hand. Directories (__pycache__) are not scripts and cannot be
+  # symlink targets of this installer.
+  #
+  # Backups are the one legitimate regular file. install-symlinks.sh writes its
+  # own to /opt/ai-os/backups/scripts/<f>.<stamp>-preinstall, but operators have
+  # made them in place by hand (check-vps2-backup.sh.bak-20260806-premonitorkey,
+  # safe-restart.sh.bak-20260818). Allow the suffix, not arbitrary names, so a
+  # dropped script still has to be named like a backup to hide here.
+  unmanaged=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in
+      *.bak-*|*-preinstall|*.bak) continue ;;
+    esac
+    printf '%s\n' "$managed" | grep -qxF "$f" || unmanaged="$unmanaged $f"
+  done <<< "$(find "$TARGET_DIR" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort)"
+  if [ -n "$unmanaged" ]; then
+    bad "unmanaged regular file(s) in $TARGET_DIR — present on this box but in no commit, so backed up by nothing:$unmanaged"
+    echo "       fix: copy each into scripts/ops/, add it to install-symlinks.sh FILES, then re-run install-symlinks.sh from the live checkout" >&2
+  fi
 fi
 
 note "safe-restart.sh guard logic"

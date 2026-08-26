@@ -73,6 +73,9 @@ FILES=(
   rebuild-web.sh
   assert-merge-scope.sh
   recover-stuck-task.sh
+  next-build-drift-watchdog.sh
+  usage-ceiling-throttle.sh
+  verify-gemini-dispatch.sh
   goal-engine-v2.json
   goal-files-pane.json
   goal-manager-split.json
@@ -92,11 +95,18 @@ FILES=(
 # on every install rather than relying on the checkout's mode.
 RESTRICTED_MODE_FILES=(check-vps2-backup.sh)
 
+# Files whose caller SWALLOWS their output, so a lost executable bit is silent.
+#
 # The three PreToolUse hooks are invoked by the Claude CLI as commands. A hook
 # that has lost its executable bit does not fail loudly — it fails as a hook
 # that did not run, which is indistinguishable from a box with no guard on it
 # at all. git DOES round-trip 755, so this is belt-and-braces rather than a
 # workaround; it costs one chmod and removes a silent-disable path.
+#
+# The two watchdogs are the same shape one layer out: their crontab lines end
+# in `>/dev/null 2>&1`, so cron's "Permission denied" goes nowhere and the only
+# symptom is a watchdog that quietly stopped watching. verify-gemini-dispatch.sh
+# is NOT here — it is run by hand and reports its own exit status to a human.
 EXEC_MODE_FILES=(
   guard-service-restart.py
   guard-autonomy.py
@@ -105,6 +115,8 @@ EXEC_MODE_FILES=(
   test-guard-autonomy.py
   test-guard-protected-paths.py
   install-hooks.sh
+  next-build-drift-watchdog.sh
+  usage-ceiling-throttle.sh
 )
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
