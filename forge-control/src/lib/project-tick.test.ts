@@ -2828,8 +2828,14 @@ describe("round 975 — TIER_GUIDE makes gemini the default and names its except
       "R975: the default must be resolved ONLY for a row that carries no tier — resolving it " +
         "unconditionally would override a tier a planner deliberately set",
     );
+    /* The write-set pre-create used to be a third consumer listed here. It was
+     * RETIRED 2026-08-26, once agy was measured creating files perfectly well
+     * ("create brandnew.txt" -> SUCCESS, file on disk), so the consumer this
+     * case guarded no longer exists. The guarantee itself is untouched for the
+     * consumers that remain — every one reads the RESOLVED tier, never the
+     * row's null — and the retired call is pinned separately below so it cannot
+     * come back silently. */
     for (const [consumer, needle] of [
-      ["the write-set pre-create (agy cannot create files)", "tierCanDropOut(dispatched.tier)"],
       ["the prompt", "buildPrompt(dispatched, dispatched.project"],
       ["the model/effort lookup", "TIER_MODELS[dispatched.tier]"],
     ] as const) {
@@ -2849,6 +2855,27 @@ describe("round 975 — TIER_GUIDE makes gemini the default and names its except
         "must read the RESOLVED tier — this is the two-insert-sites defect in its dispatch form. " +
         "DOC-COMMENTS COUNT AS SOURCE to this regex (R49's gate makes the same point): if you " +
         "tripped this by writing about the field rather than reading it, paraphrase instead",
+    );
+  });
+
+  test("the write-set pre-create stays retired unless someone decides otherwise", () => {
+    /* Retired 2026-08-26. It existed only because agy's `write_to_file` was
+     * believed to refuse paths that did not yet exist; measured against the
+     * installed binary, it creates them fine. Re-enabling it is a decision, not
+     * a tidy-up, because pre-touching plants EMPTY files in the worktree before
+     * the agent runs — a cancelled task then leaves zero-byte stubs that read
+     * as real work to anything counting changed files.
+     *
+     * The helper itself is deliberately kept in the source, so this pins the
+     * CALL rather than the definition. */
+    const src = readFileSync(fileURLToPath(new URL("./project-tick.ts", import.meta.url)), "utf8");
+    const calls = src.match(/^\s*precreateWriteSet\(/gm) ?? [];
+    assert.equal(
+      calls.length,
+      0,
+      "the write-set pre-create is dispatched again. If that is deliberate, say why here and " +
+        "flip this case — but first re-measure whether agy still needs it, because the last " +
+        "measurement says it does not",
     );
   });
 

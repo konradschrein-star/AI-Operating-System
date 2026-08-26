@@ -49,6 +49,7 @@ import {
   type SettledRunningTask,
   type TaskRole,
   type TaskStatus,
+  getProjectTierPin,
   type TaskTier,
 } from "../db/projects.ts";
 import {
@@ -158,8 +159,11 @@ const TIER_MODELS: Record<TaskTier, { model: string; effort: string }> = {
   standard: { model: "claude-opus-5", effort: "high" },
   flagship: { model: "claude-fable-5", effort: "high" },
   /* A different engine, not a cheaper Claude. `effort` is carried for shape
-   * only — agy takes no --effort flag, and gemini-runner never passes one; the
-   * "-high" suffix in the model id IS the thinking level. */
+   * only, and gemini-runner passes no --effort — but NOT because the flag does
+   * not exist. It does: `agy --help` lists `--effort low|medium|high`
+   * (re-checked 2026-08-26; the previous claim here was simply wrong). We omit
+   * it deliberately, because the "-high" suffix in the model id already selects
+   * the thinking level and passing both invites two sources of truth. */
   gemini: { model: "gemini-3.7-flash-high", effort: "high" },
 };
 
@@ -1890,12 +1894,29 @@ async function spawnTaskRuns(): Promise<void> {
             `'${fleetDefault}' (app_settings['fleet.default_tier'])`,
         );
       }
-      // R870, the preventative half. `agy` cannot bring a new path into
-      // existence; touching the declared write-set first turns every "create
-      // this file" into "edit this file", which it does fine.
-      if (tierCanDropOut(dispatched.tier)) {
-        precreateWriteSet(dispatched, ws.workspace_dir);
-      }
+      /* ── RETIRED 2026-08-26: agy creates files perfectly well ──────────────
+       *
+       * This used to touch every declared write-set path before dispatching a
+       * gemini task, on the premise that `agy`'s `write_to_file` refused any
+       * path that did not already exist — so "create this file" had to be
+       * turned into "edit this file".
+       *
+       * That premise is no longer true, and the whole R870 diagnosis rested on
+       * it. Measured directly against the installed binary (rebuilt 05:18 that
+       * morning):
+       *
+       *     create brandnew.txt  -> SUCCESS, file on disk, 9s
+       *     edit    exists.txt   -> SUCCESS, content replaced, 14s
+       *
+       * Keeping the workaround was not free. Pre-touching a write-set plants
+       * EMPTY files in the worktree before the agent runs, so a task that dies
+       * or is cancelled leaves zero-byte stubs behind that look like real work,
+       * and a gate counting "files changed" counts them. The real cause of the
+       * empty envelopes was two stacked timeouts, now fixed in
+       * lib/gemini-runner.ts — not the tool layer.
+       *
+       * `precreateWriteSet` is kept, unused, directly below: if some future agy
+       * regresses, re-enabling it is one line rather than an archaeology dig. */
       const prompt = buildPrompt(dispatched, dispatched.project, {
         workstream: dispatched.workstream,
         work_branch: ws.work_branch,
@@ -2221,8 +2242,41 @@ async function consolidateVerdictGroup(
        * MISSING argument, which no unit test of the helper can see — and a
        * wrapped assignment silently un-pins it. */
       const inheritedTier = inheritTier(rows) ?? (await resolveFleetDefaultTier()) ?? undefined;
+
+      /* ── The project's pin outranks inheritance ────────────────────────────
+       * Inheritance carries the tier of the work being FIXED, which is right
+       * when nobody has expressed an opinion. A `tier_pin` IS that opinion, and
+       * it is the only no-code lever that keeps a project off Claude — so it
+       * wins. Without this, pinning a project changed nothing for its fix
+       * chains, because they are created HERE rather than through the route
+       * that used to be the pin's only reader. Measured 2026-08-25: twelve
+       * consecutive rows on five pinned projects ignored the pin. */
+      const pinnedTier = await getProjectTierPin(projectId);
+
+      /* ── An unpinned fix cycle does not get the most expensive engine ──────
+       * `standard` maps to Opus. The review-fix-recheck loop is the most
+       * REPEATED work the fleet does — three cycles on one project in a day is
+       * ordinary, and one row on 2026-08-25 was cancelled carrying the note
+       * "3 fix cycles on a comment". Paying Opus to re-argue a comment is the
+       * clearest waste in the ledger, so an unpinned chain is capped a rung
+       * down. An explicitly pinned project is untouched: a pin means it.
+       * Override with FIX_CHAIN_MAX_TIER. */
+      const fixChainCap = (process.env.FIX_CHAIN_MAX_TIER ?? "junior") as TaskTier;
+      const cappedTier =
+        inheritedTier === "standard" || inheritedTier === "flagship"
+          ? fixChainCap
+          : inheritedTier;
+
+      const chainTier = pinnedTier ?? cappedTier;
+      if (chainTier !== inheritedTier) {
+        console.log(
+          `[project-tick] fix chain tier ${inheritedTier ?? "none"} -> ${chainTier} for project ` +
+            `${projectId} (${pinnedTier ? `project pin '${pinnedTier}'` : "unpinned fix-cycle cap"})`,
+        );
+      }
+
       const chain = await createFixChain({
-        tier: inheritedTier,
+        tier: chainTier,
         project_id: projectId,
         round,
         cycle: decision.cycle,
