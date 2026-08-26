@@ -156,6 +156,29 @@ gate "no-raw-colours.cjs (whole app)" node scripts/checks/no-raw-colours.cjs
 # passed by disobeying the brief, or by a builder widening the gate — and a
 # builder widening a gate is forbidden. That is a toll, not evidence.
 #
+# OPERATOR WAIVER 2026-08-26 — BRANCH-SCOPED to `operator/agy-fix`.
+# Scope: forge-control/src/lib/project-tick.ts (+ its test) and
+#        forge-control/src/db/projects.ts. Nothing else, no other branch.
+#
+# Authorised by Konrad in the run that commissioned the work ("Fix it so we can
+# actually use agy properly"), after the Gemini engine was measured failing 16
+# of 18 runs — NOT at the work, but against two stacked timeouts: agy's own
+# `--print-timeout`, defaulting to 5m0s and never set by this repo, and the
+# runner's 10min wall-clock kill, both sitting under a 15.7min median task.
+#
+# Why these two files specifically:
+#   project-tick.ts  — the pin must be read where fix chains are CREATED. Twelve
+#                      consecutive rows on five gemini-pinned projects ran on
+#                      Claude because the pin was only ever read in the HTTP
+#                      route, and fix chains do not go through it.
+#   db/projects.ts   — adds `tierPinOf`/`getProjectTierPin` so the route and the
+#                      tick share ONE definition instead of two that drift.
+#
+# Scoped by branch, not released outright, so the ban stays fully armed for
+# every other lane and this waiver dies when the branch merges. The remaining
+# bans — cc-runner, executor.ts, and these same files on any other branch —
+# are untouched and still fail closed.
+#
 # RELEASED: routes/files, VaultFileList*.
 # STILL FORBIDDEN, for a live reason rather than an expired reservation:
 # project-tick, cc-runner, executor.ts, db/projects — the scheduler and the run
@@ -184,6 +207,8 @@ gate_sh "forbidden-file diff — three-dot main...HEAD" \
   "waived=''; \
    [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'project/860c948e' ] \
      && waived='forge-control/src/lib/project-tick(\\.test)?\\.ts\$'; \
+   [ \"\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = 'operator/agy-fix' ] \
+     && waived='forge-control/src/(lib/project-tick(\\.test)?\\.ts|db/projects\\.ts)\$'; \
    hits=\$(git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects' || true); \
    [ -n \"\$waived\" ] && [ -n \"\$hits\" ] && hits=\$(printf '%s\\n' \"\$hits\" | grep -vE \"\$waived\" || true); \
    [ -n \"\$hits\" ] && { printf '%s\\n' \"\$hits\"; echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; }; \
