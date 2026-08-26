@@ -24,19 +24,18 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import {
-  mintTakeoverTicket,
   resolveStreamMode,
   resolveStreamWarning,
   shotClock,
   shotSrc,
   stampToIso,
-  vncProxyUrl,
   type BrowserShotRef,
   type BrowserStateSummary,
   type StreamMode,
-  type TakeoverTicketBody,
 } from "./browser-shots";
 import { SHOTS_FULLSCREEN_POLL_MS } from "./pollBudget";
+import { TextToVM, bigButton } from "../../takeover/[runId]/TextToVM";
+import { useTakeoverSession } from "../../takeover/[runId]/useTakeoverSession";
 
 const CAMERA = "📷";
 const PROXY_ROOT = "/api/proxy";
@@ -148,18 +147,6 @@ export function StreamStyles() {
   );
 }
 
-/**
- * The in-chat takeover ticket's lifecycle. `idle` is the whole point of the
- * union: no ticket is minted until Konrad actually asks for manual control, so
- * merely opening a fullscreen screenshot never touches the mint endpoint and
- * never burns a jti.
- */
-type TicketStatus =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; body: TakeoverTicketBody };
-
 export interface BrowserStreamViewerProps {
   shots: readonly ShotLike[];
   initialIndex?: number;
@@ -190,8 +177,7 @@ export function BrowserStreamViewer({
     Math.max(0, Math.min(initialIndex, Math.max(0, shots.length - 1))),
   );
   const [viewMode, setViewMode] = useState<"screenshot" | "manual">(initialViewMode);
-  const [ticket, setTicket] = useState<TicketStatus>({ kind: "idle" });
-  const [ticketAttempt, setTicketAttempt] = useState(0);
+  const [confirmEnd, setConfirmEnd] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
@@ -235,32 +221,18 @@ export function BrowserStreamViewer({
   const currentShot = liveShots[safeIndex] ?? liveShots[0];
 
   /**
-   * Mint a takeover ticket the moment manual mode is entered, and not before.
-   *
-   * A ticket is a 120s bearer credential for a socket that bypasses NextAuth, so
-   * it is minted per manual-mode entry rather than held: leaving manual mode
-   * drops it back to `idle`, and coming back mints a fresh one. `ticketAttempt`
-   * is what Retry bumps — the mint is a POST-shaped action wearing a GET, and it
-   * must re-run on demand even when nothing else changed.
+   * The takeover lifecycle — mint, iframe key, reconnect-with-re-mint, session
+   * clock, Done — is owned by useTakeoverSession, the same hook the
+   * /takeover/<runId> landing page uses. `enabled` is the whole point: no
+   * ticket is minted until Konrad actually asks for manual control, so merely
+   * opening a fullscreen screenshot never touches the mint endpoint and never
+   * burns a jti. Leaving manual mode drops back to `idle`; coming back mints a
+   * fresh one. The hook calls mintTakeoverTicket() itself, and on a drop it
+   * re-mints instead of remounting the same URL — the `ticket_replayed` /
+   * `ticket_expired` failure this pane produced on 2026-08-25 (run 2ce31fa484df).
    */
-  useEffect(() => {
-    if (!isOpen || viewMode !== "manual") {
-      setTicket((prev) => (prev.kind === "idle" ? prev : { kind: "idle" }));
-      return;
-    }
-    let cancelled = false;
-    setTicket({ kind: "loading" });
-    mintTakeoverTicket(dirId)
-      .then((body) => {
-        if (!cancelled) setTicket({ kind: "ready", body });
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setTicket({ kind: "error", message: err.message });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, viewMode, dirId, ticketAttempt]);
+  const session = useTakeoverSession(dirId, { enabled: isOpen && viewMode === "manual" });
+  const ticket = session.ticket;
 
   // Focus trap and keyboard navigation
   useEffect(() => {
@@ -312,9 +284,9 @@ export function BrowserStreamViewer({
   if (!isOpen) return null;
 
   const currentSrc = currentShot ? shotSrc(currentShot.dirId, currentShot.name) : null;
-  // Null until a ticket exists — vncProxyUrl is the security boundary and
-  // refuses to build a URL for a socket nothing would authenticate.
-  const vncUrl = ticket.kind === "ready" ? vncProxyUrl(dirId, ticket.body.ticket) : null;
+  // Null until a ticket exists — the hook builds it through vncProxyUrl, the
+  // security boundary that refuses a URL for a socket nothing would authenticate.
+  const vncUrl = session.clock.kind === "ended" ? null : session.vncUrl;
 
   return (
     <div
@@ -573,28 +545,116 @@ export function BrowserStreamViewer({
                 justifyContent: "space-between",
               }}
             >
-              <span>
-                Manual Browser Takeover &middot; Authenticated Loopback Proxy (127.0.0.1)
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                Manual Browser Takeover &middot; {ticket.kind === "ready" ? ticket.body.profile : "Authenticated Loopback Proxy (127.0.0.1)"}
               </span>
-              <span style={{ color: tokens.accent }} data-takeover-ticket-state={ticket.kind}>
-                {ticket.kind === "ready"
-                  ? `${ticket.body.profile} · ticket expires ${new Date(
-                      ticket.body.expires_at,
-                    ).toLocaleTimeString()}`
-                  : ticket.kind === "loading"
-                    ? "minting ticket…"
-                    : "no ticket"}
+              <span
+                data-takeover-ticket-state={ticket.kind}
+                data-takeover-status
+                data-takeover-clock={session.clock.kind}
+                style={{
+                  color:
+                    session.clock.kind === "ended" || session.clockWarn
+                      ? tokens.warn
+                      : session.viewer === "connected"
+                        ? tokens.ok
+                        : tokens.accent,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {session.statusLine}
+              </span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6, flex: "none" }}>
+                {(session.reconnect?.exhausted || ticket.kind === "error") && (
+                  <button
+                    type="button"
+                    data-retry-takeover-ticket
+                    onClick={session.retry}
+                    className="mono"
+                    style={{ ...bigButton, fontSize: 11, padding: "0 10px", background: tokens.accent, color: tokens.accentInk, border: "none" }}
+                  >
+                    Retry
+                  </button>
+                )}
+                {session.clock.kind === "ended" ? (
+                  <span data-takeover-done-state="done" style={{ color: tokens.textMuted }}>ended</span>
+                ) : session.end.kind === "pending" ? (
+                  <span data-takeover-done-state="pending" style={{ color: tokens.textMuted }}>ending…</span>
+                ) : confirmEnd ? (
+                  <span data-takeover-done-state="confirm" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ color: tokens.text }}>End session?</span>
+                    <button
+                      type="button"
+                      data-takeover-done-confirm
+                      onClick={() => {
+                        setConfirmEnd(false);
+                        void session.endSession();
+                      }}
+                      className="mono"
+                      style={{ ...bigButton, fontSize: 11, padding: "0 10px", background: tokens.bleed, color: tokens.onAccent, border: "none" }}
+                    >
+                      End
+                    </button>
+                    <button
+                      type="button"
+                      data-takeover-done-keep
+                      onClick={() => setConfirmEnd(false)}
+                      className="mono"
+                      style={{ ...bigButton, fontSize: 11, padding: "0 10px", background: "transparent", color: tokens.text, border: `1px solid ${tokens.borderEmphasis}` }}
+                    >
+                      Keep
+                    </button>
+                  </span>
+                ) : (
+                  <>
+                    {session.end.kind === "error" && (
+                      <span data-takeover-done-state="error" style={{ color: tokens.warn }}>
+                        end failed: {session.end.message}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      data-takeover-done
+                      onClick={() => setConfirmEnd(true)}
+                      className="mono"
+                      style={{ ...bigButton, fontSize: 11, padding: "0 10px", background: tokens.dangerActionBg, color: tokens.bleed, border: `1px solid ${tokens.dangerActionBorder}` }}
+                    >
+                      Done
+                    </button>
+                  </>
+                )}
               </span>
             </div>
+            {session.bridgeError && (
+              <div
+                className="mono"
+                data-takeover-bridge-error
+                style={{
+                  padding: "6px 12px",
+                  background: tokens.dangerActionBg,
+                  borderBottom: `1px solid ${tokens.dangerActionBorder}`,
+                  color: tokens.warn,
+                  fontSize: 11,
+                  flex: "none",
+                }}
+              >
+                Text input cannot reach the viewer: {session.bridgeError}
+              </div>
+            )}
             {vncUrl ? (
               <iframe
-                key={ticket.kind === "ready" ? ticket.body.ticket : "no-ticket"}
+                ref={session.iframeRef}
+                key={session.iframeKey}
                 src={vncUrl}
+                onLoad={session.onIframeLoad}
                 title="Live Browser Takeover"
                 style={{
                   flex: 1,
+                  minHeight: 0,
                   width: "100%",
-                  height: "100%",
                   border: "none",
                   background: tokens.bgBody,
                 }}
@@ -610,20 +670,27 @@ export function BrowserStreamViewer({
                   gap: 10,
                   alignItems: "center",
                   justifyContent: "center",
-                  color: ticket.kind === "loading" ? tokens.textMuted : tokens.bleed,
+                  color:
+                    ticket.kind === "loading" || session.clock.kind === "ended" ? tokens.textMuted : tokens.bleed,
                   fontSize: 12,
                   padding: 20,
                   textAlign: "center",
                 }}
               >
-                {ticket.kind === "loading" ? (
-                  <span>minting takeover ticket for run {dirId}…</span>
+                {session.clock.kind === "ended" ? (
+                  <span data-takeover-stage-message style={{ color: tokens.text }}>
+                    {session.statusLine}
+                  </span>
+                ) : ticket.kind === "loading" ? (
+                  <span data-takeover-stage-message>
+                    {session.reconnect ? session.statusLine : `minting takeover ticket for run ${dirId}…`}
+                  </span>
                 ) : (
                   <>
                     {/* The reason, verbatim from the mint endpoint. A takeover
                         that will not start is a thing Konrad has to read, not
                         guess at from a blank canvas. */}
-                    <span style={{ maxWidth: 520, wordBreak: "break-word" }}>
+                    <span data-takeover-stage-message style={{ maxWidth: 520, wordBreak: "break-word" }}>
                       {ticket.kind === "error"
                         ? `Could not start takeover for run ${dirId}: ${ticket.message}`
                         : `No takeover ticket for run ${dirId} yet.`}
@@ -631,16 +698,14 @@ export function BrowserStreamViewer({
                     <button
                       type="button"
                       data-retry-takeover-ticket
-                      onClick={() => setTicketAttempt((n) => n + 1)}
+                      onClick={session.retry}
                       className="mono"
                       style={{
-                        padding: "4px 12px",
+                        ...bigButton,
                         background: "transparent",
                         color: tokens.textMuted,
                         border: `1px solid ${tokens.borderDivider}`,
-                        borderRadius: 4,
                         fontSize: 11,
-                        cursor: "pointer",
                       }}
                     >
                       Retry
@@ -649,6 +714,7 @@ export function BrowserStreamViewer({
                 )}
               </div>
             )}
+            <TextToVM getBridge={session.getBridge} connected={session.viewer === "connected"} />
           </div>
         ) : (
           <>

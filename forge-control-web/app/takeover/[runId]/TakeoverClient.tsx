@@ -6,30 +6,32 @@
  * /desktop is a single client-state route with no query deep links (a
  * notification has nowhere else to point), so this route exists purely to
  * give Konrad a one-hop landing spot: mint a ticket, show the live noVNC
- * canvas, done. It is also the ONLY place he finds out the feature broke —
- * a missing secret, an unresolved profile, a dead takeover stack, a network
- * error — so every failure path renders the actual reason and the run id on
- * screen. No spinner that never resolves, no blank canvas standing in for an
- * error nobody wrote down.
+ * canvas, let him type into it, and tell him when it ends. It is also the
+ * ONLY place he finds out the feature broke — a missing secret, an unresolved
+ * profile, a dead takeover stack, a network error, a bridge that could not
+ * reach noVNC — so every failure path renders the actual reason and the run
+ * id on screen. No spinner that never resolves, no blank canvas standing in
+ * for an error nobody wrote down.
  *
- * Tickets last 120s (forge-control/src/lib/takeover-ticket.ts) and noVNC's
- * own reconnect is disabled (`reconnect=0` in vncProxyUrl) specifically so an
- * expired ticket cannot be silently replayed — which means a page left open
- * across a disconnect needs a human-driven re-mint. That is what Retry does.
+ * v2 (aios-takeover-usable, PLAN.md §1.1/§1.3):
+ *   - Layout: fixed inset 0, column flex — header (clock + status + Done),
+ *     iframe flex:1, TextToVM panel flex-shrink:0 (a fixed-height bottom sheet
+ *     at ≤640 px). The panel is always on screen, never behind a menu.
+ *   - Lifecycle is owned by useTakeoverSession: a drop re-mints a FRESH ticket
+ *     (never a replay), five attempts, then Retry; the session clock is polled
+ *     from the supervisor and rendered in the header; Done ends the session
+ *     with a two-tap confirm. Tickets stay 120 s — they are a connect window.
+ *   - The Paste-to-VM / Copy-from-VM buttons stay (they work on Chromium
+ *     desktop); when readText() is unavailable the message now points at the
+ *     panel below instead of unfolding a second textarea.
+ *
+ * Nothing typed toward the VM is ever logged, fetched or put in a message.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { tokens } from "../../tokens";
-import {
-  mintTakeoverTicket,
-  vncProxyUrl,
-  type TakeoverTicketBody,
-} from "../../desktop/chat/browser-shots";
-
-type Status =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; body: TakeoverTicketBody };
+import { TextToVM, bigButton } from "./TextToVM";
+import { useTakeoverSession, type TakeoverSession } from "./useTakeoverSession";
 
 interface ClipboardFeedback {
   text: string;
@@ -37,20 +39,9 @@ interface ClipboardFeedback {
 }
 
 export function TakeoverClient({ runId }: { runId: string }) {
-  const [status, setStatus] = useState<Status>({ kind: "loading" });
-  const [attempt, setAttempt] = useState(0);
+  const session = useTakeoverSession(runId);
   const [feedback, setFeedback] = useState<ClipboardFeedback | null>(null);
-  const [showManualPaste, setShowManualPaste] = useState(false);
-  const [manualPasteText, setManualPasteText] = useState("");
-  const [pasteErrorReason, setPasteErrorReason] = useState("");
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  const retry = useCallback(() => {
-    setStatus({ kind: "loading" });
-    setFeedback(null);
-    setShowManualPaste(false);
-    setAttempt((n) => n + 1);
-  }, []);
+  const [confirmEnd, setConfirmEnd] = useState(false);
 
   const showFeedback = useCallback((text: string, isError = false) => {
     setFeedback({ text, isError });
@@ -58,30 +49,12 @@ export function TakeoverClient({ runId }: { runId: string }) {
 
   useEffect(() => {
     if (!feedback) return;
-    const timer = setTimeout(() => {
-      setFeedback(null);
-    }, 4000);
+    const timer = setTimeout(() => setFeedback(null), 5000);
     return () => clearTimeout(timer);
   }, [feedback]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setStatus((prev) => (prev.kind === "loading" ? prev : { kind: "loading" }));
-    mintTakeoverTicket(runId)
-      .then((body) => {
-        if (!cancelled) setStatus({ kind: "ready", body });
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setStatus({ kind: "error", message: err.message });
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, attempt]);
-
   const getRemoteClipboardTextarea = (): HTMLTextAreaElement | null => {
-    const iframe = iframeRef.current;
+    const iframe = session.iframeRef.current;
     if (!iframe) {
       showFeedback("Viewer not ready", true);
       return null;
@@ -117,9 +90,7 @@ export function TakeoverClient({ runId }: { runId: string }) {
       !navigator.clipboard ||
       typeof navigator.clipboard.readText !== "function"
     ) {
-      setPasteErrorReason("Browser does not support clipboard reading (e.g. Firefox)");
-      setShowManualPaste(true);
-      showFeedback("Clipboard read unsupported — paste manually below", true);
+      showFeedback("This browser cannot read the clipboard — paste into the text panel below instead", true);
       return;
     }
 
@@ -128,9 +99,7 @@ export function TakeoverClient({ runId }: { runId: string }) {
       text = await navigator.clipboard.readText();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Permission denied";
-      setPasteErrorReason(`Clipboard read failed: ${msg}`);
-      setShowManualPaste(true);
-      showFeedback(`Clipboard read failed: ${msg}`, true);
+      showFeedback(`Clipboard read failed (${msg}) — paste into the text panel below instead`, true);
       return;
     }
 
@@ -143,28 +112,6 @@ export function TakeoverClient({ runId }: { runId: string }) {
       remoteTextarea.value = text;
       remoteTextarea.dispatchEvent(new Event("change", { bubbles: true }));
       showFeedback(`Pasted ${text.length} chars`);
-      setShowManualPaste(false);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showFeedback(`Failed to send clipboard to VM: ${msg}`, true);
-    }
-  };
-
-  const handleManualPasteSubmit = () => {
-    const remoteTextarea = getRemoteClipboardTextarea();
-    if (!remoteTextarea) return;
-
-    if (manualPasteText.length === 0) {
-      showFeedback("No text entered to paste", true);
-      return;
-    }
-
-    try {
-      remoteTextarea.value = manualPasteText;
-      remoteTextarea.dispatchEvent(new Event("change", { bubbles: true }));
-      showFeedback(`Pasted ${manualPasteText.length} chars`);
-      setShowManualPaste(false);
-      setManualPasteText("");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showFeedback(`Failed to send clipboard to VM: ${msg}`, true);
@@ -199,7 +146,9 @@ export function TakeoverClient({ runId }: { runId: string }) {
     }
   };
 
-  if (status.kind === "loading") {
+  const { ticket } = session;
+
+  if (ticket.kind === "idle" || (ticket.kind === "loading" && session.reconnect === null)) {
     return (
       <Shell>
         <div className="mono" style={{ color: tokens.textMuted, fontSize: 12 }}>
@@ -209,11 +158,12 @@ export function TakeoverClient({ runId }: { runId: string }) {
     );
   }
 
-  if (status.kind === "error") {
+  if (ticket.kind === "error" && session.reconnect === null) {
     return (
       <Shell>
         <div
           className="mono"
+          data-takeover-error
           style={{
             display: "flex",
             flexDirection: "column",
@@ -225,27 +175,15 @@ export function TakeoverClient({ runId }: { runId: string }) {
             borderRadius: 8,
           }}
         >
-          <div style={{ fontSize: 11, letterSpacing: "0.12em", color: tokens.warn }}>
-            TAKEOVER FAILED
-          </div>
-          <div style={{ fontSize: 13, color: tokens.text, wordBreak: "break-word" }}>
-            {status.message}
-          </div>
+          <div style={{ fontSize: 11, letterSpacing: "0.12em", color: tokens.warn }}>TAKEOVER FAILED</div>
+          <div style={{ fontSize: 13, color: tokens.text, wordBreak: "break-word" }}>{ticket.message}</div>
           <div style={{ fontSize: 11, color: tokens.textMuted }}>run id: {runId}</div>
+          <ClockLine session={session} />
           <button
             type="button"
-            onClick={retry}
+            onClick={session.retry}
             className="mono"
-            style={{
-              alignSelf: "flex-start",
-              padding: "8px 16px",
-              background: tokens.accent,
-              color: tokens.accentInk,
-              border: "none",
-              borderRadius: 6,
-              fontSize: 12,
-              cursor: "pointer",
-            }}
+            style={{ ...bigButton, alignSelf: "flex-start", background: tokens.accent, color: tokens.accentInk, border: "none" }}
           >
             Retry
           </button>
@@ -254,48 +192,36 @@ export function TakeoverClient({ runId }: { runId: string }) {
     );
   }
 
-  const vncUrl = vncProxyUrl(runId, status.body.ticket);
-  if (!vncUrl) {
-    // Should be unreachable — mintTicket already validated runId and returned a
-    // ticket — but vncProxyUrl is the security boundary, not this component,
-    // so a mismatch here still renders the failure rather than an empty iframe.
-    return (
-      <Shell>
-        <div className="mono" style={{ color: tokens.warn, fontSize: 12 }}>
-          Minted a ticket but could not build the viewer URL for run {runId}.
-        </div>
-      </Shell>
-    );
-  }
-
   return (
-    <div style={{ position: "fixed", inset: 0, background: tokens.bgBody, display: "flex", flexDirection: "column" }}>
+    <div
+      data-takeover-page
+      style={{ position: "fixed", inset: 0, background: tokens.bgBody, display: "flex", flexDirection: "column" }}
+    >
+      {/* Header: title, clock/status line, Done */}
       <div
         className="mono"
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
+          flexWrap: "wrap",
           gap: 8,
           padding: "6px 10px",
           borderBottom: `1px solid ${tokens.borderDivider}`,
           background: tokens.bgCard,
           flexShrink: 0,
-          fontSize: 10,
+          fontSize: 11,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
-          <span style={{ color: tokens.accent, letterSpacing: "0.1em", flexShrink: 0 }}>
-            TAKEOVER &middot; {status.body.profile}
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: "1 1 160px" }}>
+          <span style={{ color: tokens.accent, letterSpacing: "0.1em", whiteSpace: "nowrap" }}>
+            TAKEOVER &middot; {ticket.kind === "ready" ? ticket.body.profile : runId}
           </span>
-          <span style={{ color: tokens.textMuted, flexShrink: 0 }}>
-            ticket expires {new Date(status.body.expires_at).toLocaleTimeString()}
-          </span>
+          <ClockLine session={session} />
           {feedback && (
             <span
+              data-takeover-feedback
               style={{
                 color: feedback.isError ? tokens.warn : tokens.ok,
-                whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
               }}
@@ -304,140 +230,192 @@ export function TakeoverClient({ runId }: { runId: string }) {
             </span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={handlePasteToVM}
-            className="mono"
-            style={{
-              padding: "4px 10px",
-              background: "transparent",
-              color: tokens.textMuted,
-              border: `1px solid ${tokens.borderDivider}`,
-              borderRadius: 4,
-              fontSize: 10,
-              cursor: "pointer",
-            }}
-          >
-            Paste to VM
-          </button>
-          <button
-            type="button"
-            onClick={handleCopyFromVM}
-            className="mono"
-            style={{
-              padding: "4px 10px",
-              background: "transparent",
-              color: tokens.textMuted,
-              border: `1px solid ${tokens.borderDivider}`,
-              borderRadius: 4,
-              fontSize: 10,
-              cursor: "pointer",
-            }}
-          >
-            Copy from VM
-          </button>
-          <button
-            type="button"
-            onClick={retry}
-            className="mono"
-            style={{
-              padding: "4px 10px",
-              background: "transparent",
-              color: tokens.textMuted,
-              border: `1px solid ${tokens.borderDivider}`,
-              borderRadius: 4,
-              fontSize: 10,
-              cursor: "pointer",
-            }}
-          >
-            Retry
-          </button>
+        {/* `flex: 1 1 auto` + flex-end: when this group wraps under the title on
+            a phone it takes the full header width, so the two-tap confirm row
+            ('End session?' [End] [Keep]) has room and nothing is clipped. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, flex: "1 1 auto", minWidth: 0, flexWrap: "wrap" }}>
+          <HeaderButton onClick={handlePasteToVM} label="Paste to VM" />
+          <HeaderButton onClick={handleCopyFromVM} label="Copy from VM" />
+          {session.reconnect?.exhausted || ticket.kind === "error" ? (
+            <HeaderButton onClick={session.retry} label="Retry" accent />
+          ) : null}
+          <DoneControl
+            session={session}
+            confirming={confirmEnd}
+            onConfirming={setConfirmEnd}
+          />
         </div>
       </div>
-      {showManualPaste && (
+
+      {session.bridgeError && (
         <div
           className="mono"
+          data-takeover-bridge-error
           style={{
             padding: "8px 10px",
-            background: tokens.bgCard,
-            borderBottom: `1px solid ${tokens.borderDivider}`,
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-            fontSize: 10,
+            background: tokens.dangerActionBg,
+            borderBottom: `1px solid ${tokens.dangerActionBorder}`,
+            color: tokens.warn,
+            fontSize: 12,
+            flexShrink: 0,
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", color: tokens.warn }}>
-            <span>{pasteErrorReason || "Clipboard reading unavailable. Paste text manually below:"}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setShowManualPaste(false);
-                setManualPasteText("");
-              }}
-              className="mono"
-              style={{
-                background: "transparent",
-                border: "none",
-                color: tokens.textMuted,
-                cursor: "pointer",
-                fontSize: 10,
-                padding: 0,
-              }}
-            >
-              ✕ Close
-            </button>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <textarea
-              value={manualPasteText}
-              onChange={(e) => setManualPasteText(e.target.value)}
-              placeholder="Paste text here..."
-              className="mono"
-              rows={2}
-              autoFocus
-              style={{
-                flex: 1,
-                background: tokens.inputBg,
-                color: tokens.text,
-                border: `1px solid ${tokens.borderSoft}`,
-                borderRadius: 4,
-                padding: "4px 8px",
-                fontSize: 10,
-                resize: "vertical",
-                fontFamily: "inherit",
-              }}
-            />
-            <button
-              type="button"
-              onClick={handleManualPasteSubmit}
-              className="mono"
-              style={{
-                padding: "4px 12px",
-                background: tokens.accent,
-                color: tokens.accentInk,
-                border: "none",
-                borderRadius: 4,
-                fontSize: 10,
-                cursor: "pointer",
-                alignSelf: "flex-end",
-              }}
-            >
-              Paste to VM
-            </button>
-          </div>
+          Text input cannot reach the viewer: {session.bridgeError}
         </div>
       )}
-      <iframe
-        ref={iframeRef}
-        key={status.body.ticket}
-        src={vncUrl}
-        title="Live Browser Takeover"
-        style={{ flex: 1, width: "100%", border: "none" }}
-        allow="clipboard-read; clipboard-write"
-      />
+
+      {/* The viewer, or the reason there is none */}
+      {session.vncUrl && session.clock.kind !== "ended" ? (
+        <iframe
+          ref={session.iframeRef}
+          key={session.iframeKey}
+          src={session.vncUrl}
+          onLoad={session.onIframeLoad}
+          title="Live Browser Takeover"
+          style={{ flex: 1, minHeight: 0, width: "100%", border: "none", background: tokens.bgBody }}
+          allow="clipboard-read; clipboard-write"
+        />
+      ) : (
+        <div
+          className="mono"
+          data-takeover-stage-message
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            padding: 20,
+            textAlign: "center",
+            color: session.clock.kind === "ended" ? tokens.text : tokens.textMuted,
+            fontSize: 13,
+          }}
+        >
+          <span>{session.statusLine}</span>
+          {session.clock.kind === "ended" && (
+            <span style={{ fontSize: 11, color: tokens.textMuted }}>
+              at {new Date(session.clock.at).toLocaleTimeString()} · the browser stack is torn down; the profile is kept
+            </span>
+          )}
+          {ticket.kind === "error" && (
+            <span style={{ fontSize: 11, color: tokens.warn, maxWidth: 520, wordBreak: "break-word" }}>{ticket.message}</span>
+          )}
+        </div>
+      )}
+
+      <TextToVM getBridge={session.getBridge} connected={session.viewer === "connected"} />
     </div>
+  );
+}
+
+/** 'connected · ends in 1:52:10' — warn colour under 10 min, ended in words. */
+function ClockLine({ session }: { session: TakeoverSession }) {
+  const ended = session.clock.kind === "ended";
+  return (
+    <span
+      data-takeover-status
+      data-takeover-clock={session.clock.kind}
+      style={{
+        color: ended ? tokens.warn : session.clockWarn ? tokens.warn : session.viewer === "connected" ? tokens.ok : tokens.textMuted,
+        // Wraps rather than truncates: 'session clock unavailable — forge-control
+        // predates this build' is 60+ characters and a phone must show all of it.
+        overflowWrap: "anywhere",
+      }}
+    >
+      {session.statusLine}
+    </span>
+  );
+}
+
+/** Done → 'End session?' [End] [Keep] → result. Every button ≥44 px. */
+function DoneControl({
+  session,
+  confirming,
+  onConfirming,
+}: {
+  session: TakeoverSession;
+  confirming: boolean;
+  onConfirming: (v: boolean) => void;
+}) {
+  if (session.clock.kind === "ended") {
+    return (
+      <span data-takeover-done-state="done" className="mono" style={{ fontSize: 11, color: tokens.textMuted }}>
+        ended
+      </span>
+    );
+  }
+  if (session.end.kind === "pending") {
+    return (
+      <span data-takeover-done-state="pending" className="mono" style={{ fontSize: 11, color: tokens.textMuted }}>
+        ending…
+      </span>
+    );
+  }
+  if (confirming) {
+    return (
+      <span
+        data-takeover-done-state="confirm"
+        // Its own full-width row: on a 390 px phone the three pieces do not fit
+        // beside Paste/Copy, and a clipped [Keep] is exactly the wrong button to lose.
+        style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, flex: "1 1 100%" }}
+      >
+        <span className="mono" style={{ fontSize: 11, color: tokens.text }}>
+          End session?
+        </span>
+        <button
+          type="button"
+          data-takeover-done-confirm
+          onClick={() => {
+            onConfirming(false);
+            void session.endSession();
+          }}
+          className="mono"
+          style={{ ...bigButton, background: tokens.bleed, color: tokens.onAccent, border: "none" }}
+        >
+          End
+        </button>
+        <button
+          type="button"
+          data-takeover-done-keep
+          onClick={() => onConfirming(false)}
+          className="mono"
+          style={{ ...bigButton, background: "transparent", color: tokens.text, border: `1px solid ${tokens.borderEmphasis}` }}
+        >
+          Keep
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      {session.end.kind === "error" && (
+        <span data-takeover-done-state="error" className="mono" style={{ fontSize: 11, color: tokens.warn, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          end failed: {session.end.message}
+        </span>
+      )}
+      <button
+        type="button"
+        data-takeover-done
+        onClick={() => onConfirming(true)}
+        className="mono"
+        style={{ ...bigButton, background: tokens.dangerActionBg, color: tokens.bleed, border: `1px solid ${tokens.dangerActionBorder}` }}
+      >
+        Done
+      </button>
+    </span>
+  );
+}
+
+function HeaderButton({ onClick, label, accent = false }: { onClick: () => void; label: string; accent?: boolean }) {
+  const style: CSSProperties = accent
+    ? { ...bigButton, background: tokens.accent, color: tokens.accentInk, border: "none" }
+    : { ...bigButton, background: "transparent", color: tokens.textMuted, border: `1px solid ${tokens.borderDivider}` };
+  return (
+    <button type="button" onClick={onClick} className="mono" style={{ ...style, fontSize: 12, padding: "0 10px" }}>
+      {label}
+    </button>
   );
 }
 

@@ -467,7 +467,14 @@ function scanTicketWiring(src: string): TicketWiringScan {
       .filter(Boolean);
     if (args.length < 2) oneArgCalls.push(m[0]);
   }
-  return { oneArgCalls, mintsTicket: /mintTakeoverTicket\s*\(/.test(src) };
+  /* aios-takeover-usable B1: the mint moved into useTakeoverSession (the hook
+   * shared with /takeover/<runId>), which re-mints a FRESH ticket on every
+   * reconnect instead of remounting the same URL. Either form is "mints its
+   * own ticket"; a pane that does neither is round 4's defect again. */
+  return {
+    oneArgCalls,
+    mintsTicket: /mintTakeoverTicket\s*\(/.test(src) || /useTakeoverSession\s*\(/.test(src),
+  };
 }
 
 const viewerSrc = readFileSync(

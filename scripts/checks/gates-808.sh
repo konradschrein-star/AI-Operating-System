@@ -322,6 +322,18 @@ gate_sh "check-browser-takeover-ticket.ts — the unauthenticated-by-design sock
   "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
      --tsconfig ../tsconfig.checks.json ../scripts/checks/check-browser-takeover-ticket.ts | tail -3"
 
+# ── aios-takeover-usable B1 ────────────────────────────────────────────────
+# The pure half of text-to-VM: keysym rules R1 measured on the real stack
+# (CRLF → one Return, Latin-1 identity, € via the table, emoji as ONE event),
+# the noVNC class-list → state rule (there is no noVNC_disconnected class), and
+# the exact header strings the page renders ('reconnecting 2/5 · dropped after
+# 118 s', 'session clock unavailable — forge-control predates this build').
+# Wired in the same commit that created it; mutation-proved RED through this
+# pipe (vm-keys.ts "\r\n" rule → two Returns: 55 PASS → 53 PASS / 2 FAILURE(S),
+# EXIT=1; restored by cp with sha256 match, then ALL PASS EXIT=0).
+gate_sh "check-vm-keys.ts — keysym rules, viewer state, session clock strings" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-vm-keys.ts | tail -2"
+
 # Needs a Postgres SERVER. It creates its own scratch database and issues no
 # statement against the one named in DATABASE_URL — but with no DSN at all there
 # is nothing to connect to, so it is SKIPPED rather than reported as passing.

@@ -521,3 +521,127 @@ export async function mintTakeoverTicket(dirId: string): Promise<TakeoverTicketB
   return body as TakeoverTicketBody;
 }
 
+/* ── Session clock & Done (aios-takeover-usable, PLAN.md §1.3/§1.4) ──────── */
+
+/**
+ * The session-clock path for a run: `GET /api/uploads/:id/takeover/session`
+ * behind `/api/proxy`. Answers the questions the ticket cannot — how long the
+ * SESSION (not the 120 s connect window) has left, whether it has ended and
+ * why. Same validation as `takeoverTicketUrl`; null for a bad id.
+ */
+export function takeoverSessionUrl(dirId: string): string | null {
+  if (!DIR_ID_RE.test(dirId)) return null;
+  return `${PROXY_ROOT}/uploads/${dirId}/takeover/session`;
+}
+
+/** The Done button's target: `POST /api/uploads/:id/takeover/end`. */
+export function takeoverEndUrl(dirId: string): string | null {
+  if (!DIR_ID_RE.test(dirId)) return null;
+  return `${PROXY_ROOT}/uploads/${dirId}/takeover/end`;
+}
+
+/** What `GET /api/uploads/:id/takeover/session` answers (PLAN.md §1.4). */
+export interface TakeoverSessionBody {
+  profile: string;
+  stack_up: boolean;
+  supervisor_live: boolean;
+  connected_sockets: number;
+  connects: number;
+  takeover_started_at: string | null;
+  last_disconnect_at: string | null;
+  idle_deadline: string | null;
+  takeover_deadline: string | null;
+  hard_deadline: string | null;
+  /** ms until the earliest deadline; null when no clock is armed yet. */
+  remaining_ms: number | null;
+  /** Server clock, ISO — the page measures its own drift against it. */
+  now: string;
+  ended: null | { reason: string; at: string };
+}
+
+/** What `POST /api/uploads/:id/takeover/end` answers on success. */
+export interface TakeoverEndBody {
+  ended: true;
+  profile: string;
+  actions: string[];
+}
+
+/**
+ * One poll of the session clock.
+ *
+ *   ok           — the route answered; `body` is the clock.
+ *   unavailable  — forge-control predates this build: the route is not
+ *                  mounted. Distinguished from the route's OWN 404 (`{error}`
+ *                  JSON, "run has no profile") by the body: Hono's unmounted
+ *                  404 is not this route's JSON. The page renders the
+ *                  difference in words — never a blank, never a spinner.
+ *   error        — anything else, with the reason.
+ */
+export type TakeoverSessionPoll =
+  | { kind: "ok"; body: TakeoverSessionBody; fetchedAt: number }
+  | { kind: "unavailable" }
+  | { kind: "error"; message: string };
+
+export async function fetchTakeoverSession(dirId: string): Promise<TakeoverSessionPoll> {
+  const url = takeoverSessionUrl(dirId);
+  if (!url) return { kind: "error", message: `"${dirId}" is not a valid run id` };
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { accept: "application/json" }, cache: "no-store" });
+  } catch (err) {
+    return { kind: "error", message: `session clock unreachable: ${(err as Error).message}` };
+  }
+  const fetchedAt = Date.now();
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
+  const errorField =
+    json !== null && typeof json === "object" && typeof (json as { error?: unknown }).error === "string"
+      ? (json as { error: string }).error
+      : null;
+  if (res.status === 404 && errorField === null) return { kind: "unavailable" };
+  if (!res.ok) return { kind: "error", message: `${res.status} ${errorField ?? res.statusText}` };
+  if (json === null || typeof json !== "object" || typeof (json as { now?: unknown }).now !== "string") {
+    return { kind: "error", message: "session route returned an unexpected shape" };
+  }
+  return { kind: "ok", body: json as TakeoverSessionBody, fetchedAt };
+}
+
+/**
+ * End the session (Done). Resolves with the route's body; throws with the
+ * reason on any failure (502 carries `stderr_tail` — surfaced, since the
+ * alternative is a Done button that says nothing while Xvfb keeps running).
+ */
+export async function endTakeoverSession(dirId: string): Promise<TakeoverEndBody> {
+  const url = takeoverEndUrl(dirId);
+  if (!url) throw new Error(`"${dirId}" is not a valid run id`);
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "POST", headers: { accept: "application/json" }, cache: "no-store" });
+  } catch (err) {
+    throw new Error(`could not reach forge-control to end the session: ${(err as Error).message}`);
+  }
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
+  if (!res.ok) {
+    const rec = json !== null && typeof json === "object" ? (json as Record<string, unknown>) : {};
+    const detail = typeof rec.error === "string" ? rec.error : res.statusText;
+    const tail = typeof rec.stderr_tail === "string" && rec.stderr_tail.length > 0 ? ` — ${rec.stderr_tail}` : "";
+    if (res.status === 404 && typeof rec.error !== "string") {
+      throw new Error("end route unavailable — forge-control predates this build");
+    }
+    throw new Error(`${res.status} ${detail}${tail}`);
+  }
+  if (json === null || typeof json !== "object" || (json as { ended?: unknown }).ended !== true) {
+    throw new Error("end route returned an unexpected shape");
+  }
+  return json as TakeoverEndBody;
+}
+
