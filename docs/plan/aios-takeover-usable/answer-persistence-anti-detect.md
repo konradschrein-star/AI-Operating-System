@@ -44,6 +44,33 @@ is a genuine headful browser — which is what this stack runs. No `auth.json` o
 supervisor log under `/opt/ai-os/browser-profiles/.state/` shows a captcha,
 challenge or block.
 
+## What changed, in the names that shipped
+
+- `scripts/research-browser.mjs`: the `[profile]` positional is optional and defaults to
+  **`konrad-main`** (`RESEARCH_BROWSER_DEFAULT_PROFILE` overrides). A name not yet on disk
+  is refused unless it is the default, a service key, or given with **`--throwaway`** —
+  which writes the marker `<profile>/.throwaway` so a disposable directory says what it is.
+  Every directory already on disk keeps working under its old name.
+- The prompt corpus (`forge-control/src/lib/project-tick.ts`, `BROWSER_FIRST`) quotes
+  `open --url <URL> --label <…>` with no profile, names `--throwaway` as the opt-in, and
+  names `close` as the signal that ends a takeover session. `docs/tools/research-browser.md`
+  §3, §4.1 and §7.3 carry the same three facts.
+- Nothing is deleted. The six throwaway directories (`r3-takeover`, `r5proof`,
+  `r704-loginwall`, `r705-review`, `scratch`, `smoke-r701`) stay until Konrad says otherwise;
+  `scripts/ops/guard-autonomy.py` already treats only `scratch` as a routine deletion target
+  and guards every sibling, `konrad-main` included.
+
+## Your choice on the existing `os-ui` profile (default stands if you say nothing)
+
+- **C — fresh `konrad-main` (recommended, the default).** Log in once per service over the
+  takeover. Reason: separation, not tidiness. `os-ui` is the profile agent runs use to
+  screenshot the console — live on `:126` right now. If your Google/GitHub logins lived in
+  it, every future screenshot run would drive a browser carrying your authenticated session.
+- **A — make `os-ui` the default** (`RESEARCH_BROWSER_DEFAULT_PROFILE=os-ui`): saves the
+  logins you have there (17 cookies, 0 saved passwords) at the cost of the separation above.
+- **B — rename `os-ui` to `konrad-main` after `close os-ui`**: the only option that kills a
+  live session, for 17 cookies.
+
 ## When to revisit
 
 Adopt an anti-detect tool only with a named site, a screenshot of the block, and the

@@ -482,9 +482,13 @@ async function main(): Promise<void> {
     /* ignore if not running */
   }
 
+  // `--throwaway` is REQUIRED: since aios-takeover-usable B3 the driver refuses a
+  // NEW profile name without it (exit 3). On this box the check used to pass
+  // only because a stale `.state/testclipe2e` happened to exist — green by
+  // leftover state. The flag makes it pass on a clean box for the right reason.
   const takeoverJsonRaw = execFileSync(
     "node",
-    [RESEARCH_BROWSER, "takeover", TEST_PROFILE],
+    [RESEARCH_BROWSER, "takeover", TEST_PROFILE, "--throwaway"],
     { encoding: "utf8" },
   );
   interface TakeoverCmdOutput {
@@ -822,47 +826,34 @@ async function main(): Promise<void> {
     await pasteBtn.click();
     await page.waitForTimeout(1_000);
 
+    // v2 (aios-takeover-usable B1): a failed readText() no longer unfolds a second
+    // textarea — the always-visible TextToVM panel IS the fallback, and the message
+    // points at it. Its full send path (keysyms, VM clipboard, phone layout) is
+    // check-takeover-text-input-e2e.ts's; here only the honest message and the
+    // panel's presence are pinned.
     const bodyTextAfterDenied = (await page.locator("body").textContent()) ?? "";
     check(
-      "Toolbar displays honest permission error diagnostic",
-      bodyTextAfterDenied.includes("Clipboard read failed: Permission denied by user (test)") ||
-        bodyTextAfterDenied.includes("Clipboard read unsupported"),
+      "Toolbar displays the honest permission error and points at the text panel",
+      bodyTextAfterDenied.includes("Clipboard read failed (Permission denied by user (test)) — paste into the text panel below instead"),
       `body text: ${bodyTextAfterDenied.slice(0, 300)}`,
     );
 
-    // Verify manual paste fallback UI is visible
-    const manualTextarea = page.locator("textarea[placeholder='Paste text here...']").first();
-    const hasManualBox = (await manualTextarea.count()) > 0;
-    check("Manual paste fallback textarea is rendered on screen", hasManualBox);
+    const panelTextarea = page.locator("[data-text-to-vm-input]").first();
+    const hasPanelBox = (await panelTextarea.count()) > 0 && (await panelTextarea.isVisible());
+    check("The always-visible text panel (the v2 fallback) is on screen", hasPanelBox);
+    check(
+      "No second 'Paste text here...' fallback textarea unfolds any more",
+      (await page.locator("textarea[placeholder='Paste text here...']").count()) === 0,
+    );
 
     await takeShot(page, "takeover-clipboard-permission-fallback");
 
-    if (hasManualBox) {
+    if (hasPanelBox) {
       const fallbackPayload = "MANUAL_FALLBACK_PASTED_TEXT_4567";
-      await manualTextarea.fill(fallbackPayload);
-      const fallbackSubmitBtn = page.locator("button:has-text('Paste to VM')").last();
-      await fallbackSubmitBtn.click();
-      await page.waitForTimeout(1_000);
-
-      const remoteValAfterManual = await page.evaluate(() => {
-        const iframe = document.querySelector(
-          "iframe[title='Live Browser Takeover']",
-        ) as HTMLIFrameElement;
-        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-        const el = doc?.getElementById("noVNC_clipboard_text") as HTMLTextAreaElement | null;
-        return el?.value ?? "";
-      });
-
+      await panelTextarea.fill(fallbackPayload);
       check(
-        "Submitting manual fallback injected text into #noVNC_clipboard_text",
-        remoteValAfterManual === fallbackPayload,
-        `expected "${fallbackPayload}", got "${remoteValAfterManual}"`,
-      );
-
-      const bodyAfterManual = (await page.locator("body").textContent()) ?? "";
-      check(
-        "Toolbar confirms manual paste with character count ('Pasted 32 chars')",
-        bodyAfterManual.includes(`Pasted ${fallbackPayload.length} chars`),
+        "The panel accepts pasted text with no clipboard permission involved",
+        (await panelTextarea.inputValue()) === fallbackPayload,
       );
     }
 

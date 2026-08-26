@@ -68,16 +68,25 @@ pin — the bundled path contains a revision number and breaks on a playwright u
 ## 3. Usage
 
 ```
-research-browser.mjs <open|status|takeover|close> <profile> [flags]
+research-browser.mjs <open|status|takeover|close> [profile] [flags]
 research-browser.mjs --help
 ```
 
+**`[profile]` is optional and defaults to `konrad-main`** (`$RESEARCH_BROWSER_DEFAULT_PROFILE`
+overrides the name). That is the ONE durable profile every takeover-capable run shares, so a
+login Konrad types by hand is still there for the next run. Until 2026-08-26 the positional was
+mandatory and the prompt corpus said `open scratch`; every run that copied it created a fresh
+`user-data-dir` nothing ever reopened (§4.1 has the count). A name that is **not yet on disk** is
+accepted only if it is the default, a `SERVICES` key (`perplexity`), or given with
+`--throwaway`; anything else is a usage error (exit 3) that costs nothing. A name already on disk
+always works, so nothing Konrad has is cut off.
+
 | Subcommand | What it does |
 |---|---|
-| `open <profile>` | Launch or attach a Chrome `persistentContext` on the profile, navigate, evaluate the login signals, screenshot, print JSON status. Exit 4 on a login wall, with the browser **left running**. |
-| `status <profile>` | Is a session live, is the profile authenticated, what is the takeover URL. Cheap by default; `--probe` re-navigates for an authoritative answer. |
-| `takeover <profile>` | Ensure Xvfb + x11vnc + websockify (+ a WM) are up for this profile's display; print the noVNC URL and the SSH tunnel command. Needs no browser. |
-| `close <profile>` | Tear down the browser and the entire takeover stack. Never touches the profile's cookies. |
+| `open [profile]` | Launch or attach a Chrome `persistentContext` on the profile, navigate, evaluate the login signals, screenshot, print JSON status. Exit 4 on a login wall, with the browser **left running**. |
+| `status [profile]` | Is a session live, is the profile authenticated, what is the takeover URL, how long the takeover session has left, and why the last one ended. Cheap by default; `--probe` re-navigates for an authoritative answer. |
+| `takeover [profile]` | Ensure Xvfb + x11vnc + websockify (+ a WM) are up for this profile's display; print the noVNC URL and the SSH tunnel command. Needs no browser. |
+| `close [profile]` | Tear down the browser and the entire takeover stack. Never touches the profile's cookies. **This is the agent's end signal** for a takeover session (§7.3) — run it when the human's part is done. |
 
 **Flags**
 
@@ -89,30 +98,35 @@ research-browser.mjs --help
 | `--service S` | inferred from `--url`'s host, then the profile name | Force a `SERVICES` entry: `perplexity`, `generic` |
 | `--probe` | — | `status` only: re-navigate and re-evaluate instead of reading cached state |
 | `--no-reminder` | — | `open` only: detect the wall and exit 4, but queue no reminder |
+| `--throwaway` | — | Create a **disposable** profile under a new name: writes `<profile>/.throwaway` and the JSON reports `throwaway: true`. Refused on the default profile. Without it a new name that is neither the default nor a service key is a usage error. |
 | `--help`, `-h` | — | Print usage and exit 0 |
 
 Flags accept `--url X` or `--url=X`. Unknown flags, a missing or empty flag value, a bad
-profile name, an extra positional argument, and `--probe` on the wrong subcommand are all usage
-errors (exit 3) that cost nothing — they happen before playwright, Chrome or the network is
-touched.
+profile name, a new profile name without `--throwaway`, `--throwaway` on the default profile,
+an extra positional argument, and `--probe` on the wrong subcommand are all usage errors
+(exit 3) that cost nothing — they happen before playwright, Chrome or the network is touched.
 
 **Examples**
 
 ```bash
+# Any page, in the durable default profile (konrad-main) — the form the prompt corpus quotes
+scripts/research-browser.mjs open --url https://example.com --label smoke --run-id 148ae1fd8f65
+
 # Perplexity, resolved from the profile name; goes to the service home
 scripts/research-browser.mjs open perplexity
 
-# Any page, explicit run id so the screenshot URL is servable
-scripts/research-browser.mjs open scratch --url https://example.com --label smoke --run-id 148ae1fd8f65
+# Disposable work under a NEW name: --throwaway is mandatory, and it says what it is
+scripts/research-browser.mjs open scratch-r9 --throwaway --url https://example.com --label smoke
 
-# Authoritative auth check (re-navigates; never queues a reminder)
-scripts/research-browser.mjs status perplexity --probe
+# Authoritative auth check (re-navigates; never queues a reminder); defaults to konrad-main
+scripts/research-browser.mjs status --probe
 
 # Just the takeover stack, no browser
 scripts/research-browser.mjs takeover perplexity
 
-# Full teardown; cookies survive
-scripts/research-browser.mjs close scratch
+# Full teardown; cookies survive. On the default profile this ENDS the takeover session (§7.3)
+scripts/research-browser.mjs close
+scripts/research-browser.mjs close scratch-r9
 ```
 
 ## 4. Profiles — and what is in them
@@ -130,17 +144,64 @@ stays literally true:
 
 | File | Contents |
 |---|---|
-| `session.json` | supervisor pid, display, ports, deadlines — its liveness proof |
+| `session.json` | supervisor pid, display, ports, deadlines — its liveness proof. Since 2026-08-26 also `takeover_started_at`, `takeover_deadline`, `connected` (§7.3) |
 | `takeover.json` | pids of Xvfb / WM / x11vnc / websockify |
+| `takeover-activity.json` | **written by forge-control, not this tool**: viewer-socket facts `{connected, connects, first_connect_at, last_connect_at, last_disconnect_at, written_at}` (§7.3) |
+| `last-shutdown.json` | `{reason, at, pid}` — why and when the last supervisor ended, so a page that asks after the fact gets words, not a blank (§7.3) |
 | `auth.json` | the last login evaluation, for a cheap `status` |
 | `display` | this profile's pinned display number |
 | `req/`, `res/` | the request/response queue the CLI uses to talk to the supervisor |
 | `stop` | touch file asking the supervisor to shut down |
 | `*.log` | one log per managed process, plus `supervisor.log` |
 
+The one exception to "nothing but Chrome's state in the profile directory" is a single empty
+marker file, `<profile>/.throwaway`, and it exists precisely so the sentence about *cookies*
+stays true: it says which directories hold nothing worth keeping.
+
 Profile names must match `/^[a-z0-9][a-z0-9-]{0,38}$/` — lowercase alphanumerics and dashes,
 starting alphanumeric. The dot is excluded so a profile can never collide with `.state`, and
 path traversal (`../escape`) is rejected as a usage error.
+
+### 4.1 Durable vs throwaway — and the eight directories already on disk
+
+There are two kinds of profile, and the CLI makes a caller say which one it wants:
+
+| | Durable | Throwaway |
+|---|---|---|
+| How you get one | the default (`konrad-main`), a `SERVICES` key (`perplexity`), or any name already on disk | a new name **plus** `--throwaway` |
+| Marker | none | `<profile>/.throwaway`, written on creation; `open`/`status` report `throwaway: true` |
+| What it is for | logins Konrad typed by hand over a takeover; reused by every run | parallel isolated research, smoke tests, anything whose cookies nobody wants back |
+| Deleted by | nobody — never without Konrad's word | still nobody automatically; the marker is what makes a later cleanup request safe to honour |
+
+Why the split exists — **measured 2026-08-26 00:5xZ** (sqlite over copies of each
+`Default/Cookies` and `Default/Login Data`; no values read). Eight profile directories were on
+disk: `os-ui` (17 cookies, github/google), `perplexity` (4), `r3-takeover` (5), `r5proof` (5),
+`r704-loginwall` (7), `r705-review` (3), `scratch` (0), `smoke-r701` (0) — and **0 saved
+logins in every one of them**. Six of the eight are round-scoped throwaways that exist only
+because a run copied `open scratch` from the prompt corpus and then varied the name. The
+persistence machinery was never the problem; the naming was. `docs/plan/aios-takeover-usable/
+answer-persistence-anti-detect.md` is the written answer on why a VM or an anti-detect browser
+would not have fixed this either.
+
+**None of the six pre-existing `r*`/`smoke`/`scratch` directories is deleted, renamed or marked
+by this change.** They hold nothing (0 logins, ≤7 cookies) — but a directory Konrad did not
+ask to lose is not the tool's to remove, and `scripts/ops/guard-autonomy.py` enforces the same
+rule from the other side: only `/opt/ai-os/browser-profiles/scratch` (and its `.state` twin) is
+a routine deletion target there; every sibling, `konrad-main` included, is guarded. Deleting the
+throwaways is a separate, explicit request.
+
+**Migration — Konrad's choice**, asked in the manager chat; the default stands if he says
+nothing:
+
+| Option | What happens | Cost |
+|---|---|---|
+| **C — fresh `konrad-main` (default)** | the next default-profile `open` creates it; he logs in once over the takeover | one login per service; nothing renamed, nothing deleted, and the agents' screenshotting profile (`os-ui`, live on `:126`) stays separate from his personal logins |
+| A — keep `os-ui` as the default | `RESEARCH_BROWSER_DEFAULT_PROFILE=os-ui` in the executor's environment | zero logins, but every future console-screenshot run then drives a browser carrying his authenticated Google/GitHub session |
+| B — rename `os-ui` after close | `close os-ui`, then `mv` both `browser-profiles/os-ui` and `.state/os-ui` to `konrad-main` | the one option that requires killing a live session, for 17 cookies and 0 logins |
+
+Known cost of a single durable profile, stated: one profile = one Chrome = one supervisor, so
+agent browser work on `konrad-main` serialises through its request queue (§11). Parallel
+isolated research keeps `--throwaway`.
 
 ## 5. Screenshot convention (a contract)
 
@@ -285,6 +346,96 @@ the process dies, printing that process's own log tail. Without this, a downstre
 reports as "the supervisor did not come up within 90s" and the real cause (the Xvfb segfault
 above) is visible only to someone who thinks to read three log files.
 
+### 7.3 Takeover session lifetime
+
+A takeover session is the time between the first viewer socket reaching x11vnc and the moment
+the stack is torn down. It is **not** the ticket's lifetime. The ticket forge-control-web mints
+for `/takeover/<runId>` is a bearer token in a URL path and its TTL stays at 120 s
+(`DEFAULT_TICKET_TTL_MS`, `forge-control/src/lib/takeover-ticket.ts`) — that is a connect
+window, verified once at upgrade time, and nothing about it touches an open pipe. Measured
+2026-08-26 (memory note `takeover-socket-death-forensics`): an idle, handshaken RFB session
+survived more than 240 s on both hops, so a session that dies at ~2 min died for another
+reason (§7.4).
+
+**Who owns what.** forge-control records *facts* about viewer sockets; the supervisor
+(`research-browser.mjs supervise()`, the process that already owns `shutdown()`) turns those
+facts into *deadlines*. They are separate processes on purpose: forge-control is redeployed all
+day (114 restarts on its pm2 counter, `unstable_restarts=0` — deploys, not crashes), and a deploy
+must not orphan an Xvfb/x11vnc/websockify trio with nobody holding its clock.
+
+| File (under `.state/<profile>/`) | Writer | Shape |
+|---|---|---|
+| `takeover-activity.json` | forge-control, read-modify-write behind a per-profile queue, atomic rename | `{"connected": n, "connects": n, "first_connect_at": iso\|null, "last_connect_at": iso\|null, "last_disconnect_at": iso\|null, "written_at": iso}` — `first_connect_at` and `connects` survive a forge-control restart; `connected` is rebuilt from the new process's memory on its first write |
+| `session.json` (added fields) | the supervisor, every tick | `takeover_started_at`, `takeover_deadline`, `connected` alongside the existing `idle_deadline` / `hard_deadline` |
+| `last-shutdown.json` | the supervisor, **before** it tears anything down | `{"reason": "…", "at": iso, "pid": n}` |
+
+**Three ways a session ends — one code path.** Every one of them runs
+`research-browser.mjs close <profile>`: stop file → supervisor `shutdown(reason)` →
+`last-shutdown.json` → `teardownTakeover()` kills websockify, x11vnc, autocutsel×2, the WM and
+Xvfb; Chrome dies with its display; the profile directory is untouched.
+
+1. **The Done button** on `/takeover/<runId>` → `POST /api/proxy/uploads/<runId>/takeover/end`
+   (NextAuth in front, `/api/proxy` behind it; also reachable as
+   `/api/uploads/browser/<profile>/takeover/end`) → forge-control spawns `close <profile>` with
+   a 30 s timeout and returns its JSON `{ended: true, profile, actions: […]}`; a failure is a
+   `502 {error, stderr_tail}`, never a silent no-op. The page asks twice before sending.
+2. **The agent** — when it judges the human's part done it runs `close`. The cue after a login
+   wall is a `status --probe` that comes back `login.authenticated: true`. **That is THE
+   signal; there is no implicit one.** An agent that opens a browser and walks away leaves
+   the clocks below to do its job for it — a safety net, not the plan. The prompt corpus says
+   so at the point of work (`forge-control/src/lib/project-tick.ts`, `BROWSER_FIRST`).
+3. **The clocks**, computed by the pure `computeTakeoverDeadlines()` each supervisor tick:
+   - **Idle grace.** A connected viewer is never idle. After the last viewer socket closes,
+     `TAKEOVER_IDLE_GRACE_MS` (default 30 min = `1800000`) must pass before an idle shutdown.
+     Stepping away for a coffee does not kill it; the first idle tick only arms the grace. The
+     pre-existing `IDLE_TIMEOUT_MS` (1 h) / `LOGIN_IDLE_TIMEOUT_MS` (4 h after a wall) keep
+     governing the agent-only case, and the supervisor takes the *later* of the two.
+   - **Safety cap.** `TAKEOVER_MAX_SESSION_MS` (default 2 h = `7200000`) from
+     `first_connect_at` → `shutdown('takeover cap 2h')`. Env-configurable; both values must be
+     finite and > 0 or the supervisor refuses to start.
+   - **Outer bound.** `HARD_MAX_SESSION_MS` (8 h from launch) is never exceeded by either.
+
+**What the page shows.** `/takeover/<runId>` polls
+`GET /api/proxy/uploads/<runId>/takeover/session` every 15 s (`no-store`; also at
+`/api/uploads/browser/<profile>/takeover/session`):
+
+```
+200 { profile, stack_up, supervisor_live, connected_sockets, connects,
+      takeover_started_at, last_disconnect_at, idle_deadline, takeover_deadline,
+      hard_deadline, remaining_ms, now, ended: null | { reason, at, pid } }
+404 { error }   the run has no profile
+```
+
+The header renders `connected · ends in 1:52:10` from `remaining_ms` (the nearest of the
+deadlines), turns to the warn colour under 10 min, and after the end says
+`Session ended: <reason>` from `ended` — the reason comes from `last-shutdown.json`, which is
+why that file is written first. If forge-control predates the endpoint (a 404 on the session
+URL), the page says so **in words**; a blank clock is the bug this exists to remove. On a
+socket drop the page re-mints a fresh ticket at once, then retries at 2/5/10/10 s (five
+attempts, counter visible), and never auto-reconnects once the session endpoint says `ended`.
+
+### 7.4 Where the socket facts are logged — and what resets them
+
+forge-control logs one line per closed viewer socket:
+
+```
+[browser-takeover] upgrade closed run=<runId> profile=<profile> port=<n> jti=<jti> seconds=<n> by=client|upstream
+```
+
+`jti` only — the ticket is the credential and the bytes that crossed are Konrad's keystrokes;
+neither is logged anywhere. `by=client` means the browser side closed first, `by=upstream` the
+websockify side. Timestamps for the *open* side live in `.state/<profile>/websockify.log`
+(`[26/Aug/2026 00:01:35] connecting to: 127.0.0.1:6026`, local time); nginx has
+`access_log off` on the WS location by design, so it has nothing.
+
+**A forge-control restart resets every open takeover socket** — the pipe lives in that
+process. Measured 2026-08-26: connect 00:46:46Z, `pm2 restart forge-control` 00:47:06Z,
+websockify `Connection reset by peer` (memory note `takeover-socket-death-forensics`). With
+`unstable_restarts=0` on the counter, every one of those restarts is a deploy, so this is the
+primary failure mode, not an edge case: the page's reconnect-with-re-mint exists for exactly
+this, and the session's clocks and its Done path live in the supervisor and the state files,
+which do not restart with forge-control.
+
 ## 8. No passwords are stored anywhere
 
 **This tool never reads, types, prompts for, transmits or writes a credential.** There is no
@@ -341,7 +492,9 @@ Steps Konrad can follow verbatim. The trigger is a run that exits **4**.
 
 The browser is deliberately **left running** on exit 4 so there is something to take over. The
 supervisor shuts itself down after 4 hours idle following a wall (1 hour otherwise, 8 hours
-absolute), and `close <profile>` ends it immediately.
+absolute) — and once a viewer has connected, the takeover clocks of §7.3 apply on top: 30 min
+of grace after the last viewer disconnects, a 2 h cap from the first connect. `close [profile]`
+ends it immediately, and is what the agent runs once `status --probe` reports the login took.
 
 ### 9.1 Reminder de-duplication
 
@@ -391,7 +544,7 @@ reminder is named on stderr, so it is never invisible.
 | 0 | Success — JSON status on stdout |
 | 1 | Runtime error: browser launch, X/VNC startup, screenshot failure, supervisor IPC timeout, reminder POST failure. The offending process's log tail is printed. |
 | 2 | Missing prerequisite: the playwright module, a Chrome binary, or the Xvfb/x11vnc/websockify/noVNC stack. Every path tried is named. |
-| 3 | Usage error: bad subcommand, bad profile name, unknown flag, empty flag value, bad `--url`, extra positional argument, or `--url` missing for `generic`. Costs nothing — nothing is launched. |
+| 3 | Usage error: bad subcommand, bad profile name, a new profile name without `--throwaway`, `--throwaway` on the default profile, unknown flag, empty flag value, bad `--url`, extra positional argument, or `--url` missing for `generic`. Costs nothing — nothing is launched. |
 | **4** | **LOGIN REQUIRED** — a login wall was detected. The takeover stack is up, the wall is screenshotted, a reminder is queued, and the browser is **left running**. Distinct on purpose: a caller can tell "needs Konrad" from "broke". Not an error. |
 
 Large payloads are safe on a pipe: `process.stdout.write()` is asynchronous when stdout is a
@@ -575,7 +728,10 @@ actions: [ { "what": "supervisor", "result": "stopped-gracefully", "pid": 184292
 the forge-control API — enforced structurally, not by discipline:
 
 - The pure logic is imported straight from the `.mjs`, which only runs `main()` behind an
-  `isMain()` inode check. Covered: argv parsing and the usage-error contract, profile path
+  `isMain()` inode check. Covered: argv parsing and the usage-error contract, the profile
+  choice (`resolveProfileChoice()`: default / on-disk / service key / `--throwaway` / refusal),
+  the takeover clocks (`computeTakeoverDeadlines()` against synthetic activity files, including
+  garbage ones), profile path
   construction, label sanitisation (including the 64-char cut never leaving a trailing dash),
   screenshot path/URL construction, run-id resolution and `url_servable` (asserted against a
   local copy of the uploads route's own regex), display and port allocation, service resolution

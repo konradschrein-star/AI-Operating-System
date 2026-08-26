@@ -39,6 +39,7 @@ import {
   PROFILE_RE,
 } from "./browser-takeover.ts";
 import { mintTakeoverTicket } from "./takeover-ticket.ts";
+import { readActivity, liveSocketCount, resetLiveSocketsForTests } from "./takeover-session.ts";
 import uploadsRoutes from "../routes/uploads.ts";
 
 /**
@@ -806,6 +807,110 @@ describe("uploads route ordering — /vnc/ticket is not swallowed by /vnc/*", ()
   });
 });
 
+describe("uploads route ordering — /takeover/session and /takeover/end (PLAN.md §1.4)", () => {
+  // Same trap, same proof: a response from the right handler. These routes
+  // sit above `/:id/vnc/*` and `/:id/:name`; the run-id form 404s when the id
+  // owns no profile, the profile form answers from a mktemp state root.
+  // The end route must NEVER spawn the real research-browser.mjs from a test:
+  // the script hard-codes the live state root, so it would `close` a real
+  // profile. RESEARCH_BROWSER_SCRIPT points it at a stand-in.
+  let stateRoot: string;
+  let scriptsDir: string;
+  const savedStateRoot = process.env.STATE_ROOT;
+  const savedScript = process.env.RESEARCH_BROWSER_SCRIPT;
+
+  before(() => {
+    stateRoot = mkdtempSync(path.join(tmpdir(), "takeover-routes-state-"));
+    scriptsDir = mkdtempSync(path.join(tmpdir(), "takeover-routes-scripts-"));
+    process.env.STATE_ROOT = stateRoot;
+    resetLiveSocketsForTests();
+  });
+
+  after(() => {
+    if (savedStateRoot === undefined) delete process.env.STATE_ROOT;
+    else process.env.STATE_ROOT = savedStateRoot;
+    if (savedScript === undefined) delete process.env.RESEARCH_BROWSER_SCRIPT;
+    else process.env.RESEARCH_BROWSER_SCRIPT = savedScript;
+    rmSync(stateRoot, { recursive: true, force: true });
+    rmSync(scriptsDir, { recursive: true, force: true });
+  });
+
+  test("GET /browser/:profile/takeover/session answers the view with no-store, not a proxied 404", async () => {
+    const res = await uploadsRoutes.request("/browser/routetest/takeover/session");
+    assert.equal(res.status, 200, `expected the session view, got ${res.status}`);
+    assert.equal(res.headers.get("cache-control"), "no-store");
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(body).sort(), [
+      "connected_sockets",
+      "connects",
+      "ended",
+      "hard_deadline",
+      "idle_deadline",
+      "last_disconnect_at",
+      "now",
+      "profile",
+      "remaining_ms",
+      "stack_up",
+      "supervisor_live",
+      "takeover_deadline",
+      "takeover_started_at",
+    ]);
+    assert.equal(body.profile, "routetest");
+    assert.equal(body.supervisor_live, false);
+    assert.equal(body.remaining_ms, null);
+    assert.equal(body.ended, null);
+  });
+
+  test("GET /:id/takeover/session 404s for a run with no profile; a bad id is 400", async () => {
+    const res = await uploadsRoutes.request("/aaaabbbbcccc/takeover/session");
+    assert.equal(res.status, 404);
+    assert.match(((await res.json()) as { error: string }).error, /No browser profile found for run aaaabbbbcccc/);
+    assert.equal((await uploadsRoutes.request("/NOT-AN-ID/takeover/session")).status, 400);
+    assert.equal((await uploadsRoutes.request("/browser/Bad_Profile/takeover/session")).status, 400);
+  });
+
+  test("POST /browser/:profile/takeover/end returns the close actions on success", async () => {
+    const ok = path.join(scriptsDir, "ok.mjs");
+    writeFileSync(
+      ok,
+      `const [cmd, profile] = process.argv.slice(2);
+       console.log(JSON.stringify({ profile, actions: [{ what: "supervisor", result: "not-running", cmd }] }));`,
+    );
+    process.env.RESEARCH_BROWSER_SCRIPT = ok;
+    const res = await uploadsRoutes.request("/browser/routetest/takeover/end", { method: "POST" });
+    const text = await res.text();
+    assert.equal(res.status, 200, `expected 200, got ${res.status}: ${text}`);
+    assert.equal(res.headers.get("cache-control"), "no-store");
+    assert.deepEqual(JSON.parse(text), {
+      ended: true,
+      profile: "routetest",
+      actions: [{ what: "supervisor", result: "not-running", cmd: "close" }],
+    });
+  });
+
+  test("POST .../takeover/end answers 502 {error, stderr_tail} when close fails", async () => {
+    const fail = path.join(scriptsDir, "fail.mjs");
+    writeFileSync(fail, `console.error("x11vnc pid 999 would not die"); process.exit(1);`);
+    process.env.RESEARCH_BROWSER_SCRIPT = fail;
+    const res = await uploadsRoutes.request("/browser/routetest/takeover/end", { method: "POST" });
+    assert.equal(res.status, 502);
+    const body = (await res.json()) as { error: string; stderr_tail: string };
+    assert.match(body.error, /close routetest exited 1/);
+    assert.match(body.stderr_tail, /x11vnc pid 999 would not die/);
+  });
+
+  test("POST /:id/takeover/end 404s for a run with no profile before spawning anything", async () => {
+    process.env.RESEARCH_BROWSER_SCRIPT = path.join(scriptsDir, "must-not-run.mjs");
+    const res = await uploadsRoutes.request("/aaaabbbbcccc/takeover/end", { method: "POST" });
+    assert.equal(res.status, 404);
+  });
+
+  test("GET on the end route is not a way to end a session", async () => {
+    const res = await uploadsRoutes.request("/browser/routetest/takeover/end");
+    assert.notEqual(res.status, 200);
+  });
+});
+
 describe("WebSocket-upgrade proxy — real socket, ticket-gated, full chain", () => {
   // Round 4's proxyTakeoverHttp only ever proved plain HTTP GET/POST. noVNC's
   // canvas needs a 101 Switching Protocols handshake, which fetch() cannot
@@ -871,6 +976,19 @@ describe("WebSocket-upgrade proxy — real socket, ticket-gated, full chain", ()
   let proxyPort: number;
 
   /**
+   * Every accepted upgrade now writes `<STATE_ROOT>/<profile>/takeover-activity.json`
+   * before it pipes. With STATE_ROOT unset that is the LIVE state tree under
+   * /opt/ai-os/browser-profiles, so this suite repoints it at a mktemp dir —
+   * getStateRoot() reads the env at call time, which is what makes this work.
+   */
+  let stateRoot: string;
+  const savedStateRoot = process.env.STATE_ROOT;
+
+  /** Captured `[browser-takeover]` log lines, so the closed line can be asserted on. */
+  const logLines: string[] = [];
+  const realConsoleLog = console.log;
+
+  /**
    * Every socket either server accepts, so teardown can destroy them.
    *
    * `server.close()` waits for open connections. These tests deliberately
@@ -889,6 +1007,15 @@ describe("WebSocket-upgrade proxy — real socket, ticket-gated, full chain", ()
   }
 
   before(async () => {
+    stateRoot = mkdtempSync(path.join(tmpdir(), "takeover-ws-state-"));
+    process.env.STATE_ROOT = stateRoot;
+    resetLiveSocketsForTests();
+    console.log = (...args: unknown[]) => {
+      const line = args.map(String).join(" ");
+      if (line.startsWith("[browser-takeover]")) logLines.push(line);
+      realConsoleLog(...args);
+    };
+
     // Minimal raw WS echo server standing in for websockify — proves this
     // repo's OWN chain (index.ts wiring -> browser-takeover.ts), not a real
     // websockify install, which is not guaranteed present on every dev box.
@@ -946,7 +1073,28 @@ describe("WebSocket-upgrade proxy — real socket, ticket-gated, full chain", ()
       new Promise<void>((resolve) => fakeWebsockify.close(() => resolve())),
       new Promise<void>((resolve) => proxyServer.close(() => resolve())),
     ]);
+    console.log = realConsoleLog;
+    if (savedStateRoot === undefined) delete process.env.STATE_ROOT;
+    else process.env.STATE_ROOT = savedStateRoot;
+    rmSync(stateRoot, { recursive: true, force: true });
   });
+
+  /** Polls until the activity file says what the pipe's close hook should have written. */
+  async function waitForActivity(
+    profile: string,
+    predicate: (a: { connected: number; connects: number }) => boolean,
+    timeoutMs = 3_000,
+  ): Promise<{ connected: number; connects: number; first_connect_at: string | null; last_disconnect_at: string | null }> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const activity = await readActivity(profile, stateRoot);
+      if (activity && predicate(activity)) return activity;
+      if (Date.now() > deadline) {
+        throw new Error(`activity for ${profile} never matched: ${JSON.stringify(activity)}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
 
   /**
    * Attempts a raw upgrade and reports what actually came back. A WebSocket
@@ -1026,6 +1174,111 @@ describe("WebSocket-upgrade proxy — real socket, ticket-gated, full chain", ()
     const ticket = mintTakeoverTicket({ runId: "run-abc", profile: "wstest", port: 6944 });
     const result = await attemptUpgrade(wsPath(ticket)).catch(() => ({ upgraded: false as const, status: 0, body: "socket destroyed" }));
     assert.equal(result.upgraded, false, "a ticket for a dead port must not upgrade");
+  });
+
+  test("socket facts: accept records a connect, close records a disconnect and logs ONE closed line by side", async () => {
+    clearSpentTakeoverTicketJtis();
+    resetLiveSocketsForTests();
+    logLines.length = 0;
+    const profile = "factsclient";
+    const ticket = mintTakeoverTicket({ runId: "run-facts", profile, port: fakePort });
+    const jti = ticket.split(".")[0];
+
+    // A raw upgrade rather than a WebSocket object: the point is to drop the
+    // TCP connection abruptly, the way a phone's browser vanishes. (A graceful
+    // WebSocket close handshake ends with websockify closing TCP first and is
+    // attributed to the upstream — see TakeoverCloseSide.)
+    const clientSocket = await new Promise<Duplex>((resolve, reject) => {
+      const req = httpRequest({
+        host: "127.0.0.1",
+        port: proxyPort,
+        path: wsPath(ticket),
+        agent: false,
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Version": "13",
+          "Sec-WebSocket-Key": randomBytes(16).toString("base64"),
+        },
+      });
+      req.on("upgrade", (_res, socket) => resolve(socket));
+      req.on("response", (res) => reject(new Error(`expected 101, got ${res.statusCode}`)));
+      req.on("error", reject);
+      req.end();
+    });
+    const connected = await waitForActivity(profile, (a) => a.connected === 1);
+    assert.equal(connected.connects, 1);
+    assert.ok(connected.first_connect_at, "first_connect_at set on the first accept");
+    assert.equal(liveSocketCount(profile), 1);
+
+    // The CLIENT goes away — the phone's browser vanishing is tonight's pattern.
+    clientSocket.destroy();
+    const closed = await waitForActivity(profile, (a) => a.connected === 0);
+    assert.equal(closed.connects, 1, "a close never changes connects");
+    assert.ok(closed.last_disconnect_at, "last_disconnect_at set on close");
+    assert.equal(liveSocketCount(profile), 0);
+
+    const closedLines = logLines.filter((l) => l.includes("upgrade closed") && l.includes(`profile=${profile}`));
+    assert.equal(closedLines.length, 1, `exactly one closed line, got: ${JSON.stringify(closedLines)}`);
+    assert.match(
+      closedLines[0],
+      new RegExp(`^\\[browser-takeover\\] upgrade closed run=run-facts profile=${profile} port=${fakePort} jti=[A-Za-z0-9_-]+ seconds=\\d+ by=client$`),
+    );
+    // jti only: the ticket (payload.signature) must never reach a log line.
+    for (const line of logLines) {
+      assert.ok(!line.includes(ticket), `a log line carries the ticket: ${line}`);
+    }
+    assert.ok(jti.length > 0);
+  });
+
+  test("socket facts: the UPSTREAM going away is recorded as by=upstream", async () => {
+    clearSpentTakeoverTicketJtis();
+    resetLiveSocketsForTests();
+    logLines.length = 0;
+    const profile = "factsupstream";
+    const ticket = mintTakeoverTicket({ runId: "run-facts", profile, port: fakePort });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${proxyPort}${wsPath(ticket)}`);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", () => reject(new Error("ws error opening connection")));
+    });
+    await waitForActivity(profile, (a) => a.connected === 1);
+
+    // Kill the websockify side of the pipe — what a forge-control deploy or a
+    // supervisor teardown looks like from this process's point of view.
+    for (const socket of openSockets) {
+      if ((socket as unknown as { localPort?: number }).localPort === fakePort) socket.destroy();
+    }
+    await waitForActivity(profile, (a) => a.connected === 0);
+    const closedLines = logLines.filter((l) => l.includes("upgrade closed") && l.includes(`profile=${profile}`));
+    assert.equal(closedLines.length, 1, JSON.stringify(closedLines));
+    assert.match(closedLines[0], / by=upstream$/);
+    ws.close();
+  });
+
+  test("an unwritable activity record refuses the socket with 503 activity_unwritable", async () => {
+    clearSpentTakeoverTicketJtis();
+    resetLiveSocketsForTests();
+    logLines.length = 0;
+    // A FILE in the state root's place: mkdir -p fails with ENOTDIR even for root.
+    const notADir = path.join(stateRoot, "unwritable-root");
+    writeFileSync(notADir, "");
+    process.env.STATE_ROOT = notADir;
+    try {
+      const ticket = mintTakeoverTicket({ runId: "run-503", profile: "wstest", port: fakePort });
+      const result = await attemptUpgrade(wsPath(ticket));
+      assert.equal(result.upgraded, false, "no socket without a record");
+      assert.equal(result.status, 503);
+      assert.match(result.body, /activity record is unwritable/);
+      assert.ok(!result.body.includes(ticket), "the refusal body must not echo the ticket");
+      assert.equal(liveSocketCount("wstest"), 0);
+      const rejected = logLines.filter((l) => l.includes("rejected") && l.includes("reason=activity_unwritable"));
+      assert.equal(rejected.length, 1, JSON.stringify(logLines));
+      assert.match(rejected[0], /status=503/);
+    } finally {
+      process.env.STATE_ROOT = stateRoot;
+    }
   });
 
   test("NO ticket: the deleted unauthenticated arms are refused outright", async () => {

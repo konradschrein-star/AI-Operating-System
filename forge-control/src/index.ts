@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { handleBrowserTakeoverUpgrade } from "./lib/browser-takeover.ts";
+import { reconcileActivityAtBoot } from "./lib/takeover-session.ts";
 import { startProbeLoop } from "./lib/accounts.ts";
 import health from "./routes/health.ts";
 import hermes from "./routes/hermes.ts";
@@ -293,6 +294,27 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 console.log(`forge-control listening on 127.0.0.1:${port}`);
+
+// Takeover ghost-socket reset. This process holds zero noVNC sockets at boot,
+// but every <STATE_ROOT>/<profile>/takeover-activity.json still says what the
+// previous process knew — and a deploy (114 pm2 restarts, unstable_restarts=0:
+// deliberate, not crashes) kills every open socket. Without this, a session
+// nobody reconnects to keeps `connected>0` forever and the supervisor never
+// starts its idle clock; only the 2 h cap would end it. See
+// reconcileActivityAtBoot for the rules. Never fatal: errors are logged per
+// profile and the process keeps serving.
+reconcileActivityAtBoot()
+  .then((r) => {
+    if (r.reset.length > 0) {
+      console.log(`[takeover-session] boot reconcile: connected reset to live count for ${r.reset.join(", ")}`);
+    }
+    for (const e of r.errors) {
+      console.error(`[takeover-session] boot reconcile failed for profile=${e.profile}: ${e.message}`);
+    }
+  })
+  .catch((err: unknown) => {
+    console.error("[takeover-session] boot reconcile could not list the state root:", err);
+  });
 
 // v1.6 Tier-2 phase 4: cron scheduler tick. Single in-process scheduler is
 // fine for personal scale; multi-instance is safe thanks to FOR UPDATE SKIP

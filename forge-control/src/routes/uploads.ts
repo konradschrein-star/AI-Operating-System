@@ -10,7 +10,7 @@
  * in an [attached-files] block inside the message.
  */
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { promises as fs, createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
@@ -34,6 +34,7 @@ import {
   verifyTakeoverTicket,
   isTakeoverTicketError,
 } from "../lib/takeover-ticket.ts";
+import { loadSessionView, endSession, isEndSessionError } from "../lib/takeover-session.ts";
 
 const r = new Hono();
 
@@ -277,6 +278,59 @@ r.get("/browser/:profile/vnc/ticket", async (c) => {
   return c.json(outcome.body);
 });
 
+/* ---------------------------------------------------------------------------
+ * Takeover session lifetime — PLAN.md §1.4.
+ *
+ *   GET  .../takeover/session   the clock the page renders: sockets, deadlines,
+ *                               remaining_ms, and `ended` with the reason once
+ *                               the supervisor has gone.
+ *   POST .../takeover/end       the Done button: runs `research-browser.mjs
+ *                               close <profile>`, which is the ONE teardown
+ *                               path (the agent and the clocks use it too).
+ *
+ * Both forms (by run id, by profile) are registered ABOVE the `/vnc/*`
+ * catch-alls and above `/:id/:name` — Hono matches in registration order.
+ * `no-store` on both: a cached clock is a lie, and a cached "ended" is worse.
+ * Neither route ever sees text typed toward the VM.
+ * ------------------------------------------------------------------------- */
+
+async function sessionResponse(c: Context, profile: string): Promise<Response> {
+  c.header("Cache-Control", "no-store");
+  try {
+    return c.json(await loadSessionView(profile));
+  } catch (err: unknown) {
+    return c.json({ error: `Cannot read takeover state for "${profile}": ${(err as Error).message}` }, 500);
+  }
+}
+
+async function endResponse(c: Context, profile: string): Promise<Response> {
+  c.header("Cache-Control", "no-store");
+  try {
+    return c.json(await endSession(profile));
+  } catch (err: unknown) {
+    if (isEndSessionError(err)) {
+      return c.json({ error: err.message, stderr_tail: err.stderrTail }, 502);
+    }
+    return c.json({ error: (err as Error).message, stderr_tail: "" }, 502);
+  }
+}
+
+r.get("/browser/:profile/takeover/session", async (c) => {
+  const profile = c.req.param("profile");
+  if (!PROFILE_RE.test(profile)) {
+    return c.json({ error: `bad profile: "${profile}"` }, 400);
+  }
+  return sessionResponse(c, profile);
+});
+
+r.post("/browser/:profile/takeover/end", async (c) => {
+  const profile = c.req.param("profile");
+  if (!PROFILE_RE.test(profile)) {
+    return c.json({ error: `bad profile: "${profile}"` }, 400);
+  }
+  return endResponse(c, profile);
+});
+
 /**
  * ALL /api/uploads/browser/:profile/vnc
  * ALL /api/uploads/browser/:profile/vnc/*
@@ -336,6 +390,31 @@ r.get("/:id/browser-state", async (c) => {
   if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
   const browser_state = await resolveBrowserState(id);
   return c.json({ id, browser_state });
+});
+
+/**
+ * GET  /api/uploads/:id/takeover/session
+ * POST /api/uploads/:id/takeover/end
+ * Run-id forms of the profile routes above; 404 when the run owns no profile.
+ */
+r.get("/:id/takeover/session", async (c) => {
+  const id = c.req.param("id");
+  if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
+  const profile = await resolveProfileForRun(id);
+  if (!profile) {
+    return c.json({ error: `No browser profile found for run ${id}` }, 404);
+  }
+  return sessionResponse(c, profile);
+});
+
+r.post("/:id/takeover/end", async (c) => {
+  const id = c.req.param("id");
+  if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
+  const profile = await resolveProfileForRun(id);
+  if (!profile) {
+    return c.json({ error: `No browser profile found for run ${id}` }, 404);
+  }
+  return endResponse(c, profile);
 });
 
 /**
