@@ -71,6 +71,8 @@ FILES=(
   deploy-goal-mode.sh
   deploy-retier.sh
   rebuild-web.sh
+  assert-merge-scope.sh
+  recover-stuck-task.sh
   goal-engine-v2.json
   goal-files-pane.json
   goal-manager-split.json

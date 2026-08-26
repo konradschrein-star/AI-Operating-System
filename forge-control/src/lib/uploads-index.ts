@@ -128,7 +128,26 @@ export async function listRunShots(
 ): Promise<RunShot[]> {
   const include = options.include ?? "images";
   const id = path.basename(dir);
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+  // A directory that is not there has no shots — it is not an error.
+  //
+  // `computeAllRuns` readdirs UPLOAD_DIR, then readdirs each child. A run dir
+  // that disappears between those two calls used to throw ENOENT out of the
+  // whole sweep, so ONE vanished directory 500'd the entire run listing for
+  // every caller. Observed in production: forge-control's error log carries
+  // `ENOENT: no such file or directory, scandir '/opt/ai-os/uploads/
+  // e2ec11b00001'` from this line, and that id is gone from disk now — the
+  // classic time-of-check/time-of-use gap, not a bad id.
+  //
+  // The parent sweep already defends itself exactly this way at
+  // `computeAllRuns` — this restores the symmetry the race needed. Both
+  // callers stay correct: `computeAllRuns` skips a run with no files, and the
+  // `/:id/shots` route keeps its own explicit 404, which it decides from a
+  // `stat` BEFORE calling this. Only the narrow race turns into "no shots"
+  // instead of a 500.
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch((err) => {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  });
   const shots: RunShot[] = [];
   for (const entry of entries) {
     if (!entry.isFile()) continue;
