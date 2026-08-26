@@ -578,11 +578,25 @@ export async function createTask(input: {
  *  THE TEST IS STRUCTURAL, and deliberately so. `project_tasks` has no
  *  `metadata` column to flag an integration task with (see TASK_COLS), and a
  *  title convention would rot the first time someone renamed a task. R38 already
- *  defines the integration task as the one that DEPENDS ON EVERY TASK OF ITS
- *  WORKSTREAM and lives in `main` — so `depends_on` alone identifies it, with no
- *  new column and nothing to keep in sync. In words: a project may not close
- *  while some workstream W <> 'main' has at least one task and no `main` task's
- *  `depends_on` covers every task id of W.
+ *  defines the integration task as the one FROM WHICH EVERY TASK OF ITS
+ *  WORKSTREAM IS REACHABLE and which lives in `main` — so `depends_on` alone
+ *  identifies it, with no new column and nothing to keep in sync. In words: a
+ *  project may not close while some workstream W <> 'main' has at least one task
+ *  and no `main` task reaches every task id of W through `depends_on`.
+ *
+ *  REACHABILITY, NOT DIRECT MEMBERSHIP — 2026-08-26. The term below read
+ *  `NOT (m.id = ANY (i.depends_on))` and so asked whether one `main` task
+ *  DIRECTLY named every task of W. That is not the shape an architect seeds: it
+ *  seeds one integration task depending on the workstream's LAST task, and the
+ *  workstream's tasks chain among themselves. The correlation measured across
+ *  the three projects the old term held open is the control — every workstream
+ *  of exactly ONE task passed it (direct and transitive coincide on a single
+ *  node) and all eight workstreams of two or more failed it, permanently, with
+ *  no edit able to fix it because the integration task was seeded before the
+ *  later rounds existed. The recursive CTE below is the transitive closure; the
+ *  readable definition it mirrors is `unintegratedWorkstreams()` in
+ *  lib/task-graph.ts, which moved there from lib/project-tick.ts in the same
+ *  commit so a harness can pair the two without importing a pg Pool.
  *
  *  MEMBERSHIP, decided here rather than left to be discovered (it is the
  *  difference between this term and a bug that no workstream project could ever
@@ -604,6 +618,29 @@ export async function createTask(input: {
  *  does defend against is the case that actually occurred to a planner: no
  *  integration task at all.
  *
+ *  THE CYCLE GUARD, AND THE TWO EDITS THAT DESTROY IT. `depends_on` carries no
+ *  acyclicity constraint — `findCycle()` in lib/task-graph.ts exists precisely
+ *  because the graph can be seeded with one — and this statement runs on every
+ *  tick, so a cycle must not hang it. The recursion below is `UNION`, and its
+ *  termination is finiteness plus dedup: the recursive term can only emit pairs
+ *  drawn from one project's tasks × tasks, so a cycle re-derives pairs that
+ *  already exist, `UNION` discards them, and the iteration reaches a fixed
+ *  point. Two plausible "hardenings" break exactly that, and both are asserted
+ *  absent by project-tick.test.ts rather than left to a reviewer's memory:
+ *
+ *   1. `UNION ALL`. Nothing is deduplicated, and a cycle runs forever.
+ *   2. A `depth` column. This is the trap worth stating out loud, because it is
+ *      added FOR safety: a monotonically increasing depth makes every revisit a
+ *      DISTINCT tuple, so `UNION` stops deduplicating and the cycle runs
+ *      forever — the guard removes the guarantee it was added to provide. A
+ *      depth CAP would additionally have to be `UNION ALL`, and then the cap
+ *      silently truncates a legitimately deep chain into "unintegrated".
+ *
+ *  Measured 2026-08-26 on a scratch copy of the three live projects (127 task
+ *  rows, 11 workstreams): the whole statement returns in 79 ms, and two
+ *  purpose-built cyclic fixtures — a cycle inside W, and a cycle among `main`
+ *  rows on the walk out of W — both resolve rather than spin.
+ *
  *  A LEGACY PROJECT IS UNTOUCHED. `workstream` defaults to 'main' and
  *  `depends_on` may be NULL (02-architecture.md §2.2 — nullable IS the migration
  *  strategy). With every row in 'main' the correlated subquery finds no `w` at
@@ -612,7 +649,7 @@ export async function createTask(input: {
  *
  *  SQL MIRROR — as on promoteReadyTasks() above, this module owns no decision
  *  (02-architecture.md §1.2). The readable definition is
- *  `unintegratedWorkstreams()` in lib/project-tick.ts, which the tick runs over
+ *  `unintegratedWorkstreams()` in lib/task-graph.ts, which the tick runs over
  *  the same rows to NAME the offending workstreams for NF1's notification; the
  *  term below is its set-based mirror. If the two ever disagree the pure side is
  *  right and this statement is the bug — and the disagreement is observable at
@@ -630,7 +667,37 @@ export async function closeFinishedProjects(): Promise<{
   held: Array<{ id: string; name: string }>;
 }> {
   const r = await pool.query<{ id: string; name: string }>(
-    `UPDATE projects p
+    `WITH RECURSIVE reach(project_id, src, dst) AS (
+        -- R70's edge relation, transitively closed: (src, dst) is present when
+        -- dst is reachable from src by following depends_on one or more times.
+        -- Bounded to 'active' projects because that is the only status the
+        -- UPDATE below can touch, so closing the graph for anything else is
+        -- work thrown away.
+        SELECT t.project_id, t.id, d.dep
+          FROM project_tasks t
+          JOIN projects rp ON rp.id = t.project_id AND rp.status = 'active'
+          CROSS JOIN LATERAL unnest(t.depends_on) AS d(dep)
+         WHERE t.depends_on IS NOT NULL
+      UNION
+        -- THE DEDUP ABOVE IS THE CYCLE GUARD, and the two edits that look like
+        -- hardening and are not are named in this function's header comment —
+        -- read it before touching this line. Neither is named here: the drift
+        -- guard in project-tick.test.ts asserts both are ABSENT from this
+        -- clause, and to a substring scan a warning is indistinguishable from
+        -- the thing it warns about.
+        --
+        -- Termination is finiteness plus dedup. The recursive term can only
+        -- emit pairs drawn from ONE project's tasks x tasks, so a cycle
+        -- re-derives pairs that already exist, they are discarded, and the
+        -- iteration reaches a fixed point.
+        SELECT r.project_id, r.src, e.dep
+          FROM reach r
+          JOIN project_tasks t2
+            ON t2.id = r.dst AND t2.project_id = r.project_id
+          CROSS JOIN LATERAL unnest(t2.depends_on) AS e(dep)
+         WHERE t2.depends_on IS NOT NULL
+     )
+     UPDATE projects p
         SET status = 'done', updated_at = now()
       WHERE p.status = 'active'
         -- At least one row FINISHED. This was 'EXISTS (... WHERE project_id =
@@ -647,11 +714,14 @@ export async function closeFinishedProjects(): Promise<{
         )
         AND NOT EXISTS (
           -- R70. "There is no workstream W <> 'main' of this project for which
-          -- no 'main' task covers every task of W." The three levels are
-          -- exactly that sentence's three quantifiers; correlating each on
-          -- project_id is the same precaution promoteReadyTasks() takes (R27),
-          -- and here it is what stops another project's integration task
-          -- vouching for this one's workstream.
+          -- no 'main' task REACHES every task of W." The three levels are
+          -- exactly that sentence's three quantifiers, and the reach lookup
+          -- inside them is the fourth; correlating each on project_id is the
+          -- same precaution promoteReadyTasks() takes (R27), and here it is
+          -- what stops another project's integration task vouching for this
+          -- one's workstream — including through 'reach', which spans every
+          -- active project and would otherwise carry an edge across the
+          -- boundary.
           SELECT 1 FROM project_tasks w
            WHERE w.project_id = p.id
              AND w.workstream <> 'main'
@@ -662,12 +732,32 @@ export async function closeFinishedProjects(): Promise<{
                   -- A legacy row names nothing and cannot integrate anything.
                   -- Explicit because ANY(NULL) is NULL, not false, and a
                   -- three-valued accident is not a rule anyone can read.
+                  -- Redundant against 'reach' alone, which emits no base row
+                  -- for a NULL — kept because a rule that holds by accident of
+                  -- another clause is a rule nobody can find.
                   AND i.depends_on IS NOT NULL
                   AND NOT EXISTS (
                     SELECT 1 FROM project_tasks m
                      WHERE m.project_id = p.id
                        AND m.workstream = w.workstream
-                       AND NOT (m.id = ANY (i.depends_on))
+                       -- WAS A DIRECT ARRAY-MEMBERSHIP TEST — m's id had to
+                       -- appear in the integrator's own depends_on, and this
+                       -- comment deliberately does not quote that term, because
+                       -- the drift guard in project-tick.test.ts asserts it is
+                       -- ABSENT and a mention is indistinguishable from a
+                       -- survival to a substring scan. The architect seeds ONE
+                       -- integration task depending on the workstream's LAST
+                       -- task, and the workstream chains internally, so the
+                       -- direct test failed for every workstream of two or more
+                       -- tasks and no later edit could satisfy it. Reachability
+                       -- is the rule R38 always meant; the pure definition and
+                       -- the measured evidence are in lib/task-graph.ts.
+                       AND NOT EXISTS (
+                         SELECT 1 FROM reach r
+                          WHERE r.project_id = p.id
+                            AND r.src = i.id
+                            AND r.dst = m.id
+                       )
                   )
              )
         )
