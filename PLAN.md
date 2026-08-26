@@ -1,85 +1,122 @@
-# aios-ops-inventory-red — plan (round 0)
+# aios-backfill-ledger-out-of-tree — plan (round 0)
 
-**Goal.** Resolve the persistent gate failure on `main` where `scripts/checks/check-ops-scripts.sh` exits 1 due to `scripts/ops/assert-merge-scope.sh` and `scripts/ops/recover-stuck-task.sh` missing from the `FILES` array in `scripts/ops/install-symlinks.sh`. Make the repo gate suite `gates-808` green on this gate and ensure the recovery/merge tools are properly symlinked into `/opt/ai-os/scripts/` upon deploy.
-
-## Recommendation
-
-Add `assert-merge-scope.sh` and `recover-stuck-task.sh` to the `FILES` array in `scripts/ops/install-symlinks.sh`. Do not add either script to `RESTRICTED_MODE_FILES` or `EXEC_MODE_FILES`.
-
-### Reasoning
-1. **Inventory Consistency**: `install-symlinks.sh` manages symlinks for all operational scripts from `scripts/ops/` into `/opt/ai-os/scripts/`. `check-ops-scripts.sh` enforces parity between files in `scripts/ops/` and the `FILES` array in `install-symlinks.sh`. Both `assert-merge-scope.sh` and `recover-stuck-task.sh` exist on disk but were not registered in `FILES`, causing `check-ops-scripts.sh` (and thus `gates-808.sh`) to fail on pristine `main`.
-2. **Mode Classification**:
-   - `RESTRICTED_MODE_FILES`: Reserved solely for files embedding private keys / host credentials (such as `check-vps2-backup.sh` which requires mode `750`). `assert-merge-scope.sh` is a pure git diff validator and `recover-stuck-task.sh` loads environment credentials dynamically at runtime via `/opt/ai-os/.secrets/forge-control.env`. Neither needs 750 mode.
-   - `EXEC_MODE_FILES`: Defensive belt-and-braces list for the PreToolUse hook Python scripts and hook installation/test scripts (`guard-*.py`, `test-guard-*.py`, `install-hooks.sh`) invoked by Claude CLI. Neither script is a PreToolUse hook; standard git tracking (`755` executable) suffices.
-
-### Rejected Alternatives
-- **Adding scripts to `RESTRICTED_MODE_FILES`**: Rejected — unnecessary restriction as neither script embeds secrets or requires 750 mode.
-- **Adding scripts to `EXEC_MODE_FILES`**: Rejected — neither script is a PreToolUse hook requiring defensive hook-execution chmod.
-- **Softening `check-ops-scripts.sh` to ignore unregistered scripts**: Rejected — violates inventory policy and masks uninstalled ops tooling.
-- **Running `install-symlinks.sh` inside the project worktree**: Rejected — `install-symlinks.sh` explicitly refuses to run from worktrees to prevent creating dangling symlinks when worktrees are cleaned up.
+**Goal.** Relocate the runtime `origin_chat_id` backfill ledger out of the git repository tree (`/var/log/forge/chat-linkage-backfill.log`) so that live engine operations no longer dirty tracked files in the live checkout (`/opt/forge-ai-os`). This makes the mandatory `REVIEWER_LIVE_CHECK` (`git -C <live> status --porcelain`) cleanly achievable without weakening or allowlisting the rule.
 
 ---
 
-## State · Dispatch · Failure Modes · Operator Visibility
+## 1. Recommendation
+
+Relocate `BACKFILL_LOG` in `forge-control/src/routes/chat-linkage.ts` from `docs/plan/artifacts/phase300/backfill.log` to `/var/log/forge/chat-linkage-backfill.log` (with `process.env.FORGE_BACKFILL_LOG` fallback/override for testability).
+
+1. **Out-of-tree runtime logging**: Define `BACKFILL_LOG = process.env.FORGE_BACKFILL_LOG ?? "/var/log/forge/chat-linkage-backfill.log"`.
+2. **Directory creation & Non-throwing error handling**: In `backfillOriginChatId()`, ensure `await mkdir(path.dirname(BACKFILL_LOG), { recursive: true })` creates `/var/log/forge` if missing. Keep the `try ... catch` block that catches append/directory errors, logs loudly to `console.error`, and never throws to the caller.
+3. **Preserve existing history**: `docs/plan/artifacts/phase300/backfill.log` remains in git as a frozen historical artifact. It must NOT be deleted.
+4. **Preserve cleanliness gate absolutism**: `REVIEWER_LIVE_CHECK` in `forge-control/src/lib/project-tick.ts` must remain byte-identical to `main`. Do NOT add path exceptions or allowlists.
+5. **One-shot dirt clearance in Deploy**: In the Deploy task running in `/opt/forge-ai-os` (authorized by fleet supervisor), commit the single uncommitted audit line in `docs/plan/artifacts/phase300/backfill.log` with a clear commit message, verifying `git status --porcelain` is clean before and after merging.
+
+---
+
+## 2. Reasoning
+
+1. **Root Cause Resolution**: The live engine's runtime backfill of `origin_chat_id` previously wrote to `docs/plan/artifacts/phase300/backfill.log` in the live checkout. Because this file is git-tracked, every chat-linked project permanently dirtied `/opt/forge-ai-os`, causing `REVIEWER_LIVE_CHECK` to fail on valid runs.
+2. **Rule Integrity**: Moving the runtime log target outside the repository tree (`/var/log/forge/`) removes the violation at its source. The reviewer cleanliness check's strength lies in its absolutism ("empty output is the only pass"). An allowlist would rot and introduce ambiguity.
+3. **Operational Alignment**: `/var/log/forge/` is the standard destination for runtime daemon and ops logs across Konrad's VPS infrastructure (e.g. guard autonomy, pulse, safe restart logs).
+4. **Narrow Blast Radius**: `BACKFILL_LOG` is referenced exclusively within `forge-control/src/routes/chat-linkage.ts` (lines 370, 384 doc comment, 404, 410) and nowhere else in the codebase.
+
+---
+
+## 3. Rejected Alternatives
+
+- **Adding an allowlist/exception to `REVIEWER_LIVE_CHECK`**: Rejected — weakens the universal cleanliness gate and encourages exception creep.
+- **Deleting `docs/plan/artifacts/phase300/backfill.log`**: Rejected — contains committed historical audit data; deleting tracked files is unauthorized.
+- **Reverting or stashing `/opt/forge-ai-os` dirt**: Rejected — stash is shared across worktrees (`git-stash-is-shared-across-worktrees.md`) and reverting would discard a valid project linkage audit entry.
+- **Relocating ledger into PostgreSQL table**: Rejected — unnecessary database schema change when standard host filesystem logging `/var/log/forge/` satisfies audit requirements without migration overhead.
+
+---
+
+## 4. State · Dispatch · Failure Modes · Operator Visibility
 
 - **What owns state**:
-  - Repo inventory: `scripts/ops/install-symlinks.sh` (`FILES` array) and `scripts/ops/` filesystem contents.
-  - Host symlinks: `/opt/ai-os/scripts/` symlinks pointing to `/opt/forge-ai-os/scripts/ops/*`.
+  - Audit log: `/var/log/forge/chat-linkage-backfill.log` on VPS host.
+  - Project linkage: `projects.metadata.origin_chat_id` in PostgreSQL (`content_forge`).
 - **What dispatches work**:
-  - In-lane validation: Builder runs `scripts/checks/check-ops-scripts.sh` and mutation controls.
-  - Repo gate suite: `scripts/checks/gates-808.sh` line 381 executes `check-ops-scripts.sh`.
-  - Host deploy: Deploy task runs `scripts/ops/install-symlinks.sh` from the live checkout `/opt/forge-ai-os`.
+  - Runtime linkage resolution in `forge-control/src/routes/chat-linkage.ts` (`resolveChatProject`).
 - **What happens on failure**:
-  - If a file is missing from `FILES`, `check-ops-scripts.sh` prints a diff of expected vs actual and exits 1.
-  - If `install-symlinks.sh` is run in a worktree, it halts immediately with exit 1 and a descriptive refusal.
+  - If `/var/log/forge` cannot be created or appended to (e.g. permissions or disk issue), `backfillOriginChatId` catches the error, outputs `[chat-linkage] backfill.log append failed` to `console.error`, and allows the resolution to complete successfully since the database row was already committed.
 - **How Konrad sees it broke**:
-  - Repo gate status: `gates-808` reports gate failure on `check-ops-scripts.sh`.
-  - Host scripts: `ls -la /opt/ai-os/scripts/assert-merge-scope.sh` / `recover-stuck-task.sh` would show missing or broken symlinks.
+  - pm2 logs for `forge-control` will show `[chat-linkage] backfill.log append failed (...)`.
+  - Reviewer gates (`git -C /opt/forge-ai-os status --porcelain`) will flag any unexpected dirt.
 
 ---
 
-## Task Graph
+## 5. Task Graph
 
 ```
 T1 builder (gemini, main)
-  Register assert-merge-scope.sh and recover-stuck-task.sh in install-symlinks.sh
+  Relocate backfill ledger to /var/log/forge/chat-linkage-backfill.log & add tests
   │
   ▼
 T2 reviewer (standard, main)
-  Review diff, verify check-ops-scripts.sh PASS, mutation proof & gates-808
+  Review diff, verify REVIEWER_LIVE_CHECK byte-identical to main, verify out-of-tree path & tests
   │
-  ▼
+  ▼ (round 20 band)
 T3 deploy builder (junior, main)
-  Deploy symlinks on live checkout /opt/forge-ai-os & verify live resolution
+  Deploy: commit live backfill audit line, merge branch & restart forge-control
 ```
 
-### Tasks Detail
+---
 
-1. **T1 (Builder, tier: gemini, workstream: main, depends_on: [])**
-   - **Title**: Register assert-merge-scope.sh and recover-stuck-task.sh in install-symlinks.sh
-   - **Write Set**: `["scripts/ops/install-symlinks.sh"]`
-   - **Actions**:
-     - Edit `scripts/ops/install-symlinks.sh` to add `assert-merge-scope.sh` and `recover-stuck-task.sh` to the `FILES` array.
-     - Run `bash scripts/checks/check-ops-scripts.sh` and verify exit 0.
-     - Execute mutation control: temporarily delete an entry from `FILES`, verify `check-ops-scripts.sh` fails with exit 1, restore and verify exit 0.
-     - Run `bash scripts/checks/gates-808.sh` and verify gate status.
-     - Commit changes cleanly.
+## 6. Task Specifications
 
-2. **T2 (Reviewer, tier: standard, workstream: main, depends_on: [T1])**
-   - **Title**: Review ops scripts registration and gate-808 status
-   - **Write Set**: `[]`
-   - **Actions**:
-     - Review diff against base branch: verify only `scripts/ops/install-symlinks.sh` was modified.
-     - Verify `check-ops-scripts.sh` passes and mutation proof is recorded in builder notes.
-     - Run `bash scripts/checks/gates-808.sh --strict` (apply sibling contention rule if unrelated unit tests flake once).
-     - Issue review verdict.
+### T1: Builder (Role: `builder`, Tier: `gemini`, Workstream: `main`, Depends On: `[]`)
+- **Title**: Relocate backfill ledger to /var/log/forge/chat-linkage-backfill.log & add tests
+- **Write Set**: `["forge-control/src/routes/chat-linkage.ts", "forge-control/src/routes/chat-linkage.test.ts"]`
+- **Instructions**:
+  1. In `forge-control/src/routes/chat-linkage.ts`:
+     - Import `mkdir` from `node:fs/promises`.
+     - Update `BACKFILL_LOG`:
+       ```typescript
+       const BACKFILL_LOG =
+         process.env.FORGE_BACKFILL_LOG ??
+         "/var/log/forge/chat-linkage-backfill.log";
+       ```
+     - In `backfillOriginChatId()`, add `await mkdir(path.dirname(BACKFILL_LOG), { recursive: true });` inside the `try` block before `appendFile(BACKFILL_LOG, ...)`.
+     - Update the doc comment at line 384 referencing the new log path.
+     - Keep the `try / catch` error handler intact (`console.error` on failure without throwing).
+  2. Create unit tests in `forge-control/src/routes/chat-linkage.test.ts`:
+     - Test default `BACKFILL_LOG` points to `/var/log/forge/chat-linkage-backfill.log`.
+     - Test custom `FORGE_BACKFILL_LOG` environment variable override works, creates parent directories recursively when missing, and appends the formatted audit line.
+     - Test error handling when writing to a path that fails (e.g. read-only path) logs to `console.error` and does not throw.
+  3. Ensure `pnpm --prefix forge-control test` and `pnpm --prefix forge-control typecheck` pass with zero errors.
+  4. DO NOT touch `forge-control/src/lib/project-tick.ts` or `forge-control/src/db/projects.ts`.
+  5. DO NOT delete or edit `docs/plan/artifacts/phase300/backfill.log`.
 
-3. **T3 (Deploy Builder, tier: junior, workstream: main, depends_on: [T2])**
-   - **Title**: Deploy ops symlinks to /opt/ai-os/scripts and verify live
-   - **Write Set**: `["deploy/aios-ops-inventory-red.md"]`
-   - **Actions**:
-     - Merge branch to main on live checkout `/opt/forge-ai-os`.
-     - Run `scripts/ops/install-symlinks.sh` from `/opt/forge-ai-os`.
-     - Verify symlinks resolve: `ls -la /opt/ai-os/scripts/assert-merge-scope.sh` and `ls -la /opt/ai-os/scripts/recover-stuck-task.sh`.
-     - Run `bash scripts/checks/check-ops-scripts.sh` from `/opt/forge-ai-os` and show exit 0.
-     - Write deploy record `deploy/aios-ops-inventory-red.md`.
+### T2: Reviewer (Role: `reviewer`, Tier: `standard`, Workstream: `main`, Depends On: `[T1]`)
+- **Title**: Review out-of-tree ledger relocation & verify reviewer live check unchanged
+- **Write Set**: `[]`
+- **Instructions**:
+  1. Verify diff of `forge-control/src/routes/chat-linkage.ts` and `forge-control/src/routes/chat-linkage.test.ts`.
+  2. Verify `BACKFILL_LOG` is `/var/log/forge/chat-linkage-backfill.log`.
+  3. Verify `mkdir(path.dirname(BACKFILL_LOG), { recursive: true })` ensures directory exists.
+  4. Verify error handling catches append failures without throwing.
+  5. Verify `REVIEWER_LIVE_CHECK` in `forge-control/src/lib/project-tick.ts` is byte-identical to `main` (`git diff main...HEAD -- forge-control/src/lib/project-tick.ts` is empty).
+  6. Verify `docs/plan/artifacts/phase300/backfill.log` is untouched in the worktree.
+  7. Run typecheck and tests.
+
+### T3: Deploy Builder (Role: `builder`, Tier: `junior`, Workstream: `main`, Round: 20, Depends On: `[T2]`)
+- **Title**: Deploy: commit live backfill audit line, merge project branch & restart forge-control
+- **Write Set**: `["docs/plan/artifacts/phase300/backfill.log", "deploy/aios-backfill-ledger-out-of-tree.md"]`
+- **Instructions**:
+  1. In the live checkout `/opt/forge-ai-os` (authorized by fleet supervisor):
+     - Check `git -C /opt/forge-ai-os status --porcelain`.
+     - Confirm the ONLY dirty file is `docs/plan/artifacts/phase300/backfill.log`. If anything else is dirty, stop and report immediately.
+     - Commit the file:
+       `git -C /opt/forge-ai-os add docs/plan/artifacts/phase300/backfill.log`
+       `git -C /opt/forge-ai-os commit -m "chore(audit): commit engine-written backfill line to clear live checkout dirt, appending moved out-of-tree"`
+     - Confirm `git -C /opt/forge-ai-os status --porcelain` is now EMPTY.
+  2. Merge `project/5b9b85e7` into `main` in `/opt/forge-ai-os`.
+  3. Restart `forge-control` via `pm2 restart forge-control` (or safe-restart).
+  4. Prove control:
+     - Verify `git -C /opt/forge-ai-os status --porcelain` remains EMPTY.
+     - Verify writing a backfill record writes to `/var/log/forge/chat-linkage-backfill.log` and leaves `/opt/forge-ai-os` completely clean.
+  5. Write deploy record to `deploy/aios-backfill-ledger-out-of-tree.md`.
