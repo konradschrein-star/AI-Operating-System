@@ -202,23 +202,49 @@ transcript recorded in the section's comment block in the file's own convention
 
 ## The graph
 
-```
-T1 measure (researcher, junior, main) ──┐
-                                        ├─> T3 r70-core (builder, standard, ws:r70)
-                                        │      └─> T5 r70-harness (builder, junior, ws:r70)
-                                        │             └─> T6 integrate-r70 (builder, standard, main) ── depends on T3 AND T5
-T2 idle-sections (builder, standard, ws:idle-alarm)
-   └─> T4 idle-prove (builder, junior, ws:idle-alarm)
-          └─> T7 integrate-idle (builder, junior, main) ── depends on T2 AND T4
+Planned as two parallel workstreams (`r70`, `idle-alarm`), each ending in its own
+integration task. **Seeded as one, in `main`** — see the lane note below.
 
-T8 reviewer (reviewer, standard, main) ── depends on T1..T7
-   └─> T9 deploy (builder, standard, main)
+```
+r0  measure          (researcher, junior)  deps []
+r0  detector         (builder,  standard)  deps []
+r1  r70-core         (builder,  standard)  deps [measure]
+r1  idle-prove       (builder,  junior)    deps [detector]
+r2  close-gate-bind  (builder,  junior)    deps [r70-core]
+r3  reviewer         (reviewer, standard)  deps [all five above]
+r4  deploy           (builder,  standard)  deps [reviewer]
 ```
 
-Both integration tasks depend on **every** task of their workstream, directly —
-so this project satisfies R70 under the rule it is replacing *and* the rule it is
-installing. If any task is later added to `r70` or `idle-alarm`, T6/T7's
-`depends_on` must be fixed in the same breath.
+### Lane note — why one workstream and not two
+
+The two lanes touch strictly disjoint files and were seeded as `r70` and
+`idle-alarm`. Both died at dispatch, `attempt=0`, `run_id=NULL`:
+
+```
+[project-tick] failed to spawn run for task fbe5ecfb-… (builder):
+  The requested module '../db/ai_os.ts' does not provide an export named 'getFleetDefaultTier'
+```
+
+The export exists. The **running** executor holds a stale ESM module graph, and
+`lib/workspace.ts:197` does a dynamic `import()` inside the worktree-creation
+path — which only runs for a workstream that has no worktree yet. An existing
+workstream is safe; opening a new one is not, until the executor restarts. This
+has been true fleet-wide since 2026-08-25 20:00Z, so **every project seeded in
+the last day has been silently serialised into `main`**. Escalated to Konrad by
+reminder; the restart belongs to a moment with no run in flight.
+
+Both lanes were therefore collapsed into `main`. Consequences, stated rather than
+discovered later:
+
+- **No integration tasks.** With one workstream there is no side branch to merge
+  back; the work commits directly on the project branch. This project satisfies
+  R70 vacuously — it has no non-`main` workstream — under both the rule it is
+  replacing and the rule it is installing.
+- **Everything serialises.** `main` runs one task at a time, so the two lanes
+  interleave instead of overlapping. Correctness is unaffected; wall-clock is.
+- Re-seeding required **new titles**: task identity is `(project, round, role,
+  title)`, so re-creating a cancelled task under the same title answers 409 with
+  the cancelled row and seeds nothing.
 
 ## Acceptance
 
