@@ -182,14 +182,61 @@ FORBIDDEN_RE='(^|/)app/desktop/DesktopApp\.tsx$|(^|/)app/desktop/nav-items\.ts$|
 # for this project too — none of them was authorised, and none was touched.
 WAIVER_BRANCH_2026_08_25='project/860c948e'
 WAIVED_RE_2026_08_25='forge-control/src/lib/project-tick(\.test)?\.ts$'
+
+# OPERATOR WAIVER 2026-08-26 — lib/project-tick.ts AND db/projects.ts, on ONE
+# branch, for ONE project.
+#
+# Project aios-r70-transitive-and-idle-fleet-alarm is CHARTERED to change R70.
+# The fleet could not tell a working project from a finished one:
+# `closeFinishedProjects()` tested DIRECT `depends_on` membership where the
+# architect seeds ONE integration task depending on a chain, so three projects
+# with zero open tasks sat 'active' and every section of the stall detector
+# reported nothing. R70 exists in exactly two places — the SQL in
+# `db/projects.ts` and its readable mirror `unintegratedWorkstreams()`, reached
+# through `lib/project-tick.ts` — so a fix that cannot touch either file cannot
+# exist. This is the shape the 2026-08-23 waiver in gates-808.sh calls a toll
+# rather than evidence: passable only by disobeying an authorised brief, or by a
+# builder widening a gate. Authorised by the fleet supervisor and recorded in the
+# vault at "AI OS/Operator Decisions.md" (2026-08-26) — a scoped operator
+# decision with a named reason, not a lane relaxing its own gate.
+#
+# IT EXTENDS THE 2026-08-25 SCOPE ABOVE RATHER THAN COPYING IT, deliberately.
+# That waiver kept `db/projects.ts` forbidden for its own project in terms, and
+# was right to — a default-tier lane had no business in the close predicate.
+# THIS lane's whole subject IS the close predicate. Same gate, opposite answer,
+# because the charter differs; narrow it back for any lane not chartered there.
+#
+# SCOPE. The ban's reason stays LIVE and the waiver is suspended, not retired:
+# any OTHER lane touching either file still goes red, `cc-runner` and
+# `executor.ts` stay armed on every branch including this one, and the waiver
+# expires by itself when the branch is merged and deleted. `lib/task-graph.ts`
+# and `lib/project-reconcile.ts` are not matched by FORBIDDEN_RE at all and need
+# no waiver.
+#
+# CROSS-REFERENCE — THE PAIR MOVES TOGETHER. This list lives TWICE: here, and as
+# gate 6 in `scripts/checks/gates-808.sh` (an inline shell string with escaped
+# quotes, waivers keyed on the branch name). They have already diverged once:
+# commit `e0c388f` waived `operator/agy-fix` in gates-808.sh alone and never
+# touched this file. That commit is on main but is NOT an ancestor of this
+# branch (merge base `48c34d7`), so it REAPPEARS at merge and re-diverges the
+# two lists — reconcile both blocks in the same commit at that point, and
+# re-measure main rather than trusting a snapshot.
+WAIVER_BRANCH_2026_08_26='project/0a0806d3'
+WAIVED_RE_2026_08_26='forge-control/src/(lib/project-tick(\.test)?\.ts|db/projects\.ts)$'
 if git rev-parse --verify main >/dev/null 2>&1; then
   fstart=$(date +%s)
   hits="$(git diff --name-only main...HEAD 2>/dev/null | grep -E "$FORBIDDEN_RE" || true)"
-  if [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$WAIVER_BRANCH_2026_08_25" ] \
-     && [ -n "$hits" ]; then
+  # One branch read, then at most one waiver applies — the branch names are
+  # distinct literals, so the two tests cannot both fire. `set -e` is off here
+  # (line 42), so a `[ … ] && …` whose test fails is not an abort.
+  fbranch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  fwaived=''
+  [ "$fbranch" = "$WAIVER_BRANCH_2026_08_25" ] && fwaived="$WAIVED_RE_2026_08_25"
+  [ "$fbranch" = "$WAIVER_BRANCH_2026_08_26" ] && fwaived="$WAIVED_RE_2026_08_26"
+  if [ -n "$fwaived" ] && [ -n "$hits" ]; then
     # grep -v with no survivors exits 1; `|| true` keeps that from reading as a
     # failure, and an empty `hits` is what the PASS branch below tests for.
-    hits="$(printf '%s\n' "$hits" | grep -vE "$WAIVED_RE_2026_08_25" || true)"
+    hits="$(printf '%s\n' "$hits" | grep -vE "$fwaived" || true)"
   fi
   fdur=$(( $(date +%s) - fstart ))
   if [ -n "$hits" ]; then
