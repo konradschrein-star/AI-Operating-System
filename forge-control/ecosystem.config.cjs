@@ -19,6 +19,10 @@ module.exports = {
         CLAUDE_POOL_URL: process.env.CLAUDE_POOL_URL || 'http://127.0.0.1:8092',
         CLAUDE_POOL_API_KEY: process.env.CLAUDE_POOL_API_KEY || '',
         OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
+        // Keep the Settings catalogue aligned with the root-owned Claude
+        // runtime.  The installer links every pack into this exact path.
+        SKILLS_ROOT: '/root/.claude/skills',
+        USER_SKILLS_DIR: '/root/.claude/skills',
         REMINDER_TZ: 'Europe/Berlin',
         UPLOAD_DIR: '/opt/ai-os/uploads',
         // v2.2: cron expressions + reminders read as Berlin wall-clock.
@@ -58,6 +62,7 @@ module.exports = {
         // forge-memory MCP cold-starts via tsx — give stdio servers headroom.
         MCP_TIMEOUT: '30000',
         OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
+        SKILLS_ROOT: '/root/.claude/skills',
         REMINDER_TZ: 'Europe/Berlin',
         TZ: 'Europe/Berlin',
       },

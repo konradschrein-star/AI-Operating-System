@@ -72,6 +72,35 @@ export interface TodayResponse {
 export const fetchToday = () => getJson<TodayResponse>("/today");
 
 /* ----------------------------------------------------------------------------
+ * Runtime connections — fixed OAuth sessions, never a general web shell.
+ * -------------------------------------------------------------------------- */
+export type ConnectionProvider = {
+  id: "claude" | "agy" | "codex";
+  installed: boolean;
+  connected: boolean;
+  configured?: boolean;
+};
+export interface ConnectionsResponse {
+  providers: ConnectionProvider[];
+  skills: { root: string; ready: boolean };
+}
+export interface LoginSession {
+  active: boolean;
+  started_at?: string;
+  exit_code?: number | null;
+  output?: string;
+}
+export const fetchConnections = () => getJson<ConnectionsResponse>("/connections");
+export const startConnection = (id: "claude" | "codex") =>
+  postJson<LoginSession>(`/connections/${id}/start`);
+export const fetchConnectionSession = (id: "claude" | "codex") =>
+  getJson<LoginSession>(`/connections/${id}/session`);
+export const sendConnectionInput = (id: "claude" | "codex", input: string) =>
+  postJson<LoginSession>(`/connections/${id}/input`, { input });
+export const cancelConnection = (id: "claude" | "codex") =>
+  postJson<{ active: false }>(`/connections/${id}/cancel`);
+
+/* ----------------------------------------------------------------------------
  * Spend (Money surface) — mirrors routes/spend.ts GET /summary
  * -------------------------------------------------------------------------- */
 export interface SpendWindow {

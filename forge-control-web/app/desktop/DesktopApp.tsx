@@ -29,6 +29,7 @@ import {
   emptyLive,
   emptyControl,
   type InboxPreview,
+  fetchConnections,
 } from "../api";
 import { MemorySurface } from "./MemorySurface";
 import { ChatSurface } from "./ChatSurface";
@@ -38,6 +39,7 @@ import { AutonomySurface } from "./AutonomySurface";
 import { AutomationSurface } from "./AutomationSurface";
 import { MoneySurface } from "./MoneySurface";
 import { ProjectsSurface } from "./ProjectsSurface";
+import { ConnectionsSurface } from "./ConnectionsSurface";
 
 /* ----------------------------------------------------------------------------
  * Surface keys — match the design's surface routing
@@ -276,6 +278,7 @@ export function DesktopApp() {
     enabled: surface === "live" || surface === "today",
   });
   const controlQ = useQuery({ queryKey: ["control"], queryFn: fetchControl });
+  const connectionsQ = useQuery({ queryKey: ["connections"], queryFn: fetchConnections, refetchInterval: 15_000 });
   const qc = useQueryClient();
 
   // Global ⌘K / Ctrl+K toggle
@@ -411,10 +414,12 @@ export function DesktopApp() {
           {surface === "autonomy" && <AutonomySurface />}
           {surface === "automation" && <AutomationSurface />}
           {surface === "money" && <MoneySurface />}
+          {surface === "settings" && <ConnectionsSurface />}
           {surface in PLACEHOLDER_SURFACES &&
             surface !== "memory" &&
             surface !== "chat" &&
             surface !== "skills" &&
+            surface !== "settings" &&
             surface !== "pipeline" &&
             surface !== "autonomy" &&
             surface !== "automation" && (
@@ -426,6 +431,7 @@ export function DesktopApp() {
         bleedCount={bleedCount}
         stuckCount={stuckCount}
         fleetStatus={fleetStatus}
+        connections={connectionsQ.data?.providers ?? []}
         onNav={setSurface}
         onPalette={() => {
           setPaletteOpen(true);
@@ -737,12 +743,14 @@ function StatusBar({
   fleetStatus,
   onNav,
   onPalette,
+  connections,
 }: {
   bleedCount: number;
   stuckCount: number;
   fleetStatus: "running" | "paused";
   onNav: (s: Surface) => void;
   onPalette: () => void;
+  connections: Array<{ id: "claude" | "agy" | "codex"; installed: boolean; connected: boolean; configured?: boolean }>;
 }) {
   const fleetColor = fleetStatus === "paused" ? tokens.warn : tokens.ok;
   return (
@@ -777,6 +785,15 @@ function StatusBar({
         hermes <span style={{ color: tokens.ok }}>●</span>
       </span>
       <span style={{ flex: 1 }} />
+      {(["claude", "agy", "codex"] as const).map((id) => {
+        const p = connections.find((entry) => entry.id === id);
+        const color = p?.connected ? tokens.ok : p?.installed ? tokens.warn : tokens.textFaint;
+        const label = p?.connected ? "ready" : p?.installed ? "sign in" : "n/a";
+        return <span key={id} onClick={() => onNav("settings")} title={`${id}: ${label}; provider quota is only shown when its API reports it`} style={{ cursor: "pointer", color, padding: "3px 6px", fontSize: 10.5 }}>
+          {id} {p?.connected ? "●" : "○"} {label}
+        </span>;
+      })}
+      <Sep />
       <span
         onClick={() => onNav("autonomy")}
         style={{
