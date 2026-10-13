@@ -15,7 +15,7 @@ const { Pool } = pg;
 
 const CONTENT_URL =
   process.env.DATABASE_URL ??
-  "postgresql://postgres:your_postgres_password@127.0.0.1:5432/content_forge";
+  "postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge";
 
 const pool = new Pool({
   connectionString: CONTENT_URL,

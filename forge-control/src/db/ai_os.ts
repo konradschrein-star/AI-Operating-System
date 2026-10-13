@@ -15,7 +15,7 @@ const { Pool } = pg;
 
 const DATABASE_URL =
   process.env.DATABASE_URL ??
-  "postgresql://postgres:your_postgres_password@127.0.0.1:5432/content_forge";
+  "postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge";
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -30,7 +30,7 @@ pool.on("error", (err) => {
 
 const HCP_DATABASE_URL =
   process.env.HCP_DATABASE_URL ??
-  "postgresql://postgres:your_postgres_password@127.0.0.1:5432/hcp";
+  "postgresql://postgres:content_forge_prod@127.0.0.1:5432/hcp";
 
 const hcpPool = new Pool({
   connectionString: HCP_DATABASE_URL,

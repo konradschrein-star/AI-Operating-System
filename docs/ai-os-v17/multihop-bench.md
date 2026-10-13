@@ -78,7 +78,7 @@ At v1.7 wrap, the corpus was 58/205 (407 triples, 164 entities) and 4 of 5 queri
 ## Rerun command
 
 ```bash
-ssh root@127.0.0.1 'cd /opt/forge-ai-os && bash scripts/bench-multihop.sh'
+ssh root@65.108.6.149 'cd /opt/forge-ai-os && bash scripts/bench-multihop.sh'
 ```
 
 Appends a fresh row to this doc each time triple coverage moves materially.

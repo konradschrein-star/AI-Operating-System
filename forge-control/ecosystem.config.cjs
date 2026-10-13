@@ -10,9 +10,9 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: '7700',
         DATABASE_URL:
-          'postgresql://postgres:your_postgres_password@127.0.0.1:5432/content_forge',
+          'postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge',
         HCP_DATABASE_URL:
-          'postgresql://postgres:your_postgres_password@127.0.0.1:5432/hcp',
+          'postgresql://postgres:content_forge_prod@127.0.0.1:5432/hcp',
         // v1.6 phase 5: triple extraction routes call claude-pool too.
         // Read from the host env so the key survives cold pm2 starts
         // when launched via `CLAUDE_POOL_API_KEY=... pm2 start ecosystem.config.cjs`.
@@ -26,7 +26,7 @@ module.exports = {
         // v2.2: Telegram bridge (VPS Cat). Token from host env at pm2 start —
         // never bake the token into version control.
         TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || '',
-        TELEGRAM_CHAT_ID: '123456789',
+        TELEGRAM_CHAT_ID: '6267562276',
       },
       max_memory_restart: '300M',
       error_file: '/root/.pm2/logs/forge-control-error.log',
@@ -41,9 +41,9 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         DATABASE_URL:
-          'postgresql://postgres:your_postgres_password@127.0.0.1:5432/content_forge',
+          'postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge',
         HCP_DATABASE_URL:
-          'postgresql://postgres:your_postgres_password@127.0.0.1:5432/hcp',
+          'postgresql://postgres:content_forge_prod@127.0.0.1:5432/hcp',
         CLAUDE_POOL_URL: 'http://127.0.0.1:8092',
         // CLAUDE_POOL_API_KEY is set from the host pm2 env at startup time
         // (see deploy notes) — never bake the key into version control.

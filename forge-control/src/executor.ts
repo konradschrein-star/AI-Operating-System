@@ -44,7 +44,7 @@ const { Pool } = pg;
 
 const CONTENT_URL =
   process.env.DATABASE_URL ??
-  "postgresql://postgres:your_postgres_password@127.0.0.1:5432/content_forge";
+  "postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge";
 const POOL_URL = process.env.CLAUDE_POOL_URL ?? "http://127.0.0.1:8092";
 const POOL_KEY = process.env.CLAUDE_POOL_API_KEY ?? "";
 // v2.0: engine per run. 'claude-code' spawns the CC CLI (tools, sessions,
@@ -970,7 +970,7 @@ async function loop(): Promise<void> {
 
 const HCP_URL =
   process.env.HCP_DATABASE_URL ??
-  "postgresql://postgres:your_postgres_password@127.0.0.1:5432/hcp";
+  "postgresql://postgres:content_forge_prod@127.0.0.1:5432/hcp";
 
 const hcp = new Pool({
   connectionString: HCP_URL,

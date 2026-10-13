@@ -27,7 +27,7 @@ observes:
   API at :8092), forge-api (VEO Studio wrapper), gemini-pool, auto-browser,
   etc. Most of these are read-only from AI OS's perspective.
 
-**Live URL:** https://os.example.com (TLS via Let's
+**Live URL:** https://os.schreinercontentsystems.com (TLS via Let's
 Encrypt, nginx → 127.0.0.1:7701 forge-control-web → /api/proxy/\*
 rewrites to 127.0.0.1:7700 forge-control).
 
@@ -156,7 +156,7 @@ before writing code.
 
 ## Current production VPS state
 
-**SSH:** `root@127.0.0.1` with key
+**SSH:** `root@65.108.6.149` with key
 `//wsl.localhost/Ubuntu/home/konra/.ssh/content-forge-key` (or wherever
 Konrad's local key lives on your machine). Read-only by default;
 ask before destructive ops.
@@ -206,7 +206,7 @@ delete forge-*` you'll need to re-register from `ecosystem.config.cjs`
 **Database:**
 
 - `content_forge` (PG, 127.0.0.1:5432, user `postgres`, password
-  `your_postgres_password`) — AI OS reads/writes its own tables (`fleet_state`,
+  `content_forge_prod`) — AI OS reads/writes its own tables (`fleet_state`,
   `inbox_items`, `decisions`, `runs`, `guardrail_rules`, `guardrail_trips`,
   `connector_configs`, `knowledge_embeddings`) but **also reads
   content-forge tables** for cross-cuts (job preview JOINs, fleet status
@@ -228,7 +228,7 @@ delete forge-*` you'll need to re-register from `ecosystem.config.cjs`
 checked into source):
 
 - `DATABASE_URL` — content_forge connection (default
-  `postgresql://postgres:your_postgres_password@127.0.0.1:5432/content_forge`)
+  `postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge`)
 - `HCP_DATABASE_URL` — hcp connection (default
   `…@127.0.0.1:5432/hcp`)
 - `CLAUDE_POOL_URL` — `http://127.0.0.1:8092` (default ok)
@@ -243,13 +243,13 @@ checked into source):
 **Smoke test pattern** (use this for every phase):
 
 ```bash
-ssh -i KEY root@127.0.0.1 "cd /opt/forge-ai-os && git pull --ff-only \
+ssh -i KEY root@65.108.6.149 "cd /opt/forge-ai-os && git pull --ff-only \
   origin <branch> && cd forge-control-web && pnpm install \
   --ignore-workspace && pnpm build && pm2 restart forge-control-web \
   forge-control forge-executor"
 # Then hit forge-control direct on 127.0.0.1:7700 (bypasses NextAuth)
-ssh -i KEY root@127.0.0.1 "curl -s http://127.0.0.1:7700/api/<endpoint>"
-# And forge-control-web through nginx on https://os.example.com
+ssh -i KEY root@65.108.6.149 "curl -s http://127.0.0.1:7700/api/<endpoint>"
+# And forge-control-web through nginx on https://os.schreinercontentsystems.com
 ```
 
 **Known-good chat smoke** (validates the v1.6 phase 1 stack end-to-end):

@@ -10,7 +10,7 @@
 
 ## 1. Purpose
 
-Konrad runs a single Hetzner VPS (`127.0.0.1`) that hosts **three concentric layers** of infrastructure: an agentic OS (Hermes — Python supervisor + tmux Claude fleet), a YouTube content factory (Content Forge — Postgres + BullMQ + FFmpeg), and a constellation of ~10 side-product apps. Today the only interfaces are SSH, a thin Flask agent-dashboard (port 9191, unexposed), and per-app web UIs scattered across nginx subdomains. There is **no single pane of glass.**
+Konrad runs a single Hetzner VPS (`65.108.6.149`) that hosts **three concentric layers** of infrastructure: an agentic OS (Hermes — Python supervisor + tmux Claude fleet), a YouTube content factory (Content Forge — Postgres + BullMQ + FFmpeg), and a constellation of ~10 side-product apps. Today the only interfaces are SSH, a thin Flask agent-dashboard (port 9191, unexposed), and per-app web UIs scattered across nginx subdomains. There is **no single pane of glass.**
 
 This spec describes the personal AI OS interface — a single web application that becomes Konrad's **primary daily interaction surface** with the entire system. It replaces the current "open a terminal and SSH in to figure out what's happening" workflow with a unified dashboard + chat experience, and it replaces the current "open Claude Code in a PowerShell window" workflow with an in-browser chat agent that has the same tool-use capabilities as Claude Code but in a richer, persistent, multi-pane environment.
 
@@ -20,7 +20,7 @@ This spec describes the personal AI OS interface — a single web application th
 
 ## 2. What it observes and controls
 
-The interface is a **read + control surface** over these live systems (all on `127.0.0.1`):
+The interface is a **read + control surface** over these live systems (all on `65.108.6.149`):
 
 ### 2a. Hermes — the agentic OS
 
@@ -36,22 +36,22 @@ The interface is a **read + control surface** over these live systems (all on `1
 - Postgres on `127.0.0.1:5434` — main table `content_jobs` runs a ~40-state state machine (IDEA_GENERATION → SCRIPTING → TTS → ASSET_COLLECTION → ROUTING_RENDER → RENDERING → AWAITING_UPLOADER → PUBLISHED)
 - Redis/BullMQ on `127.0.0.1:6382` — queue isolation: `queue:ingest`, `queue:ai-generation`, `queue:qms-validation`, `queue:render-heavy`, `queue:dead-letter`, etc.
 - Hub Web on `0.0.0.0:3000` (operator dashboard, RBAC for 5 roles)
-- Public: `hub.example.com`, `forge-api.example.com`
+- Public: `hub.schreinercontentsystems.com`, `forge-api.schreinercontentsystems.com`
 
 ### 2c. The constellation (each is its own product/tool with its own UI)
 
 | App                       | Path                                                 | Public URL                                              | What                                         |
 | ------------------------- | ---------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------- |
-| Keyword Tool V2           | `/opt/keyword-tool-v2/`                              | `keywordtool.example.com`               | YouTube keyword research                     |
-| Thumbnail Generator       | `/opt/thumbnail-generator/`                          | `thumbnails.example.com`                | AI thumbnail factory                         |
-| Reelforge                 | `/opt/reelforge/`                                    | `reelforge.example.com`                 | Short-form video product                     |
+| Keyword Tool V2           | `/opt/keyword-tool-v2/`                              | `keywordtool.schreinercontentsystems.com`               | YouTube keyword research                     |
+| Thumbnail Generator       | `/opt/thumbnail-generator/`                          | `thumbnails.schreinercontentsystems.com`                | AI thumbnail factory                         |
+| Reelforge                 | `/opt/reelforge/`                                    | `reelforge.schreinercontentsystems.com`                 | Short-form video product                     |
 | Suno Automation           | `/opt/suno-automation/`                              | —                                                       | Music gen                                    |
 | Portfolio Wiki            | `/opt/portfolio-wiki/`                               | —                                                       | Portfolio site                               |
-| ShiftSync (SaaS)          | `/opt/schichtkommunikationstool/`                    | `schichtkommunikationstool.example.com` | Construction shift comms (client product)    |
+| ShiftSync (SaaS)          | `/opt/schichtkommunikationstool/`                    | `schichtkommunikationstool.schreinercontentsystems.com` | Construction shift comms (client product)    |
 | VEO API                   | `/opt/veo-api/` + residential workers `veo-resi@0/1` | —                                                       | Google Veo video gen via residential proxies |
-| Plane (issues)            | `/opt/plane/`                                        | `plane.example.com`                     | Self-hosted issue tracker                    |
-| Aryan eBook               | —                                                    | `aryan-ebook.example.com`               | Client deliverable                           |
-| Schreiner Content Systems | —                                                    | `example.com`                           | Brand site                                   |
+| Plane (issues)            | `/opt/plane/`                                        | `plane.schreinercontentsystems.com`                     | Self-hosted issue tracker                    |
+| Aryan eBook               | —                                                    | `aryan-ebook.schreinercontentsystems.com`               | Client deliverable                           |
+| Schreiner Content Systems | —                                                    | `schreinercontentsystems.com`                           | Brand site                                   |
 
 ### 2d. Shared AI infrastructure
 
@@ -64,7 +64,7 @@ The interface is a **read + control surface** over these live systems (all on `1
 ### 2e. Obsidian (read-only from this UI)
 
 - Vault at `/opt/obsidian-vault/` (49 markdown files)
-- CouchDB LiveSync at `obsidian-sync.example.com` (CouchDB v3.5.1 on `127.0.0.1:5984`)
+- CouchDB LiveSync at `obsidian-sync.schreinercontentsystems.com` (CouchDB v3.5.1 on `127.0.0.1:5984`)
 - Synced to Konrad's laptop at `D:\Obsidian\VPS Obsidian\Konrad\Konrad\`
 
 ---
@@ -238,7 +238,7 @@ Single user (Konrad). No RBAC, no multi-tenancy.
 - **2FA**: required (GitHub already enforces it for Konrad).
 - **HTTPS only**: behind nginx, Let's Encrypt cert (the existing cert infra).
 - **The chat agent runs as `root`** on the VPS — same trust model as Claude Code on a personal machine. The approval model in § 5 is the safety belt.
-- **Public URL**: `console.example.com` (new subdomain).
+- **Public URL**: `console.schreinercontentsystems.com` (new subdomain).
 - **Audit log**: every tool call (especially writes/destructive ops) appended to `/opt/claude-memory/AUDIT.log` with timestamp + conversation ID + outcome.
 - **Secrets**: never displayed in the UI. `read_file` on `/root/.claude/.credentials.json`, `/opt/obsidian-livesync/.env`, etc. returns `[REDACTED]`. Deny-list configurable in a settings note.
 
@@ -259,7 +259,7 @@ Single user (Konrad). No RBAC, no multi-tenancy.
 | **Storage**                 | Postgres (existing on `:5434`) for chat history, conversations, audit                                                                                                               | Already there. Add a `console` schema.                                                                                                                                     |
 | **Frontend chat transport** | WebSocket from browser → `forge-control` → MCP bridge → `claude -p` worker stdin/stdout                                                                                             | Three-hop sounds heavy but each hop is local; latency dominated by Claude itself.                                                                                          |
 | **Auth**                    | **NextAuth.js** with GitHub provider                                                                                                                                                | Standard; integrates with Next.js App Router.                                                                                                                              |
-| **Deploy**                  | PM2-managed `forge-control` (backend) + Next.js standalone (`forge-control-web`); nginx vhost for `console.example.com` → `127.0.0.1:7701`                          | Mirrors hub-web's pattern.                                                                                                                                                 |
+| **Deploy**                  | PM2-managed `forge-control` (backend) + Next.js standalone (`forge-control-web`); nginx vhost for `console.schreinercontentsystems.com` → `127.0.0.1:7701`                          | Mirrors hub-web's pattern.                                                                                                                                                 |
 
 ### What NOT to use
 
@@ -280,7 +280,7 @@ Only the **Live** destination. No chat. Goal: replace the SSH-and-grep workflow.
 - Frontend: Next.js app with just the Live page, status bar, polling every 5/10/30s
 - Auth: NextAuth GitHub OAuth, single-user allowlist
 - Deploy: PM2 + nginx vhost
-- Success: Konrad opens `console.example.com` on his laptop, sees the fleet + Content Forge jobs + service health in one page, never SSHs in to check status again
+- Success: Konrad opens `console.schreinercontentsystems.com` on his laptop, sees the fleet + Content Forge jobs + service health in one page, never SSHs in to check status again
 
 ### Phase 2 — chat with tools (target: 2 weeks after Phase 1)
 
@@ -315,7 +315,7 @@ Only the **Live** destination. No chat. Goal: replace the SSH-and-grep workflow.
 1. **One agent or many?** Phase 2 spec assumes one console-agent worker. Alternative: a pool of 2-3 console-agents so multiple conversations can run in parallel. Cost: more memory; benefit: snappier multitasking. (Recommendation: one for MVP, expand if needed.)
 2. **Chat history visibility — across devices?** If Konrad's on his laptop and asks a question, then opens the phone, should he see the same conversation continuing? (Recommendation: yes, conversations are server-side; client just connects to them.)
 3. **The Win11 VM / noVNC** — should the Console embed the noVNC viewer (so the Win11 VM is reachable from inside the dashboard), or stay separate? (Recommendation: separate for MVP; embed in Phase 4.)
-4. **Public URL for the Console** — `console.example.com`? Or hide it under a path on an existing domain so it's not discoverable by URL scanning? (Recommendation: dedicated subdomain; fail2ban + OAuth-required is enough.)
+4. **Public URL for the Console** — `console.schreinercontentsystems.com`? Or hide it under a path on an existing domain so it's not discoverable by URL scanning? (Recommendation: dedicated subdomain; fail2ban + OAuth-required is enough.)
 5. **Theming flexibility** — strict to the orange-on-black `#ff8c00 / #0d0d0d` palette, or let Konrad theme it later? (Recommendation: design with two themes from day one — dark default, optional light for outdoor laptop use.)
 6. **Action confirmation default** — Trusted (auto-run) or Reviewed (per-call approval) as default for new conversations? (Recommendation: Trusted, with Reviewed togglable per conversation.)
 7. **Mobile MVP scope** — Phase 1 mobile = read-only Live view, or skip mobile until Phase 4? (Recommendation: read-only Live in Phase 1 since it's cheap; chat on mobile waits.)
@@ -365,7 +365,7 @@ What Konrad does today, that the Console replaces:
 
 | Today                                                                                        | After Console                                                                   |
 | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| SSH in, `tmux ls`, `pm2 list`, `sqlite3 control.db "SELECT..."` to check fleet               | Open `console.example.com` → Live                               |
+| SSH in, `tmux ls`, `pm2 list`, `sqlite3 control.db "SELECT..."` to check fleet               | Open `console.schreinercontentsystems.com` → Live                               |
 | Open PowerShell + Claude Code to do file ops + run commands                                  | Open Chat tab; same agent, same tools, persistent history                       |
 | Search "where was that note about Gemini Pool?" by file-grep across `/opt`                   | Map → Files → "Gemini Pool"                                                     |
 | Find out a job is stuck by noticing the video didn't appear on YouTube                       | Status bar shows "⚠ 1 stuck job" the moment it stalls                           |

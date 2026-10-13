@@ -2,12 +2,12 @@
 
 ## TL;DR
 
-"Hermes UI" on the VPS is the **content-forge `hub-web` Next.js 15 app** at `/opt/content-forge/apps/hub-web/` (served at `hub.example.com`). It's the same monorepo we're editing locally, so every file path below also exists in our local checkout — meaning **lifts are free copy/paste plus dependency add** (no fetch from VPS required). Stack is Next.js 15 + React 19 + Tailwind v4 + Zustand + TanStack Query + cmdk + sonner + lucide + Material Symbols, license **Apache-2.0** (same owner). The most valuable single lift for AI OS is the **`v2-*` design-token system + GlassCard + `_components/` primitives** under `src/app/(authenticated)/_components/` — they're already inline-styled, theme-swappable, and trivially portable. Konrad's scrollbar complaint is fixable by copying ~10 lines of `v2.css` (6px transparent track + accent thumb).
+"Hermes UI" on the VPS is the **content-forge `hub-web` Next.js 15 app** at `/opt/content-forge/apps/hub-web/` (served at `hub.schreinercontentsystems.com`). It's the same monorepo we're editing locally, so every file path below also exists in our local checkout — meaning **lifts are free copy/paste plus dependency add** (no fetch from VPS required). Stack is Next.js 15 + React 19 + Tailwind v4 + Zustand + TanStack Query + cmdk + sonner + lucide + Material Symbols, license **Apache-2.0** (same owner). The most valuable single lift for AI OS is the **`v2-*` design-token system + GlassCard + `_components/` primitives** under `src/app/(authenticated)/_components/` — they're already inline-styled, theme-swappable, and trivially portable. Konrad's scrollbar complaint is fixable by copying ~10 lines of `v2.css` (6px transparent track + accent thumb).
 
 ## VPS layout discovered
 
-- pm2 confirms only one user-facing Next.js UI on the VPS: `hub-web` (id 14, port 3000) → nginx `hub.example.com`.
-- `os.example.com` already proxies to our `forge-control-web` (port 7701) — that's the AI OS frontend we're upgrading.
+- pm2 confirms only one user-facing Next.js UI on the VPS: `hub-web` (id 14, port 3000) → nginx `hub.schreinercontentsystems.com`.
+- `os.schreinercontentsystems.com` already proxies to our `forge-control-web` (port 7701) — that's the AI OS frontend we're upgrading.
 - `agent-dashboard` is a 1-file Flask app (`/opt/agent-dashboard/app.py`, 931 bytes) — not a real UI, ignore.
 - `hermes-control-plane` / `hermes-workspace` are headless Node services, no UI files.
 - Hub-web repo on VPS = same `content-forge` repo we have locally (`git@github.com:konradschrein-star/content-forge.git`). No VPS-only edits in `apps/hub-web/`.

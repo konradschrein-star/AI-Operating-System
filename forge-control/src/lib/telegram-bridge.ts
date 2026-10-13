@@ -42,7 +42,7 @@ import {
 import { getFleetState, setFleetState } from "../db/ai_os.ts";
 import { getAutonomy, updateRule } from "../db/autonomy.ts";
 
-const CHAT_ID = Number(process.env.TELEGRAM_CHAT_ID ?? "123456789");
+const CHAT_ID = Number(process.env.TELEGRAM_CHAT_ID ?? "6267562276");
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "/opt/ai-os/uploads";
 /** A telegram chat run stays the active thread for this long. */
 const THREAD_WINDOW_H = 12;
@@ -136,7 +136,7 @@ async function handleCommand(text: string): Promise<string> {
               )
               .join("\n")}`
           : "no pending reminders",
-        "dashboard: https://os.example.com",
+        "dashboard: https://os.schreinercontentsystems.com",
       ];
       return lines.join("\n");
     }

@@ -86,7 +86,7 @@ v1 commands: `/clear` (local thread clear, run untouched), `/freeze`, `/resume` 
 
 ## Risks
 
-- **Nginx SSE** at `/etc/nginx/sites-enabled/os.example.com` — must set `proxy_buffering off; proxy_read_timeout 1h;` for `/api/proxy/chat/*/stream`. Verify before shipping.
+- **Nginx SSE** at `/etc/nginx/sites-enabled/os.schreinercontentsystems.com` — must set `proxy_buffering off; proxy_read_timeout 1h;` for `/api/proxy/chat/*/stream`. Verify before shipping.
 - **Slash vs paste** — paste of `/something` shouldn't trigger menu. Gate by `event.key === '/'` + caret at line start.
 - **Resume semantics** — re-prompting includes the partial assistant turn; risk of duplicate output. Mitigation: append a `[SYSTEM] continue from previous partial` marker and strip on next claim.
 - **Mobile parity** — `MobileApp.tsx` is separate; ship Enter+scrollbar fixes in same PR, defer slash menu to v2.

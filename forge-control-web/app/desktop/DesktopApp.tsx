@@ -768,7 +768,7 @@ function StatusBar({
           marginRight: 7,
         }}
       />
-      <span style={{ color: tokens.textSecondary }}>127.0.0.1</span>
+      <span style={{ color: tokens.textSecondary }}>65.108.6.149</span>
       <Sep />
       <span style={{ color: tokens.textMuted }}>
         forge <span style={{ color: tokens.ok }}>●</span>

@@ -130,7 +130,7 @@ The UI speaks the same way the agent does.
 │      │                                                                                     │
 │      │                                                                                     │
 ├──────┴─────────────────────────────────────────────────────────────────────────────────────┤
-│ ● 127.0.0.1  CPU 1.52  MEM 39%  / 47.7%  forge ●  hermes ●  1 BLEED  2 STUCK  ⌘K  up 5d│
+│ ● 65.108.6.149  CPU 1.52  MEM 39%  / 47.7%  forge ●  hermes ●  1 BLEED  2 STUCK  ⌘K  up 5d│
 └────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -189,7 +189,7 @@ The top nav and left rail intentionally **overlap on the same surfaces**. The to
 
 **Status bar (28px, persistent, never wraps, never hides):**
 
-1. `●` host dot + `127.0.0.1` mono.
+1. `●` host dot + `65.108.6.149` mono.
 2. CPU 1m load.
 3. Memory used %.
 4. Root disk used %.
